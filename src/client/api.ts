@@ -1,5 +1,10 @@
 import type {
+  BenchmarkConfig,
+  BenchmarkRun,
   Game,
+  GameAnalysis,
+  KataGoHealth,
+  KataGoSettings,
   NewGameInput,
   PlayerProfile,
   ProviderConnection,
@@ -21,6 +26,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(payload.error ?? response.statusText)
   }
   return response.json() as Promise<T>
+}
+
+async function requestText(url: string): Promise<string> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? response.statusText)
+  return response.text()
 }
 
 let restoringKeys: Promise<ProviderConnection[]> | undefined
@@ -75,6 +86,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(command),
     }),
+  analysis: (id: string) => request<GameAnalysis>(`/api/games/${id}/analysis`),
+  setAnalysis: (id: string, enabled: boolean) =>
+    request<GameAnalysis>(`/api/games/${id}/analysis`, {method: 'PUT', body: JSON.stringify({enabled})}),
+  backfillAnalysis: (id: string) =>
+    request<GameAnalysis>(`/api/games/${id}/analysis/backfill`, {method: 'POST'}),
+  kataGoSettings: () => request<KataGoSettings>('/api/katago/settings'),
+  saveKataGoSettings: (input: Omit<KataGoSettings, 'updatedAt'>) =>
+    request<KataGoSettings>('/api/katago/settings', {method: 'PUT', body: JSON.stringify(input)}),
+  testKataGo: () => request<KataGoHealth>('/api/katago/test', {method: 'POST'}),
   connections: connectionsWithRestoredKeys,
   restoreSessionKeys: connectionsWithRestoredKeys,
   saveConnection: async (input: Record<string, unknown>) => {
@@ -127,6 +147,16 @@ export const api = {
     }),
   deleteProfile: (id: string) =>
     request<{ok: true}>(`/api/profiles/${id}`, {method: 'DELETE'}),
+  profileNotebook: (id: string) => requestText(`/api/profiles/${id}/notebook.md`),
+  benchmarks: () => request<BenchmarkRun[]>('/api/benchmarks'),
+  benchmark: (id: string) => request<BenchmarkRun>(`/api/benchmarks/${id}`),
+  createBenchmark: (input: BenchmarkConfig) =>
+    request<BenchmarkRun>('/api/benchmarks', {method: 'POST', body: JSON.stringify(input)}),
+  benchmarkCommand: (id: string, input: Record<string, unknown>) =>
+    request<BenchmarkRun>(`/api/benchmarks/${id}/commands`, {method: 'POST', body: JSON.stringify(input)}),
+  deleteBenchmark: (id: string) =>
+    request<{ok: true}>(`/api/benchmarks/${id}`, {method: 'DELETE'}),
+  benchmarkNotebook: (id: string) => requestText(`/api/benchmarks/${id}/notebook.md`),
   importSgf: (sgf: string) =>
     request<{game: Game; warnings: string[]}>('/api/import', {
       method: 'POST',

@@ -33,6 +33,26 @@ Save any number of player profiles against those connections. The New Game page 
 
 Games, provider connections, and player profiles can be edited or deleted from their list or detail views. Game editing is limited to player display names, commentary visibility, and the move cap so board rules and move history remain valid. Deleting a connection also deletes its profiles. LingGo blocks profile or connection deletion while an unfinished game still uses it, and keeps the built-in deterministic profile available as a fallback.
 
+## KataGo analysis
+
+New games enable live KataGo root analysis by default. Settings stores editable executable, model, and analysis-config paths plus the ordinary-game visit count. The bundled defaults target the verified local installation:
+
+```text
+/home/comb1e/tools/KataGo/cpp/katago
+/root/.local/share/pipx/venvs/katrain/lib/python3.12/site-packages/katrain/models/b10c384h6nbttflrs.bin.gz
+/root/.local/share/pipx/venvs/katrain/lib/python3.12/site-packages/katrain/KataGo/analysis_config.cfg
+```
+
+Use **Test KataGo** to launch the engine and analyze a 9x9 position. Analysis failures do not interrupt ordinary play. Existing and imported games can be backfilled from their game page. Position analysis lives outside the optimistic-versioned game JSON, and is removed past the current turn after undo.
+
+## LLM benchmark
+
+Benchmark trains one saved profile through ten sequential 19x19 games against KataGo, alternating colors, then scores one final game in the selected color. All games use Chinese area scoring, komi 7.5, a 722-move cap, and the configured 25–10,000 KataGo visits. Only one benchmark may be active or paused.
+
+Training can expose turn-aligned win rates to the LLM. After each training game, the model rewrites its own consolidated Markdown technique notebook. The final prompt contains only rules, that notebook, the one-move instruction, JSON schema, and current position. Human style prompts and KataGo data are omitted. Current notebooks are stored under `data/techniques/`; each run keeps a downloadable snapshot.
+
+The final 0–100 score equally weights game result and per-move quality derived from KataGo point loss. Set `LINGGO_FAKE_KATAGO=1` to use the deterministic pass-only engine for CI and browser tests; production uses the configured executable.
+
 API keys are never written to SQLite. Keys entered in Settings are kept in the current browser tab's session storage and automatically restored to server memory after a development or production restart. Closing the tab ends that browser session. For persistence independent of a browser tab, set the matching environment variable:
 
 | Provider          | Environment variable           |

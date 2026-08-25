@@ -4,8 +4,8 @@ data/
 coverage/
 playwright-report/
 test-results/
+analysis_logs/
 .env
 *.db
 *.db-shm
 *.db-wal
-data/

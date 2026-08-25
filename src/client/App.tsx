@@ -1,5 +1,6 @@
 import {
   Gamepad2,
+  Gauge,
   Languages,
   List,
   Plus,
@@ -13,6 +14,8 @@ import {GamesPage} from './pages/GamesPage'
 import {NewGamePage} from './pages/NewGamePage'
 import {GamePage} from './pages/GamePage'
 import {SettingsPage} from './pages/SettingsPage'
+import {BenchmarksPage} from './pages/BenchmarksPage'
+import {BenchmarkPage} from './pages/BenchmarkPage'
 
 export function App() {
   const {t, i18n} = useTranslation()
@@ -34,6 +37,7 @@ export function App() {
         <nav aria-label="Primary">
           <NavItem to="/new" icon={<Plus />} label={t('newGame')} />
           <NavItem to="/games" icon={<List />} label={t('games')} />
+          <NavItem to="/benchmarks" icon={<Gauge />} label={t('benchmarks')} />
           <NavItem
             to="/settings"
             icon={<SettingsIcon />}
@@ -55,6 +59,8 @@ export function App() {
           <Route path="/games" element={<GamesPage />} />
           <Route path="/games/:id" element={<GamePage />} />
           <Route path="/new" element={<NewGamePage />} />
+          <Route path="/benchmarks" element={<BenchmarksPage />} />
+          <Route path="/benchmarks/:id" element={<BenchmarkPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

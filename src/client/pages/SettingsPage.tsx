@@ -1,9 +1,10 @@
 import {useQuery, useQueryClient} from '@tanstack/react-query'
-import {KeyRound, Pencil, Save, Trash2, X} from 'lucide-react'
+import {Activity, BookOpen, Download, KeyRound, Pencil, Save, Trash2, X} from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader} from '../components'
+import {Markdown} from '../Markdown'
 
 export function SettingsPage() {
   const {t} = useTranslation()
@@ -13,6 +14,7 @@ export function SettingsPage() {
     queryFn: api.connections,
   })
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
+  const kataGo = useQuery({queryKey: ['katago-settings'], queryFn: api.kataGoSettings})
   const [error, setError] = useState<unknown>()
   const [saved, setSaved] = useState('')
   const [provider, setProvider] = useState('openai')
@@ -26,6 +28,25 @@ export function SettingsPage() {
   const [temperature, setTemperature] = useState(0.7)
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
+  const [kataDraft, setKataDraft] = useState({
+    executablePath: '', modelPath: '', configPath: '', analysisVisits: 500,
+  })
+  const [kataEdited, setKataEdited] = useState(false)
+  const [kataResult, setKataResult] = useState('')
+  const [kataBusy, setKataBusy] = useState(false)
+  const [notebookProfileId, setNotebookProfileId] = useState('')
+  const notebook = useQuery({
+    queryKey: ['profile-notebook', notebookProfileId],
+    queryFn: () => api.profileNotebook(notebookProfileId),
+    enabled: Boolean(notebookProfileId),
+  })
+
+  const kataValues = kataEdited || !kataGo.data ? kataDraft : {
+    executablePath: kataGo.data.executablePath,
+    modelPath: kataGo.data.modelPath,
+    configPath: kataGo.data.configPath,
+    analysisVisits: kataGo.data.analysisVisits,
+  }
 
   const resetConnectionForm = () => {
     setEditingConnectionId('')
@@ -142,11 +163,46 @@ export function SettingsPage() {
       setError(caught)
     }
   }
+  const saveKataGo = async (event: FormEvent) => {
+    event.preventDefault()
+    setError(undefined)
+    setKataBusy(true)
+    try {
+      const result = await api.saveKataGoSettings(kataValues)
+      setKataDraft({
+        executablePath: result.executablePath,
+        modelPath: result.modelPath,
+        configPath: result.configPath,
+        analysisVisits: result.analysisVisits,
+      })
+      setKataEdited(false)
+      await queryClient.invalidateQueries({queryKey: ['katago-settings']})
+      setSaved(t('saved'))
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setKataBusy(false)
+    }
+  }
+  const testKataGo = async () => {
+    setError(undefined)
+    setKataResult('')
+    setKataBusy(true)
+    try {
+      const result = await api.testKataGo()
+      setKataResult(result.message)
+      if (!result.ok) setError(new Error(result.message))
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setKataBusy(false)
+    }
+  }
 
   return (
     <div className="page settings-page">
       <PageHeader title={t('settings')} />
-      <ErrorBanner error={error ?? connections.error ?? profiles.error} />
+      <ErrorBanner error={error ?? connections.error ?? profiles.error ?? kataGo.error} />
       {saved && <div className="banner success-banner">{saved}</div>}
       {connections.isLoading ? (
         <Loading />
@@ -280,6 +336,15 @@ export function SettingsPage() {
                   </span>
                   <div className="existing-actions">
                     <span>{item.temperature}</span>
+                    <Button
+                      type="button"
+                      className="icon-button compact-icon"
+                      title={`${t('techniqueNotebook')} ${item.name}`}
+                      aria-label={`${t('techniqueNotebook')} ${item.name}`}
+                      onClick={() => setNotebookProfileId(item.id)}
+                    >
+                      <BookOpen />
+                    </Button>
                     {item.id !== 'builtin-fake-profile' && (
                       <>
                         <Button
@@ -374,7 +439,45 @@ export function SettingsPage() {
               </div>
             </form>
           </section>
+          <section className="settings-section katago-settings">
+            <h2>KataGo</h2>
+            <form onSubmit={(event) => void saveKataGo(event)}>
+              <label className="field">
+                <span>{t('executablePath')}</span>
+                <input required value={kataValues.executablePath} onChange={(event) => {setKataEdited(true); setKataDraft({...kataValues, executablePath: event.target.value})}} />
+              </label>
+              <label className="field">
+                <span>{t('modelPath')}</span>
+                <input required value={kataValues.modelPath} onChange={(event) => {setKataEdited(true); setKataDraft({...kataValues, modelPath: event.target.value})}} />
+              </label>
+              <label className="field">
+                <span>{t('configPath')}</span>
+                <input required value={kataValues.configPath} onChange={(event) => {setKataEdited(true); setKataDraft({...kataValues, configPath: event.target.value})}} />
+              </label>
+              <label className="field">
+                <span>{t('ordinaryVisits')}</span>
+                <input type="number" min="25" max="10000" required value={kataValues.analysisVisits} onChange={(event) => {setKataEdited(true); setKataDraft({...kataValues, analysisVisits: Number(event.target.value)})}} />
+              </label>
+              <div className="form-actions">
+                <Button className="primary" disabled={kataBusy}><Save />{t('saveChanges')}</Button>
+                <Button type="button" disabled={kataBusy} onClick={() => void testKataGo()}><Activity />{t('testKataGo')}</Button>
+                {kataResult && <span className="test-result">{kataResult}</span>}
+              </div>
+            </form>
+          </section>
         </div>
+      )}
+      {notebookProfileId && (
+        <section className="profile-notebook-panel">
+          <header>
+            <h2>{t('techniqueNotebook')}</h2>
+            <div>
+              <a className="button icon-button" href={`/api/profiles/${notebookProfileId}/notebook.md`} download title={t('downloadNotebook')}><Download /></a>
+              <Button className="icon-button" title={t('cancel')} onClick={() => setNotebookProfileId('')}><X /></Button>
+            </div>
+          </header>
+          <Markdown source={notebook.data ?? ''} />
+        </section>
       )}
     </div>
   )

@@ -34,6 +34,7 @@ export function NewGamePage() {
     profileId: 'builtin-fake-profile',
   })
   const [commentsVisible, setCommentsVisible] = useState(true)
+  const [analysisEnabled, setAnalysisEnabled] = useState(true)
   const [moveCap, setMoveCap] = useState(19 * 19 * 2)
   const [error, setError] = useState<unknown>()
   const [busy, setBusy] = useState(false)
@@ -64,6 +65,7 @@ export function NewGamePage() {
         white: toSeat(white),
         commentsVisible,
         moveCap,
+        analysisEnabled,
       })
       navigate(`/games/${game.id}`)
     } catch (caught) {
@@ -141,6 +143,15 @@ export function NewGamePage() {
             />
             <span className="switch" />
             <span>{t('commentary')}</span>
+          </label>
+          <label className="switch-field">
+            <input
+              type="checkbox"
+              checked={analysisEnabled}
+              onChange={(event) => setAnalysisEnabled(event.target.checked)}
+            />
+            <span className="switch" />
+            <span>{t('liveAnalysis')}</span>
           </label>
           <Button className="primary submit-button" disabled={busy}>
             <Play />

@@ -1,5 +1,6 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {
+  Activity,
   Brain,
   ChevronDown,
   Download,
@@ -21,7 +22,7 @@ import {useTranslation} from 'react-i18next'
 import {useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
 import {normalizeReasoning} from '../../shared/reasoning'
-import type {Color, Game, Point} from '../../shared/types'
+import type {Color, Game, GameAnalysis, Point} from '../../shared/types'
 import {api} from '../api'
 import {Board} from '../Board'
 import {
@@ -51,6 +52,19 @@ export function GamePage() {
     enabled: Boolean(id),
   })
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
+  const analysisQuery = useQuery({
+    queryKey: ['analysis', id],
+    queryFn: () => api.analysis(id),
+    enabled: Boolean(id),
+  })
+  const analysisMutation = useMutation({
+    mutationFn: (enabled: boolean) => api.setAnalysis(id, enabled),
+    onSuccess: (value) => queryClient.setQueryData(['analysis', id], value),
+  })
+  const backfillMutation = useMutation({
+    mutationFn: () => api.backfillAnalysis(id),
+    onSuccess: (value) => queryClient.setQueryData(['analysis', id], value),
+  })
   const mutation = useMutation({
     mutationFn: (command: Record<string, unknown>) => api.command(id, command),
     onSuccess: (game) => {
@@ -100,6 +114,17 @@ export function GamePage() {
     }
     return () => events.close()
   }, [id, navigate, queryClient])
+
+  useEffect(() => {
+    if (!id) return
+    const events = new EventSource(`/api/games/${id}/analysis/events`)
+    events.onmessage = (event) =>
+      queryClient.setQueryData(
+        ['analysis', id],
+        JSON.parse(event.data) as GameAnalysis,
+      )
+    return () => events.close()
+  }, [id, queryClient])
 
   const send = useCallback(
     (type: string, extra: Record<string, unknown> = {}) => {
@@ -285,7 +310,11 @@ export function GamePage() {
             <span>
               <strong>{game.white.name}</strong>
               <small>
-                {game.white.type === 'llm' ? t('languageModel') : t('human')}
+                {game.white.type === 'llm'
+                  ? t('languageModel')
+                  : game.white.type === 'katago'
+                    ? 'KataGo'
+                    : t('human')}
               </small>
             </span>
             <b>
@@ -298,13 +327,24 @@ export function GamePage() {
             <span>
               <strong>{game.black.name}</strong>
               <small>
-                {game.black.type === 'llm' ? t('languageModel') : t('human')}
+                {game.black.type === 'llm'
+                  ? t('languageModel')
+                  : game.black.type === 'katago'
+                    ? 'KataGo'
+                    : t('human')}
               </small>
             </span>
             <b>
               {game.captures.B} {t('captures')}
             </b>
           </div>
+          <WinRatePanel
+            analysis={analysisQuery.data}
+            moveCount={game.moves.length}
+            busy={analysisMutation.isPending || backfillMutation.isPending}
+            onToggle={(enabled) => analysisMutation.mutate(enabled)}
+            onAnalyze={() => backfillMutation.mutate()}
+          />
         </section>
         <aside className="game-panel">
           <section className="turn-panel">
@@ -431,6 +471,71 @@ export function GamePage() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function WinRatePanel({
+  analysis,
+  moveCount,
+  busy,
+  onToggle,
+  onAnalyze,
+}: {
+  analysis?: GameAnalysis
+  moveCount: number
+  busy: boolean
+  onToggle: (enabled: boolean) => void
+  onAnalyze: () => void
+}) {
+  const {t} = useTranslation()
+  const positions = analysis?.positions ?? []
+  const width = 600
+  const height = 180
+  const inset = 22
+  const maxTurn = Math.max(moveCount, 1)
+  const point = (turn: number, rate: number) =>
+    `${inset + (turn / maxTurn) * (width - inset * 2)},${inset + (1 - rate) * (height - inset * 2)}`
+  const blackLine = positions.map((value) => point(value.turn, value.blackWinRate)).join(' ')
+  const whiteLine = positions.map((value) => point(value.turn, value.whiteWinRate)).join(' ')
+  return (
+    <section className="winrate-panel">
+      <header>
+        <span><Activity /> <strong>{t('winRate')}</strong></span>
+        <div>
+          {positions.length < moveCount + 1 && (
+            <Button disabled={busy} onClick={onAnalyze}>{t('analyze')}</Button>
+          )}
+          <label className="switch-field compact-switch">
+            <input type="checkbox" checked={analysis?.enabled ?? false} onChange={(event) => onToggle(event.target.checked)} />
+            <span className="switch" />
+            <span>{t('live')}</span>
+          </label>
+        </div>
+      </header>
+      {analysis?.error && <p className="analysis-error">{analysis.error}</p>}
+      {positions.length ? (
+        <>
+          <svg className="winrate-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('winRateChart')}>
+            <line x1={inset} y1={height / 2} x2={width - inset} y2={height / 2} className="chart-midline" />
+            <polyline points={blackLine} className="chart-line black-line" />
+            <polyline points={whiteLine} className="chart-line white-line" />
+            {positions.map((value) => (
+              <g key={value.turn}>
+                <circle cx={Number(point(value.turn, value.blackWinRate).split(',')[0])} cy={Number(point(value.turn, value.blackWinRate).split(',')[1])} r="3.5" className="chart-dot black-dot" tabIndex={0}>
+                  <title>{`${t('turn')} ${value.turn}: ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
+                </circle>
+                <circle cx={Number(point(value.turn, value.whiteWinRate).split(',')[0])} cy={Number(point(value.turn, value.whiteWinRate).split(',')[1])} r="3.5" className="chart-dot white-dot" tabIndex={0}>
+                  <title>{`${t('turn')} ${value.turn}: ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
+                </circle>
+              </g>
+            ))}
+          </svg>
+          <div className="chart-legend"><span><i className="legend-black" />{t('black')}</span><span><i className="legend-white" />{t('white')}</span></div>
+        </>
+      ) : (
+        <p className="muted analysis-empty">{analysis?.status === 'running' ? t('analyzing') : t('noAnalysis')}</p>
+      )}
+    </section>
   )
 }
 
