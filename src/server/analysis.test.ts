@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it} from 'vitest'
-import {AnalysisService} from './analysis'
+import {AnalysisService, formatLlmHistory} from './analysis'
 import {Store} from './database'
 import {GameService} from './games'
 import type {KataGoAnalyzer} from './katago'
@@ -35,6 +35,40 @@ describe('game analysis', () => {
     expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([0, 1])
     game = await games.command(game.id, {expectedVersion: version, type: 'undo'})
     expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([0])
+    await analysis.close()
+  })
+
+  it('shares complete win-rate history from the current LLM perspective', async () => {
+    store = new Store(':memory:')
+    const games = new GameService(store)
+    const analysis = new AnalysisService(store, games, engine)
+    const game = games.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'B'},
+      white: {type: 'human', name: 'W'},
+      commentsVisible: true,
+      analysisEnabled: true,
+      shareAnalysisWithLlm: false,
+    })
+    const version = game.version
+    const enabled = analysis.update(game.id, {shareWithLlm: true})
+    expect(enabled).toMatchObject({enabled: true, shareWithLlm: true})
+    const history = await analysis.contextForLlm(
+      game,
+      new AbortController().signal,
+    )
+    expect(history).toBe(
+      'Turn 0: your win rate 60.00%; opponent 40.00%',
+    )
+    expect(games.get(game.id)!.version).toBe(version)
+    expect(
+      formatLlmHistory(analysis.get(game.id), 'W'),
+    ).toContain('your win rate 40.00%')
+    expect(analysis.update(game.id, {enabled: false})).toMatchObject({
+      enabled: false,
+      shareWithLlm: false,
+    })
     await analysis.close()
   })
 })

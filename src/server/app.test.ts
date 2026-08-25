@@ -38,6 +38,52 @@ describe('game API', () => {
     expect(sgf.body).toContain('SZ[19]')
   })
 
+  it('changes LLM analysis sharing without changing the game version', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/games',
+      payload: {
+        black: {type: 'human', name: 'Black'},
+        white: {type: 'human', name: 'White'},
+      },
+    })
+    const game = created.json()
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/games/${game.id}/analysis`,
+      payload: {shareWithLlm: true},
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      enabled: true,
+      shareWithLlm: true,
+    })
+    expect((await app.inject({method: 'GET', url: `/api/games/${game.id}`})).json().version).toBe(game.version)
+  })
+
+  it('enables analysis when a new game shares it with LLM players', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/games',
+      payload: {
+        black: {type: 'human', name: 'Black'},
+        white: {type: 'human', name: 'White'},
+        analysisEnabled: false,
+        shareAnalysisWithLlm: true,
+      },
+    })
+    const game = response.json()
+    expect(game.analysisEnabled).toBe(true)
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/games/${game.id}/analysis`,
+        })
+      ).json(),
+    ).toMatchObject({enabled: true, shareWithLlm: true})
+  })
+
   it('never returns an API key', async () => {
     await app.inject({
       method: 'POST',

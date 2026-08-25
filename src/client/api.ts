@@ -87,8 +87,14 @@ export const api = {
       body: JSON.stringify(command),
     }),
   analysis: (id: string) => request<GameAnalysis>(`/api/games/${id}/analysis`),
-  setAnalysis: (id: string, enabled: boolean) =>
-    request<GameAnalysis>(`/api/games/${id}/analysis`, {method: 'PUT', body: JSON.stringify({enabled})}),
+  setAnalysis: (
+    id: string,
+    input: {enabled?: boolean; shareWithLlm?: boolean},
+  ) =>
+    request<GameAnalysis>(`/api/games/${id}/analysis`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
   backfillAnalysis: (id: string) =>
     request<GameAnalysis>(`/api/games/${id}/analysis/backfill`, {method: 'POST'}),
   kataGoSettings: () => request<KataGoSettings>('/api/katago/settings'),

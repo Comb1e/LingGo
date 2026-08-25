@@ -312,7 +312,7 @@ export function makePrompt(
     stylePrompt?.trim() || '(none)',
     '',
     '3. INSTRUCTION',
-    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Choose exactly one legal intersection for your next Go stone. Do not use external analysis or suggest multiple moves.`,
+    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Choose exactly one legal intersection for your next Go stone. ${snapshot.kataGoAnalysis ? 'You may use the supplied KataGo win-rate history.' : 'Do not use external analysis.'} Do not suggest multiple moves.`,
     ...(snapshot.previousError
       ? [
           `Your previous response was rejected: ${snapshot.previousError}. Use the unchanged position and correct the response.`,
@@ -334,6 +334,13 @@ export function makePrompt(
     '',
     'Move list:',
     moves,
+    ...(snapshot.kataGoAnalysis
+      ? [
+          '',
+          '6. KATAGO WIN-RATE HISTORY',
+          snapshot.kataGoAnalysis,
+        ]
+      : []),
   ].join('\n')
 }
 

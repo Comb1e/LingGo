@@ -73,6 +73,9 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
       ? new DeterministicKataGo()
       : new KataGoEngine(store.getKataGoSettings()))
   const analysis = new AnalysisService(store, games, kataGo)
+  games.setLlmAnalysisProvider((game, signal) =>
+    analysis.contextForLlm(game, signal),
+  )
   const benchmarks = new BenchmarkService(store, games, kataGo, options.notebookStore)
 
   app.get('/api/health', async () => ({ok: true}))
@@ -119,12 +122,22 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
   app.get('/api/games/:id/analysis', async (request) => {
     const {id} = request.params as {id: string}
     if (!games.get(id)) return notFound()
-    return analysis.get(id)
+    return analysis.open(id)
   })
   app.put('/api/games/:id/analysis', async (request) => {
     const {id} = request.params as {id: string}
-    const {enabled} = z.object({enabled: z.boolean()}).parse(request.body)
-    return analysis.setEnabled(id, enabled)
+    const values = z
+      .object({
+        enabled: z.boolean().optional(),
+        shareWithLlm: z.boolean().optional(),
+      })
+      .refine(
+        (input) =>
+          input.enabled !== undefined || input.shareWithLlm !== undefined,
+        'At least one analysis setting is required',
+      )
+      .parse(request.body)
+    return analysis.update(id, values)
   })
   app.post('/api/games/:id/analysis/backfill', async (request) =>
     analysis.backfill((request.params as {id: string}).id),
@@ -136,7 +149,7 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
     const response = reply.raw
     response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive'})
     const send = (value: unknown) => response.write(`data: ${JSON.stringify(value)}\n\n`)
-    send(analysis.get(id))
+    send(analysis.open(id))
     const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 15_000)
     analysis.events.on(id, send)
     request.raw.on('close', () => {

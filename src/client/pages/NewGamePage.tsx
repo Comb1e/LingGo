@@ -35,6 +35,7 @@ export function NewGamePage() {
   })
   const [commentsVisible, setCommentsVisible] = useState(true)
   const [analysisEnabled, setAnalysisEnabled] = useState(true)
+  const [shareAnalysisWithLlm, setShareAnalysisWithLlm] = useState(false)
   const [moveCap, setMoveCap] = useState(19 * 19 * 2)
   const [error, setError] = useState<unknown>()
   const [busy, setBusy] = useState(false)
@@ -66,6 +67,7 @@ export function NewGamePage() {
         commentsVisible,
         moveCap,
         analysisEnabled,
+        shareAnalysisWithLlm,
       })
       navigate(`/games/${game.id}`)
     } catch (caught) {
@@ -148,10 +150,25 @@ export function NewGamePage() {
             <input
               type="checkbox"
               checked={analysisEnabled}
-              onChange={(event) => setAnalysisEnabled(event.target.checked)}
+              onChange={(event) => {
+                setAnalysisEnabled(event.target.checked)
+                if (!event.target.checked) setShareAnalysisWithLlm(false)
+              }}
             />
             <span className="switch" />
             <span>{t('liveAnalysis')}</span>
+          </label>
+          <label className="switch-field">
+            <input
+              type="checkbox"
+              checked={shareAnalysisWithLlm}
+              disabled={!analysisEnabled}
+              onChange={(event) =>
+                setShareAnalysisWithLlm(event.target.checked)
+              }
+            />
+            <span className="switch" />
+            <span>{t('shareAnalysisWithLlm')}</span>
           </label>
           <Button className="primary submit-button" disabled={busy}>
             <Play />

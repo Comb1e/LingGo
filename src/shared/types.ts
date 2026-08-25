@@ -95,6 +95,7 @@ export interface Game {
   pending?: boolean
   score?: Score
   analysisEnabled?: boolean
+  shareAnalysisWithLlm?: boolean
   benchmarkRunId?: string
   benchmarkGameIndex?: number
   createdAt: string
@@ -121,6 +122,7 @@ export const newGameSchema = z.object({
   commentsVisible: z.boolean().default(true),
   moveCap: z.number().int().positive().optional(),
   analysisEnabled: z.boolean().default(true),
+  shareAnalysisWithLlm: z.boolean().default(false),
 })
 export type NewGameInput = z.input<typeof newGameSchema>
 
@@ -163,6 +165,7 @@ export interface GameSnapshot {
   komi: number
   rules: string
   previousError?: string
+  kataGoAnalysis?: string
 }
 
 export interface LlmActionResult {
@@ -204,6 +207,7 @@ export interface PositionAnalysis {
 export type AnalysisStatus = 'idle' | 'running' | 'complete' | 'error'
 export interface GameAnalysis {
   enabled: boolean
+  shareWithLlm: boolean
   status: AnalysisStatus
   positions: PositionAnalysis[]
   error?: string

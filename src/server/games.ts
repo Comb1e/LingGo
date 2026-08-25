@@ -40,8 +40,18 @@ export class GameService {
   readonly vault = new SecretVault()
   private controllers = new Map<string, AbortController>()
   private scheduled = new Set<string>()
+  private llmAnalysisProvider?: (
+    game: Game,
+    signal: AbortSignal,
+  ) => Promise<string | undefined>
 
   constructor(readonly store: Store) {}
+
+  setLlmAnalysisProvider(
+    provider: (game: Game, signal: AbortSignal) => Promise<string | undefined>,
+  ) {
+    this.llmAnalysisProvider = provider
+  }
 
   list() {
     return this.store.listGames().map((game) => this.withPending(game))
@@ -101,7 +111,9 @@ export class GameService {
       moveCap: values.moveCap ?? values.size * values.size * 2,
       dead: [],
       approvals: [],
-      analysisEnabled: values.analysisEnabled,
+      analysisEnabled:
+        values.shareAnalysisWithLlm || values.analysisEnabled,
+      shareAnalysisWithLlm: values.shareAnalysisWithLlm,
       createdAt: now,
       updatedAt: now,
     }
@@ -117,7 +129,8 @@ export class GameService {
       black: {type: 'human', name: record.blackName},
       white: {type: 'human', name: record.whiteName},
       commentsVisible: true,
-      analysisEnabled: false,
+      analysisEnabled: true,
+      shareAnalysisWithLlm: false,
     })
     game.moves = record.moves
     game.result = record.result
@@ -409,6 +422,11 @@ export class GameService {
           )
         const adapter = createPlayerAdapter(connection, profile, this.vault)
         const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+        snapshot.kataGoAnalysis = await this.llmAnalysisProvider?.(
+          game,
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
         if (feedback) snapshot.previousError = feedback
         try {
           const result = await adapter.requestAction(
@@ -509,7 +527,11 @@ export class GameService {
 
   private save(game: Game) {
     this.store.saveGame(game)
-    this.store.ensureGameAnalysis(game.id, game.analysisEnabled ?? false)
+    this.store.ensureGameAnalysis(
+      game.id,
+      game.analysisEnabled ?? true,
+      game.shareAnalysisWithLlm ?? false,
+    )
     this.emit(game.id)
   }
 

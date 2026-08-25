@@ -35,7 +35,7 @@ Games, provider connections, and player profiles can be edited or deleted from t
 
 ## KataGo analysis
 
-New games enable live KataGo root analysis by default. Settings stores editable executable, model, and analysis-config paths plus the ordinary-game visit count. The bundled defaults target the verified local installation:
+Every ordinary game page includes a smooth KataGo win-rate curve with exact per-turn values. New and imported games enable live root analysis by default. Existing games can backfill their full history from the chart. Settings stores editable executable, model, and analysis-config paths plus the ordinary-game visit count. The bundled defaults target the verified local installation:
 
 ```text
 /home/comb1e/tools/KataGo/cpp/katago
@@ -43,7 +43,9 @@ New games enable live KataGo root analysis by default. Settings stores editable 
 /root/.local/share/pipx/venvs/katrain/lib/python3.12/site-packages/katrain/KataGo/analysis_config.cfg
 ```
 
-Use **Test KataGo** to launch the engine and analyze a 9x9 position. Analysis failures do not interrupt ordinary play. Existing and imported games can be backfilled from their game page. Position analysis lives outside the optimistic-versioned game JSON, and is removed past the current turn after undo.
+Use **Test KataGo** to launch the engine and analyze a 9x9 position. Analysis failures do not interrupt ordinary play. Position analysis lives outside the optimistic-versioned game JSON, and is removed past the current turn after undo.
+
+Enable **Share with LLM** per game to include the complete turn-aligned KataGo win-rate history in ordinary LLM prompts from the current model's perspective. The model waits for the current root analysis when sharing is enabled; if KataGo is unavailable, the move proceeds without analysis. Sharing is disabled by default and never changes benchmark prompt isolation.
 
 ## LLM benchmark
 

@@ -17,6 +17,19 @@ test('creates a default 19x19 human game and plays a move', async ({
   await board.locator('.shudan-vertex').nth(180).click()
   await expect(page.getByText('1', {exact: true}).first()).toBeVisible()
   await expect(page.locator('.winrate-chart')).toBeVisible()
+  await expect
+    .poll(() => page.locator('.black-line').getAttribute('d'))
+    .toContain(' C ')
+  const shareToggle = page.getByLabel('Share with LLM')
+  await expect(shareToggle).toBeVisible()
+  const sharingSaved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PUT' &&
+      response.url().includes('/analysis'),
+  )
+  await shareToggle.click()
+  expect((await sharingSaved).ok()).toBe(true)
+  await expect(shareToggle).toBeChecked()
   await page.screenshot({path: testInfo.outputPath('game.png'), fullPage: true})
 })
 

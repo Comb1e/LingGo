@@ -12,19 +12,72 @@ export class AnalysisService {
 
   constructor(private store: Store, private games: GameService, readonly engine: KataGoAnalyzer) {
     games.events.on('changed', (id: string) => this.onGameChanged(id))
+    for (const game of games.list()) {
+      if (!game.benchmarkRunId)
+        store.ensureGameAnalysis(
+          game.id,
+          game.analysisEnabled ?? true,
+          game.shareAnalysisWithLlm ?? false,
+        )
+    }
   }
 
   get(gameId: string): GameAnalysis {
     return this.store.getGameAnalysis(gameId)
   }
 
-  setEnabled(gameId: string, enabled: boolean) {
+  open(gameId: string) {
+    const game = this.games.get(gameId)
+    if (!game) throw new Error('Game not found')
+    this.store.ensureGameAnalysis(
+      gameId,
+      game.benchmarkRunId ? false : (game.analysisEnabled ?? true),
+      game.shareAnalysisWithLlm ?? false,
+    )
+    const analysis = this.get(gameId)
+    if (analysis.enabled) this.scheduleCurrent(gameId)
+    return this.get(gameId)
+  }
+
+  update(
+    gameId: string,
+    values: {enabled?: boolean; shareWithLlm?: boolean},
+  ) {
     if (!this.games.get(gameId)) throw new Error('Game not found')
-    this.store.setGameAnalysisState(gameId, {enabled, status: enabled ? 'idle' : 'idle', error: null})
+    const current = this.get(gameId)
+    const shareWithLlm =
+      values.enabled === false
+        ? false
+        : (values.shareWithLlm ?? current.shareWithLlm)
+    const enabled = shareWithLlm ? true : (values.enabled ?? current.enabled)
+    this.store.setGameAnalysisState(gameId, {
+      enabled,
+      shareWithLlm,
+      status: 'idle',
+      error: null,
+    })
     if (enabled) this.scheduleCurrent(gameId)
     else this.cancel(gameId)
     this.emit(gameId)
     return this.get(gameId)
+  }
+
+  async contextForLlm(game: Game, signal: AbortSignal) {
+    const analysis = this.get(game.id)
+    if (!analysis.shareWithLlm) return undefined
+    this.scheduleCurrent(game.id)
+    const expectedHash = positionHash(game, game.moves.length)
+    while (true) {
+      signal.throwIfAborted()
+      const latest = this.get(game.id)
+      const current = latest.positions.find(
+        (value) =>
+          value.turn === game.moves.length && value.positionHash === expectedHash,
+      )
+      if (current) return formatLlmHistory(latest, game.toMove)
+      if (latest.status === 'error') return undefined
+      await waitForEvent(this.events, game.id, signal)
+    }
   }
 
   backfill(gameId: string) {
@@ -107,6 +160,40 @@ export class AnalysisService {
   private emit(gameId: string) {
     this.events.emit(gameId, this.get(gameId))
   }
+}
+
+export function formatLlmHistory(analysis: GameAnalysis, color: 'B' | 'W') {
+  return analysis.positions
+    .map((value) => {
+      const own = color === 'B' ? value.blackWinRate : value.whiteWinRate
+      const opponent = color === 'B' ? value.whiteWinRate : value.blackWinRate
+      return `Turn ${value.turn}: your win rate ${(own * 100).toFixed(2)}%; opponent ${(opponent * 100).toFixed(2)}%`
+    })
+    .join('\n')
+}
+
+function waitForEvent(
+  events: EventEmitter,
+  gameId: string,
+  signal: AbortSignal,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      events.off(gameId, update)
+      signal.removeEventListener('abort', abort)
+    }
+    const update = () => {
+      cleanup()
+      resolve()
+    }
+    const abort = () => {
+      cleanup()
+      reject(new DOMException('Analysis wait aborted', 'AbortError'))
+    }
+    events.once(gameId, update)
+    signal.addEventListener('abort', abort, {once: true})
+    if (signal.aborted) abort()
+  })
 }
 
 export function positionHash(game: Pick<Game, 'size' | 'moves'>, turn: number) {

@@ -142,20 +142,36 @@ export class Store {
     return this.getKataGoSettings()
   }
 
-  ensureGameAnalysis(gameId: string, enabled: boolean) {
+  ensureGameAnalysis(gameId: string, enabled: boolean, shareWithLlm = false) {
     this.db.prepare(
-      `INSERT INTO game_analysis_state (game_id, enabled, status, updated_at)
-       VALUES (?, ?, 'idle', ?) ON CONFLICT(game_id) DO NOTHING`,
-    ).run(gameId, enabled ? 1 : 0, new Date().toISOString())
+      `INSERT INTO game_analysis_state (game_id, enabled, share_with_llm, status, updated_at)
+       VALUES (?, ?, ?, 'idle', ?) ON CONFLICT(game_id) DO NOTHING`,
+    ).run(
+      gameId,
+      enabled ? 1 : 0,
+      shareWithLlm ? 1 : 0,
+      new Date().toISOString(),
+    )
   }
 
-  setGameAnalysisState(gameId: string, values: {enabled?: boolean; status?: string; error?: string | null}) {
+  setGameAnalysisState(gameId: string, values: {
+    enabled?: boolean
+    shareWithLlm?: boolean
+    status?: string
+    error?: string | null
+  }) {
     this.ensureGameAnalysis(gameId, values.enabled ?? false)
     const current = this.db.prepare('SELECT * FROM game_analysis_state WHERE game_id = ?').get(gameId) as any
     this.db.prepare(
-      'UPDATE game_analysis_state SET enabled = ?, status = ?, error = ?, updated_at = ? WHERE game_id = ?',
+      `UPDATE game_analysis_state SET enabled = ?, share_with_llm = ?, status = ?,
+       error = ?, updated_at = ? WHERE game_id = ?`,
     ).run(
       values.enabled === undefined ? current.enabled : values.enabled ? 1 : 0,
+      values.shareWithLlm === undefined
+        ? current.share_with_llm
+        : values.shareWithLlm
+          ? 1
+          : 0,
       values.status ?? current.status,
       values.error === undefined ? current.error : values.error,
       new Date().toISOString(),
@@ -170,6 +186,7 @@ export class Store {
     ).all(gameId) as any[]).map(mapPositionAnalysis)
     return {
       enabled: Boolean(state?.enabled),
+      shareWithLlm: Boolean(state?.share_with_llm),
       status: state?.status ?? 'idle',
       error: state?.error ?? undefined,
       positions,

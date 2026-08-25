@@ -81,6 +81,19 @@ describe('provider normalization', () => {
     expect(makePrompt(emptySnapshot())).toContain('2. PLAYING STYLE\n(none)')
   })
 
+  it('includes KataGo win rates in ordinary prompts only when provided', () => {
+    const snapshot = emptySnapshot()
+    expect(makePrompt(snapshot)).not.toContain('KATAGO WIN-RATE HISTORY')
+    snapshot.kataGoAnalysis =
+      'Turn 0: your win rate 50.00%; opponent 50.00%'
+    const prompt = makePrompt(snapshot)
+    expect(prompt).toContain(
+      '6. KATAGO WIN-RATE HISTORY\nTurn 0: your win rate 50.00%; opponent 50.00%',
+    )
+    expect(prompt).toContain('You may use the supplied KataGo win-rate history.')
+    expect(prompt).not.toContain('Do not use external analysis.')
+  })
+
   it.each([
     ['openai', '/proxy/openai/v1/responses'],
     ['anthropic', '/proxy/anthropic/v1/messages'],

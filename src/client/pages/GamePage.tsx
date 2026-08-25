@@ -58,8 +58,30 @@ export function GamePage() {
     enabled: Boolean(id),
   })
   const analysisMutation = useMutation({
-    mutationFn: (enabled: boolean) => api.setAnalysis(id, enabled),
+    mutationFn: (input: {enabled?: boolean; shareWithLlm?: boolean}) =>
+      api.setAnalysis(id, input),
+    onMutate: (input) => {
+      void queryClient.cancelQueries({queryKey: ['analysis', id]})
+      const previous = queryClient.getQueryData<GameAnalysis>(['analysis', id])
+      queryClient.setQueryData<GameAnalysis>(['analysis', id], (current) =>
+        current
+          ? {
+              ...current,
+              enabled: input.shareWithLlm
+                ? true
+                : (input.enabled ?? current.enabled),
+              shareWithLlm:
+                input.enabled === false
+                  ? false
+                  : (input.shareWithLlm ?? current.shareWithLlm),
+            }
+          : current,
+      )
+      return {previous}
+    },
     onSuccess: (value) => queryClient.setQueryData(['analysis', id], value),
+    onError: (_error, _input, context) =>
+      queryClient.setQueryData(['analysis', id], context?.previous),
   })
   const backfillMutation = useMutation({
     mutationFn: () => api.backfillAnalysis(id),
@@ -343,6 +365,9 @@ export function GamePage() {
             moveCount={game.moves.length}
             busy={analysisMutation.isPending || backfillMutation.isPending}
             onToggle={(enabled) => analysisMutation.mutate(enabled)}
+            onShare={(shareWithLlm) =>
+              analysisMutation.mutate({shareWithLlm})
+            }
             onAnalyze={() => backfillMutation.mutate()}
           />
         </section>
@@ -479,12 +504,14 @@ function WinRatePanel({
   moveCount,
   busy,
   onToggle,
+  onShare,
   onAnalyze,
 }: {
   analysis?: GameAnalysis
   moveCount: number
   busy: boolean
-  onToggle: (enabled: boolean) => void
+  onToggle: (input: {enabled: boolean}) => void
+  onShare: (shareWithLlm: boolean) => void
   onAnalyze: () => void
 }) {
   const {t} = useTranslation()
@@ -493,10 +520,16 @@ function WinRatePanel({
   const height = 180
   const inset = 22
   const maxTurn = Math.max(moveCount, 1)
-  const point = (turn: number, rate: number) =>
-    `${inset + (turn / maxTurn) * (width - inset * 2)},${inset + (1 - rate) * (height - inset * 2)}`
-  const blackLine = positions.map((value) => point(value.turn, value.blackWinRate)).join(' ')
-  const whiteLine = positions.map((value) => point(value.turn, value.whiteWinRate)).join(' ')
+  const point = (turn: number, rate: number): [number, number] => [
+    inset + (turn / maxTurn) * (width - inset * 2),
+    inset + (1 - rate) * (height - inset * 2),
+  ]
+  const blackPoints = positions.map((value) =>
+    point(value.turn, value.blackWinRate),
+  )
+  const whitePoints = positions.map((value) =>
+    point(value.turn, value.whiteWinRate),
+  )
   return (
     <section className="winrate-panel">
       <header>
@@ -506,9 +539,19 @@ function WinRatePanel({
             <Button disabled={busy} onClick={onAnalyze}>{t('analyze')}</Button>
           )}
           <label className="switch-field compact-switch">
-            <input type="checkbox" checked={analysis?.enabled ?? false} onChange={(event) => onToggle(event.target.checked)} />
+            <input type="checkbox" checked={analysis?.enabled ?? false} onChange={(event) => onToggle({enabled: event.target.checked})} />
             <span className="switch" />
             <span>{t('live')}</span>
+          </label>
+          <label className="switch-field compact-switch">
+            <input
+              type="checkbox"
+              checked={analysis?.shareWithLlm ?? false}
+              disabled={!analysis?.enabled}
+              onChange={(event) => onShare(event.target.checked)}
+            />
+            <span className="switch" />
+            <span>{t('shareWithLlm')}</span>
           </label>
         </div>
       </header>
@@ -517,14 +560,14 @@ function WinRatePanel({
         <>
           <svg className="winrate-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('winRateChart')}>
             <line x1={inset} y1={height / 2} x2={width - inset} y2={height / 2} className="chart-midline" />
-            <polyline points={blackLine} className="chart-line black-line" />
-            <polyline points={whiteLine} className="chart-line white-line" />
+            <path d={smoothCurve(blackPoints)} className="chart-line black-line" />
+            <path d={smoothCurve(whitePoints)} className="chart-line white-line" />
             {positions.map((value) => (
               <g key={value.turn}>
-                <circle cx={Number(point(value.turn, value.blackWinRate).split(',')[0])} cy={Number(point(value.turn, value.blackWinRate).split(',')[1])} r="3.5" className="chart-dot black-dot" tabIndex={0}>
+                <circle cx={point(value.turn, value.blackWinRate)[0]} cy={point(value.turn, value.blackWinRate)[1]} r="3.5" className="chart-dot black-dot" tabIndex={0}>
                   <title>{`${t('turn')} ${value.turn}: ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
                 </circle>
-                <circle cx={Number(point(value.turn, value.whiteWinRate).split(',')[0])} cy={Number(point(value.turn, value.whiteWinRate).split(',')[1])} r="3.5" className="chart-dot white-dot" tabIndex={0}>
+                <circle cx={point(value.turn, value.whiteWinRate)[0]} cy={point(value.turn, value.whiteWinRate)[1]} r="3.5" className="chart-dot white-dot" tabIndex={0}>
                   <title>{`${t('turn')} ${value.turn}: ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
                 </circle>
               </g>
@@ -537,6 +580,15 @@ function WinRatePanel({
       )}
     </section>
   )
+}
+
+function smoothCurve(points: Array<[number, number]>) {
+  if (!points.length) return ''
+  return points.slice(1).reduce((path, [x, y], index) => {
+    const [previousX, previousY] = points[index]
+    const middleX = (previousX + x) / 2
+    return `${path} C ${middleX} ${previousY}, ${middleX} ${y}, ${x} ${y}`
+  }, `M ${points[0][0]} ${points[0][1]}`)
 }
 
 function MoveReasoning({text}: {text: string}) {
