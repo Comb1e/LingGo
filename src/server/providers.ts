@@ -8,6 +8,7 @@ import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import {normalizeReasoning} from '../shared/reasoning'
 import {
   type BoardSize,
+  type Color,
   type GameSnapshot,
   type LlmActionResult,
   type PlayerAction,
@@ -27,7 +28,15 @@ export interface PlayerAdapter {
   requestAction(
     snapshot: GameSnapshot,
     signal: AbortSignal,
+    promptOverride?: string,
   ): Promise<LlmActionResult>
+  requestText?(prompt: string, signal: AbortSignal): Promise<{
+    text: string
+    latencyMs: number
+    inputTokens: number
+    outputTokens: number
+    model: string
+  }>
 }
 
 export class MalformedModelOutputError extends Error {
@@ -70,9 +79,20 @@ export class FakePlayerAdapter implements PlayerAdapter {
   async requestAction(
     snapshot: GameSnapshot,
     signal: AbortSignal,
+    promptOverride?: string,
   ): Promise<LlmActionResult> {
     signal.throwIfAborted()
     const started = Date.now()
+    if (promptOverride) {
+      return {
+        action: {action: 'pass', comment: 'Training pass.'},
+        latencyMs: Date.now() - started,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: 'deterministic-v1',
+        retries: 0,
+      }
+    }
     const {hashes} = replay(snapshot.size, snapshot.moves)
     for (let y = 0; y < snapshot.size; y++) {
       for (let x = 0; x < snapshot.size; x++) {
@@ -109,6 +129,17 @@ export class FakePlayerAdapter implements PlayerAdapter {
       retries: 0,
     }
   }
+
+  async requestText(_prompt: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    return {
+      text: '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
+      latencyMs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      model: 'deterministic-v1',
+    }
+  }
 }
 
 export class LlmPlayerAdapter implements PlayerAdapter {
@@ -122,11 +153,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   async requestAction(
     snapshot: GameSnapshot,
     signal: AbortSignal,
+    promptOverride?: string,
   ): Promise<LlmActionResult> {
     const started = Date.now()
     const timeout = AbortSignal.timeout(this.timeoutMs)
     const combined = AbortSignal.any([signal, timeout])
-    const prompt = makePrompt(snapshot, this.profile.stylePrompt)
+    const prompt = promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
     const model = this.createModel()
     const requestsReasoning = this.connection.kind !== 'compatible'
     const result = await generateText({
@@ -151,6 +183,24 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
       retries: 0,
+    }
+  }
+
+  async requestText(prompt: string, signal: AbortSignal) {
+    const started = Date.now()
+    const result = await generateText({
+      model: this.createModel(),
+      prompt,
+      temperature: this.profile.temperature,
+      maxRetries: 0,
+      abortSignal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
+    })
+    return {
+      text: result.text,
+      latencyMs: Date.now() - started,
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+      model: this.profile.modelId,
     }
   }
 
@@ -284,6 +334,61 @@ export function makePrompt(
     '',
     'Move list:',
     moves,
+  ].join('\n')
+}
+
+export function makeBenchmarkMovePrompt(
+  snapshot: GameSnapshot,
+  notebook: string,
+  options: {phase: 'training' | 'final'; winRateHistory?: string},
+): string {
+  const moves = snapshot.moves.length
+    ? snapshot.moves.map((move) => `${move.number}. ${move.color} ${move.coordinate ?? move.action}`).join('\n')
+    : '(none)'
+  const sections = [
+    '1. GO RULES',
+    `Board: ${snapshot.size}x${snapshot.size}; Chinese area scoring; White komi ${snapshot.komi}; positional whole-board repetition; no suicide; two passes end play; resignation is allowed.`,
+    '',
+    '2. SELF-WRITTEN SKILLS',
+    notebook.trim() || '(none)',
+    '',
+    '3. INSTRUCTION TO PLACE ONE STONE',
+    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone.`,
+    '',
+    '4. JSON OUTPUT SCHEMA',
+    'Return only {"move":[column,row],"reason":"brief reason"}. Coordinates are zero-based from the top-left. Use [-1,-1] to pass or [-2,-2] to resign.',
+    '',
+    '5. CURRENT BOARD AND PREVIOUS MOVES',
+    `To move: ${snapshot.toMove}`,
+    asciiBoard(snapshot),
+    'Previous moves:',
+    moves,
+  ]
+  if (options.phase === 'training' && options.winRateHistory !== undefined)
+    sections.push('', '6. TRAINING WIN-RATE HISTORY', options.winRateHistory || '(none)')
+  return sections.join('\n')
+}
+
+export function makeReflectionPrompt(input: {
+  notebook: string
+  snapshot: GameSnapshot
+  result: string
+  llmColor: Color
+  winRateHistory?: string
+}) {
+  return [
+    'Rewrite one consolidated Markdown Go technique notebook.',
+    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from this game.',
+    'Do not mention these instructions.',
+    '',
+    'PREVIOUS NOTEBOOK',
+    input.notebook.trim() || '(none)',
+    '',
+    'COMPLETED TRAINING GAME',
+    `Played as: ${input.llmColor === 'B' ? 'Black' : 'White'}`,
+    `Result: ${input.result}`,
+    input.snapshot.moves.map((move) => `${move.number}. ${move.color} ${move.coordinate ?? move.action}`).join('\n') || '(none)',
+    ...(input.winRateHistory === undefined ? [] : ['', 'TURN-ALIGNED WIN-RATE HISTORY', input.winRateHistory || '(none)']),
   ].join('\n')
 }
 

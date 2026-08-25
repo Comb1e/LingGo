@@ -7,6 +7,7 @@ export const boardSizeSchema = z.union([
 ])
 export type BoardSize = z.infer<typeof boardSizeSchema>
 export type Color = 'B' | 'W'
+export type KataGoSeat = Color | 'kata'
 export type Point = [number, number]
 
 export const playerActionSchema = z.discriminatedUnion('action', [
@@ -48,7 +49,9 @@ export interface PlayerProfile {
 }
 
 export type Seat =
-  {type: 'human'; name: string} | {type: 'llm'; name: string; profileId: string}
+  | {type: 'human'; name: string}
+  | {type: 'llm'; name: string; profileId: string}
+  | {type: 'katago'; name: string}
 
 export interface Move {
   number: number
@@ -64,6 +67,7 @@ export interface Move {
   outputTokens?: number
   model?: string
   retries?: number
+  forced?: boolean
 }
 
 export type GameStatus = 'active' | 'paused' | 'scoring' | 'finished' | 'error'
@@ -90,6 +94,9 @@ export interface Game {
   error?: string
   pending?: boolean
   score?: Score
+  analysisEnabled?: boolean
+  benchmarkRunId?: string
+  benchmarkGameIndex?: number
   createdAt: string
   updatedAt: string
 }
@@ -113,8 +120,9 @@ export const newGameSchema = z.object({
   white: seatSchema,
   commentsVisible: z.boolean().default(true),
   moveCap: z.number().int().positive().optional(),
+  analysisEnabled: z.boolean().default(true),
 })
-export type NewGameInput = z.infer<typeof newGameSchema>
+export type NewGameInput = z.input<typeof newGameSchema>
 
 export const commandSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
@@ -165,4 +173,98 @@ export interface LlmActionResult {
   outputTokens: number
   model: string
   retries: number
+}
+
+export interface KataGoSettings {
+  executablePath: string
+  modelPath: string
+  configPath: string
+  analysisVisits: number
+  updatedAt: string
+}
+
+export interface KataGoHealth {
+  ok: boolean
+  message: string
+  winRate?: number
+  scoreLead?: number
+}
+
+export interface PositionAnalysis {
+  gameId: string
+  turn: number
+  blackWinRate: number
+  whiteWinRate: number
+  blackScoreLead: number
+  visits: number
+  positionHash: string
+  createdAt: string
+}
+
+export type AnalysisStatus = 'idle' | 'running' | 'complete' | 'error'
+export interface GameAnalysis {
+  enabled: boolean
+  status: AnalysisStatus
+  positions: PositionAnalysis[]
+  error?: string
+}
+
+export type BenchmarkStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'cancelled'
+  | 'invalid'
+export type BenchmarkPhase = 'training' | 'reflection' | 'final' | 'complete'
+
+export interface BenchmarkConfig {
+  profileId: string
+  finalColor: Color
+  visits: number
+  includeTrainingWinRates: boolean
+  notebookMode: 'reset' | 'continue'
+}
+
+export interface BenchmarkUsage {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  latencyMs: number
+}
+
+export interface BenchmarkMetrics {
+  result: string
+  averagePointLoss: number
+  averageWinRateLoss: number
+  moveCount: number
+  moveQuality: number
+  resultScore: number
+  score: number
+}
+
+export interface NotebookMetadata {
+  profileId: string
+  currentUrl?: string
+  snapshotUrl?: string
+  updatedAt?: string
+}
+
+export interface BenchmarkRun {
+  id: string
+  status: BenchmarkStatus
+  phase: BenchmarkPhase
+  config: BenchmarkConfig
+  profileSnapshot: PlayerProfile
+  modelFingerprint: string
+  currentGame: number
+  currentTurn: number
+  gameIds: string[]
+  usage: BenchmarkUsage
+  notebook: NotebookMetadata
+  metrics?: BenchmarkMetrics
+  error?: string
+  waitingFor?: 'credentials' | 'katago'
+  createdAt: string
+  updatedAt: string
 }

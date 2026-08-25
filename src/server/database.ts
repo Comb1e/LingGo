@@ -2,7 +2,15 @@ import Database from 'better-sqlite3'
 import {mkdirSync, readFileSync, readdirSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
-import type {Game, PlayerProfile, ProviderConnection} from '../shared/types'
+import type {
+  BenchmarkRun,
+  Game,
+  GameAnalysis,
+  KataGoSettings,
+  PlayerProfile,
+  PositionAnalysis,
+  ProviderConnection,
+} from '../shared/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -110,8 +118,109 @@ export class Store {
 
   deleteAllForTests() {
     this.db.exec(
-      'DELETE FROM games; DELETE FROM player_profiles; DELETE FROM provider_connections;',
+      'DELETE FROM benchmark_runs; DELETE FROM games; DELETE FROM player_profiles; DELETE FROM provider_connections;',
     )
+  }
+
+  getKataGoSettings(): KataGoSettings {
+    const row = this.db.prepare('SELECT * FROM katago_settings WHERE singleton = 1').get() as any
+    return {
+      executablePath: row.executable_path,
+      modelPath: row.model_path,
+      configPath: row.config_path,
+      analysisVisits: row.analysis_visits,
+      updatedAt: row.updated_at,
+    }
+  }
+
+  saveKataGoSettings(settings: Omit<KataGoSettings, 'updatedAt'>): KataGoSettings {
+    const updatedAt = new Date().toISOString()
+    this.db.prepare(
+      `UPDATE katago_settings SET executable_path = ?, model_path = ?, config_path = ?,
+       analysis_visits = ?, updated_at = ? WHERE singleton = 1`,
+    ).run(settings.executablePath, settings.modelPath, settings.configPath, settings.analysisVisits, updatedAt)
+    return this.getKataGoSettings()
+  }
+
+  ensureGameAnalysis(gameId: string, enabled: boolean) {
+    this.db.prepare(
+      `INSERT INTO game_analysis_state (game_id, enabled, status, updated_at)
+       VALUES (?, ?, 'idle', ?) ON CONFLICT(game_id) DO NOTHING`,
+    ).run(gameId, enabled ? 1 : 0, new Date().toISOString())
+  }
+
+  setGameAnalysisState(gameId: string, values: {enabled?: boolean; status?: string; error?: string | null}) {
+    this.ensureGameAnalysis(gameId, values.enabled ?? false)
+    const current = this.db.prepare('SELECT * FROM game_analysis_state WHERE game_id = ?').get(gameId) as any
+    this.db.prepare(
+      'UPDATE game_analysis_state SET enabled = ?, status = ?, error = ?, updated_at = ? WHERE game_id = ?',
+    ).run(
+      values.enabled === undefined ? current.enabled : values.enabled ? 1 : 0,
+      values.status ?? current.status,
+      values.error === undefined ? current.error : values.error,
+      new Date().toISOString(),
+      gameId,
+    )
+  }
+
+  getGameAnalysis(gameId: string): GameAnalysis {
+    const state = this.db.prepare('SELECT * FROM game_analysis_state WHERE game_id = ?').get(gameId) as any
+    const positions = (this.db.prepare(
+      'SELECT * FROM position_analyses WHERE game_id = ? ORDER BY turn',
+    ).all(gameId) as any[]).map(mapPositionAnalysis)
+    return {
+      enabled: Boolean(state?.enabled),
+      status: state?.status ?? 'idle',
+      error: state?.error ?? undefined,
+      positions,
+    }
+  }
+
+  savePositionAnalysis(value: PositionAnalysis) {
+    this.db.prepare(
+      `INSERT INTO position_analyses
+       (game_id, turn, black_win_rate, white_win_rate, black_score_lead, visits, position_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(game_id, turn) DO UPDATE SET black_win_rate = excluded.black_win_rate,
+       white_win_rate = excluded.white_win_rate, black_score_lead = excluded.black_score_lead,
+       visits = excluded.visits, position_hash = excluded.position_hash, created_at = excluded.created_at`,
+    ).run(value.gameId, value.turn, value.blackWinRate, value.whiteWinRate, value.blackScoreLead,
+      value.visits, value.positionHash, value.createdAt)
+  }
+
+  deleteAnalysisAfter(gameId: string, turn: number) {
+    this.db.prepare('DELETE FROM position_analyses WHERE game_id = ? AND turn > ?').run(gameId, turn)
+  }
+
+  listBenchmarks(): BenchmarkRun[] {
+    return (this.db.prepare('SELECT run_json FROM benchmark_runs ORDER BY created_at DESC').all() as Array<{run_json: string}>)
+      .map(({run_json}) => JSON.parse(run_json))
+  }
+
+  getBenchmark(id: string): BenchmarkRun | undefined {
+    const row = this.db.prepare('SELECT run_json FROM benchmark_runs WHERE id = ?').get(id) as {run_json: string} | undefined
+    return row ? JSON.parse(row.run_json) : undefined
+  }
+
+  saveBenchmark(run: BenchmarkRun) {
+    this.db.prepare(
+      `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET status = excluded.status, phase = excluded.phase,
+       run_json = excluded.run_json, updated_at = excluded.updated_at`,
+    ).run(run.id, run.status, run.phase, run.config.profileId, JSON.stringify(run), run.createdAt, run.updatedAt)
+  }
+
+  linkBenchmarkGame(runId: string, gameId: string, gameIndex: number) {
+    this.db.prepare('INSERT INTO benchmark_games (run_id, game_id, game_index) VALUES (?, ?, ?)').run(runId, gameId, gameIndex)
+  }
+
+  deleteBenchmark(id: string) {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM games WHERE id IN (SELECT game_id FROM benchmark_games WHERE run_id = ?)').run(id)
+      return this.db.prepare('DELETE FROM benchmark_runs WHERE id = ?').run(id).changes > 0
+    })
+    return transaction()
   }
 
   listConnections(): ProviderConnection[] {
@@ -205,6 +314,19 @@ export class Store {
       this.db.prepare('DELETE FROM player_profiles WHERE id = ?').run(id)
         .changes > 0
     )
+  }
+}
+
+function mapPositionAnalysis(row: any): PositionAnalysis {
+  return {
+    gameId: row.game_id,
+    turn: row.turn,
+    blackWinRate: row.black_win_rate,
+    whiteWinRate: row.white_win_rate,
+    blackScoreLead: row.black_score_lead,
+    visits: row.visits,
+    positionHash: row.position_hash,
+    createdAt: row.created_at,
   }
 }
 

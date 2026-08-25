@@ -101,6 +101,7 @@ export class GameService {
       moveCap: values.moveCap ?? values.size * values.size * 2,
       dead: [],
       approvals: [],
+      analysisEnabled: values.analysisEnabled,
       createdAt: now,
       updatedAt: now,
     }
@@ -116,12 +117,58 @@ export class GameService {
       black: {type: 'human', name: record.blackName},
       white: {type: 'human', name: record.whiteName},
       commentsVisible: true,
+      analysisEnabled: false,
     })
     game.moves = record.moves
     game.result = record.result
     game.status = record.result ? 'finished' : 'active'
     game.autoplay = false
     this.refreshPosition(game)
+    return this.commit(game)
+  }
+
+  createBenchmarkGame(input: {
+    runId: string
+    gameIndex: number
+    llmColor: Color
+    profileId: string
+    profileName: string
+  }) {
+    const game = this.create({
+      size: 19,
+      komi: 7.5,
+      black: {type: 'human', name: 'Black'},
+      white: {type: 'human', name: 'White'},
+      commentsVisible: true,
+      moveCap: 722,
+      analysisEnabled: false,
+    })
+    const llm = {type: 'llm' as const, name: input.profileName, profileId: input.profileId}
+    const kata = {type: 'katago' as const, name: 'KataGo'}
+    game.black = input.llmColor === 'B' ? llm : kata
+    game.white = input.llmColor === 'W' ? llm : kata
+    game.autoplay = false
+    game.benchmarkRunId = input.runId
+    game.benchmarkGameIndex = input.gameIndex
+    return this.commit(game)
+  }
+
+  acceptAutomated(id: string, action: PlayerAction, llm?: LlmActionResult, forced = false) {
+    const saved = this.accept(this.requireGame(id), action, llm)
+    if (forced) {
+      const game = this.requireGame(id)
+      game.moves.at(-1)!.forced = true
+      return this.commit(game)
+    }
+    return saved
+  }
+
+  finishAutomated(id: string, result: string) {
+    const game = this.requireGame(id)
+    game.result = result
+    game.status = 'finished'
+    game.autoplay = false
+    game.error = undefined
     return this.commit(game)
   }
 
@@ -410,8 +457,8 @@ export class GameService {
 
   private automaticApprovals(game: Game): Color[] {
     const approvals: Color[] = []
-    if (game.black.type === 'llm') approvals.push('B')
-    if (game.white.type === 'llm') approvals.push('W')
+    if (game.black.type !== 'human') approvals.push('B')
+    if (game.white.type !== 'human') approvals.push('W')
     return approvals
   }
 
@@ -462,11 +509,13 @@ export class GameService {
 
   private save(game: Game) {
     this.store.saveGame(game)
+    this.store.ensureGameAnalysis(game.id, game.analysisEnabled ?? false)
     this.emit(game.id)
   }
 
   private emit(id: string) {
     this.events.emit(id, this.get(id) ?? null)
+    this.events.emit('changed', id)
   }
 
   private requireGame(id: string): Game {
