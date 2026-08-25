@@ -69,6 +69,20 @@ describe('benchmark scoring and prompts', () => {
     expect(reflection).not.toContain('PLAYING STYLE')
   })
 
+  it('shows prior moves in the JSON coordinate system', () => {
+    const snapshot = makeSnapshot(19, 7.5, [{
+      number: 1,
+      color: 'B',
+      action: 'play',
+      point: [0, 0],
+      coordinate: 'A19',
+      comment: '',
+      captured: 0,
+    }])
+    expect(makeBenchmarkMovePrompt(snapshot, '', {phase: 'training'}))
+      .toContain('1. B A19 [0,0]')
+  })
+
   it('marks every game and move in sequence with all recorded comments and thoughts', () => {
     const first = makeSnapshot(19, 7.5, [{
       number: 1,
@@ -179,6 +193,59 @@ describe('benchmark scoring and prompts', () => {
     expect(reflectionPrompts[9].match(/"comment":"Comment at turn/g)).toHaveLength(10)
     expect(reflectionPrompts[9].match(/"comment":"KataGo passed\."/g)).toHaveLength(10)
     expect(reflectionPrompts[9].match(/"thought":"Thought at turn/g)).toHaveLength(10)
+    await service.close()
+  })
+
+  it('retries an occupied benchmark move on the unchanged position', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
+    const games = new GameService(store)
+    const prompts: string[] = []
+    const adapter = {
+      async requestAction(snapshot, signal, prompt) {
+        signal.throwIfAborted()
+        prompts.push(prompt ?? '')
+        const repeatsOccupiedPoint =
+          snapshot.toMove === 'B' &&
+          snapshot.moves.length === 2 &&
+          !snapshot.previousError
+        const opensAtA19 = snapshot.toMove === 'B' && snapshot.moves.length === 0
+        return {
+          action: opensAtA19 || repeatsOccupiedPoint
+            ? {action: 'play' as const, coordinate: 'A19', comment: 'Play the corner.'}
+            : {action: 'pass' as const, comment: 'Pass after correction.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(_prompt, signal) {
+        signal.throwIfAborted()
+        return {text: '# Lessons', inputTokens: 0, outputTokens: 0, latencyMs: 0, model: 'test-model'}
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const run = await service.create({
+      profileId: 'builtin-fake-profile',
+      finalColor: 'W',
+      visits: 25,
+      includeTrainingWinRates: true,
+      notebookMode: 'reset',
+    })
+
+    expect(await waitFor(() => service.get(run.id)?.status === 'completed', 2_000)).toBe(true)
+    const correction = prompts.find((prompt) => prompt.includes('Intersection is occupied'))
+    expect(correction).toContain('The position is unchanged; choose a different legal move.')
+    expect(correction).toContain('1. B A19 [0,0]')
+    expect(service.get(run.id)?.error).toBeUndefined()
     await service.close()
   })
 })

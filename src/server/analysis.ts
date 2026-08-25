@@ -23,7 +23,23 @@ export class AnalysisService {
   }
 
   get(gameId: string): GameAnalysis {
-    return this.store.getGameAnalysis(gameId)
+    const analysis = this.store.getGameAnalysis(gameId)
+    const game = this.games.get(gameId)
+    if (!game?.benchmarkRunId) return analysis
+
+    const run = this.store.getBenchmark(game.benchmarkRunId)
+    const gameIndex = game.benchmarkGameIndex ?? run?.gameIds.indexOf(gameId)
+    return {
+      ...analysis,
+      enabled: true,
+      shareWithLlm: Boolean(
+        run?.config.includeTrainingWinRates &&
+          gameIndex !== undefined &&
+          gameIndex >= 0 &&
+          gameIndex < 10,
+      ),
+      managedByBenchmark: true,
+    }
   }
 
   open(gameId: string) {
@@ -35,7 +51,7 @@ export class AnalysisService {
       game.shareAnalysisWithLlm ?? false,
     )
     const analysis = this.get(gameId)
-    if (analysis.enabled) this.scheduleCurrent(gameId)
+    if (!game.benchmarkRunId && analysis.enabled) this.scheduleCurrent(gameId)
     return this.get(gameId)
   }
 
@@ -43,7 +59,10 @@ export class AnalysisService {
     gameId: string,
     values: {enabled?: boolean; shareWithLlm?: boolean},
   ) {
-    if (!this.games.get(gameId)) throw new Error('Game not found')
+    const game = this.games.get(gameId)
+    if (!game) throw new Error('Game not found')
+    if (game.benchmarkRunId)
+      throw new Error('Benchmark analysis settings are controlled by the benchmark run')
     const current = this.get(gameId)
     const shareWithLlm =
       values.enabled === false
@@ -103,6 +122,10 @@ export class AnalysisService {
     const game = this.games.get(id)
     if (!game) return
     this.store.deleteAnalysisAfter(id, game.moves.length)
+    if (game.benchmarkRunId) {
+      this.emit(id)
+      return
+    }
     const analysis = this.get(id)
     if (analysis.enabled) this.scheduleCurrent(id)
     this.emit(id)

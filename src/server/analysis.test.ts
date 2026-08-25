@@ -2,6 +2,7 @@ import {afterEach, describe, expect, it} from 'vitest'
 import {AnalysisService, formatLlmHistory} from './analysis'
 import {Store} from './database'
 import {GameService} from './games'
+import type {BenchmarkRun} from '../shared/types'
 import type {KataGoAnalyzer} from './katago'
 
 let store: Store | undefined
@@ -69,6 +70,65 @@ describe('game analysis', () => {
       enabled: false,
       shareWithLlm: false,
     })
+    await analysis.close()
+  })
+
+  it('reports benchmark win-rate sharing from the run configuration', async () => {
+    store = new Store(':memory:')
+    const games = new GameService(store)
+    const analysis = new AnalysisService(store, games, engine)
+    const now = new Date().toISOString()
+    const profile = store.getProfile('builtin-fake-profile')!
+    const run: BenchmarkRun = {
+      id: 'benchmark',
+      status: 'running',
+      phase: 'training',
+      config: {
+        profileId: profile.id,
+        finalColor: 'B',
+        visits: 25,
+        includeTrainingWinRates: true,
+        notebookMode: 'reset',
+      },
+      profileSnapshot: profile,
+      modelFingerprint: 'fingerprint',
+      currentGame: 0,
+      currentTurn: 0,
+      gameIds: [],
+      usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+      notebook: {profileId: profile.id},
+      createdAt: now,
+      updatedAt: now,
+    }
+    store.saveBenchmark(run)
+    const training = games.createBenchmarkGame({
+      runId: run.id,
+      gameIndex: 0,
+      llmColor: 'B',
+      profileId: profile.id,
+      profileName: profile.name,
+    })
+    const final = games.createBenchmarkGame({
+      runId: run.id,
+      gameIndex: 10,
+      llmColor: 'B',
+      profileId: profile.id,
+      profileName: profile.name,
+    })
+
+    expect(analysis.open(training.id)).toMatchObject({
+      enabled: true,
+      shareWithLlm: true,
+      managedByBenchmark: true,
+    })
+    expect(analysis.open(final.id)).toMatchObject({
+      enabled: true,
+      shareWithLlm: false,
+      managedByBenchmark: true,
+    })
+    expect(() => analysis.update(training.id, {shareWithLlm: false})).toThrow(
+      'Benchmark analysis settings are controlled by the benchmark run',
+    )
     await analysis.close()
   })
 })

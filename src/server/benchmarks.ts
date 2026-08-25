@@ -1,5 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto'
 import {EventEmitter} from 'node:events'
+import {NoOutputGeneratedError} from 'ai'
 import type {
   BenchmarkConfig,
   BenchmarkMetrics,
@@ -11,11 +12,16 @@ import type {
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
-import {boardHash, makeSnapshot, replay} from './go'
+import {boardHash, IllegalMoveError, makeSnapshot, replay} from './go'
 import {GameService} from './games'
 import {gamePosition, rootFromBlack, selectedMove, type KataGoAnalyzer} from './katago'
 import {NotebookStore} from './notebooks'
-import {createPlayerAdapter, makeBenchmarkMovePrompt, makeReflectionPrompt} from './providers'
+import {
+  createPlayerAdapter,
+  makeBenchmarkMovePrompt,
+  makeReflectionPrompt,
+  MalformedModelOutputError,
+} from './providers'
 
 type InternalRun = BenchmarkRun & {pointLosses?: number[]; winRateLosses?: number[]}
 
@@ -260,16 +266,32 @@ export class BenchmarkService {
           return false
         }
         const notebook = await this.notebooks.readCurrent(run.config.profileId)
-        const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-        const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
-          phase: run.currentGame < 10 ? 'training' : 'final',
-          winRateHistory: run.currentGame < 10 && run.config.includeTrainingWinRates
-            ? this.winRateHistory(game.id, llmColor)
-            : undefined,
-        })
-        const response = await adapter.requestAction(snapshot, signal, prompt)
-        addUsage(run, response)
-        game = this.games.acceptAutomated(game.id, response.action, response)
+        let feedback = ''
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+          if (feedback) snapshot.previousError = feedback
+          const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
+            phase: run.currentGame < 10 ? 'training' : 'final',
+            winRateHistory: run.currentGame < 10 && run.config.includeTrainingWinRates
+              ? this.winRateHistory(game.id, llmColor)
+              : undefined,
+          })
+          try {
+            const response = await adapter.requestAction(snapshot, signal, prompt)
+            addUsage(run, response)
+            response.retries = attempt
+            game = this.games.acceptAutomated(game.id, response.action, response)
+            break
+          } catch (error) {
+            if (!isRepairableMoveError(error)) throw error
+            feedback = publicError(error)
+            if (attempt === 2)
+              throw new Error(
+                `Model failed to produce a legal action after 3 attempts: ${feedback}`,
+                {cause: error},
+              )
+          }
+        }
         const afterResult = await this.analyze(game, run.config.visits, signal)
         if (run.currentGame === 10) {
           const after = rootFromBlack(afterResult)
@@ -385,6 +407,12 @@ export class BenchmarkService {
     this.events.emit(run.id, run)
     this.events.emit('changed', run.id)
   }
+}
+
+function isRepairableMoveError(error: unknown) {
+  return error instanceof IllegalMoveError ||
+    error instanceof MalformedModelOutputError ||
+    error instanceof NoOutputGeneratedError
 }
 
 export function pointLossQuality(loss: number) {

@@ -539,7 +539,12 @@ function WinRatePanel({
             <Button disabled={busy} onClick={onAnalyze}>{t('analyze')}</Button>
           )}
           <label className="switch-field compact-switch">
-            <input type="checkbox" checked={analysis?.enabled ?? false} onChange={(event) => onToggle({enabled: event.target.checked})} />
+            <input
+              type="checkbox"
+              checked={analysis?.enabled ?? false}
+              disabled={analysis?.managedByBenchmark}
+              onChange={(event) => onToggle({enabled: event.target.checked})}
+            />
             <span className="switch" />
             <span>{t('live')}</span>
           </label>
@@ -547,7 +552,7 @@ function WinRatePanel({
             <input
               type="checkbox"
               checked={analysis?.shareWithLlm ?? false}
-              disabled={!analysis?.enabled}
+              disabled={!analysis?.enabled || analysis?.managedByBenchmark}
               onChange={(event) => onShare(event.target.checked)}
             />
             <span className="switch" />

@@ -350,7 +350,10 @@ export function makeBenchmarkMovePrompt(
   options: {phase: 'training' | 'final'; winRateHistory?: string},
 ): string {
   const moves = snapshot.moves.length
-    ? snapshot.moves.map((move) => `${move.number}. ${move.color} ${move.coordinate ?? move.action}`).join('\n')
+    ? snapshot.moves.map((move) => {
+        const point = move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
+        return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}`
+      }).join('\n')
     : '(none)'
   const sections = [
     '1. GO RULES',
@@ -360,7 +363,10 @@ export function makeBenchmarkMovePrompt(
     notebook.trim() || '(none)',
     '',
     '3. INSTRUCTION TO PLACE ONE STONE',
-    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone.`,
+    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone on an intersection shown as ".".`,
+    ...(snapshot.previousError
+      ? [`Your previous response was rejected: ${snapshot.previousError}. The position is unchanged; choose a different legal move.`]
+      : []),
     '',
     '4. JSON OUTPUT SCHEMA',
     'Return only {"move":[column,row],"reason":"brief reason"}. Coordinates are zero-based from the top-left. Use [-1,-1] to pass or [-2,-2] to resign.',

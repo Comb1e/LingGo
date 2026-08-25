@@ -208,6 +208,7 @@ export type AnalysisStatus = 'idle' | 'running' | 'complete' | 'error'
 export interface GameAnalysis {
   enabled: boolean
   shareWithLlm: boolean
+  managedByBenchmark?: boolean
   status: AnalysisStatus
   positions: PositionAnalysis[]
   error?: string
