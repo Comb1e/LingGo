@@ -5,6 +5,7 @@ import {
   boardHash,
   emptyBoard,
   IllegalMoveError,
+  makeSnapshot,
   playStone,
   replay,
   scoreBoard,
@@ -29,7 +30,24 @@ describe('rules', () => {
     board[0][1] = board[1][0] = board[2][1] = 1
     const result = playStone(board, 'B', [2, 1], new Set([boardHash(board)]))
     expect(result.captured).toBe(1)
+    expect(result.capturedPoints).toEqual([[1, 1]])
     expect(result.board[1][1]).toBe(0)
+  })
+
+  it('reconstructs capture locations in snapshots from older move records', () => {
+    const moves: Move[] = [
+      {number: 1, color: 'B', action: 'play', point: [1, 0], captured: 0},
+      {number: 2, color: 'W', action: 'play', point: [1, 1], captured: 0},
+      {number: 3, color: 'B', action: 'play', point: [0, 1], captured: 0},
+      {number: 4, color: 'W', action: 'pass', captured: 0},
+      {number: 5, color: 'B', action: 'play', point: [1, 2], captured: 0},
+      {number: 6, color: 'W', action: 'pass', captured: 0},
+      {number: 7, color: 'B', action: 'play', point: [2, 1], captured: 0},
+    ]
+    const snapshot = makeSnapshot(9, 7.5, moves)
+
+    expect(snapshot.captures).toEqual({B: 1, W: 0})
+    expect(snapshot.moves[6]).toMatchObject({captured: 1, capturedPoints: [[1, 1]]})
   })
 
   it('rejects suicide', () => {

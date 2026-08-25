@@ -62,6 +62,7 @@ export interface Move {
   comment?: string
   reasoning?: string
   captured: number
+  capturedPoints?: Point[]
   latencyMs?: number
   inputTokens?: number
   outputTokens?: number

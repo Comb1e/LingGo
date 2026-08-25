@@ -45,7 +45,9 @@ describe('benchmark scoring and prompts', () => {
   })
 
   it('keeps final prompts to exactly five sections with no style or analysis data', () => {
-    const prompt = makeBenchmarkMovePrompt(makeSnapshot(19, 7.5, []), '# Shape\nStay connected.', {phase: 'final'})
+    const snapshot = makeSnapshot(19, 7.5, [])
+    snapshot.captures = {B: 4, W: 2}
+    const prompt = makeBenchmarkMovePrompt(snapshot, '# Shape\nStay connected.', {phase: 'final'})
     expect(prompt.match(/^\d+\./gm)).toHaveLength(5)
     expect(prompt).toContain('2. SELF-WRITTEN SKILLS\n# Shape')
     expect(prompt).not.toContain('PLAYING STYLE')
@@ -53,6 +55,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).not.toContain('scoreLead')
     expect(prompt).not.toContain('candidate')
     expect(prompt).not.toContain('variation')
+    expect(prompt).toContain('you have captured 4 opponent stones; the opponent has captured 2 of your stones')
   })
 
   it('adds complete training feedback only to training move and reflection prompts', () => {
@@ -77,10 +80,13 @@ describe('benchmark scoring and prompts', () => {
       point: [0, 0],
       coordinate: 'A19',
       comment: '',
-      captured: 0,
+      captured: 1,
+      capturedPoints: [[1, 1]],
     }])
+    snapshot.moves[0].captured = 1
+    snapshot.moves[0].capturedPoints = [[1, 1]]
     expect(makeBenchmarkMovePrompt(snapshot, '', {phase: 'training'}))
-      .toContain('1. B A19 [0,0]')
+      .toContain('1. B A19 [0,0]; captured 1 at B18 [1,1]')
   })
 
   it('marks every game and move in sequence with all recorded comments and thoughts', () => {
@@ -94,6 +100,9 @@ describe('benchmark scoring and prompts', () => {
       reasoning: 'I compared the two open corners.',
       captured: 0,
     }])
+    first.moves[0].captured = 1
+    first.moves[0].capturedPoints = [[4, 4]]
+    first.captures.B = 1
     const second = makeSnapshot(19, 7.5, [{
       number: 1,
       color: 'B',
@@ -125,6 +134,9 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('"thought":"I compared the two open corners."')
     expect(prompt).toContain('"comment":"The position is lost."')
     expect(prompt).toContain('"thought":"No practical winning chances remain."')
+    expect(prompt).toContain('"capturedStones":0')
+    expect(prompt).toContain('"capturedAt":["E15 [4,4]"]')
+    expect(prompt).toContain('Capture totals: LLM captured 1 opponent stones; opponent captured 0 LLM stones.')
     expect(prompt).toContain('=== END GAME 2 ===')
   })
 

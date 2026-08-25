@@ -290,11 +290,13 @@ export function makePrompt(
   snapshot: GameSnapshot,
   stylePrompt?: string,
 ): string {
+  const ownCaptures = snapshot.captures[snapshot.toMove]
+  const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
     ? snapshot.moves
         .map(
           (move) =>
-            `${move.number}. ${move.color} ${move.action === 'play' ? move.coordinate : move.action}`,
+            `${move.number}. ${move.color} ${move.action === 'play' ? move.coordinate : move.action}${formatCapturedLocations(move, snapshot.size)}`,
         )
         .join('\n')
     : '(none)'
@@ -327,7 +329,8 @@ export function makePrompt(
     '',
     '5. CURRENT POSITION',
     `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
-    `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}`,
+    `Capture totals: Black has captured ${snapshot.captures.B} White stones; White has captured ${snapshot.captures.W} Black stones.`,
+    `From your perspective: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
     'X = Black stone, O = White stone, . = empty intersection.',
     '',
     asciiBoard(snapshot),
@@ -349,10 +352,12 @@ export function makeBenchmarkMovePrompt(
   notebook: string,
   options: {phase: 'training' | 'final'; winRateHistory?: string},
 ): string {
+  const ownCaptures = snapshot.captures[snapshot.toMove]
+  const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
     ? snapshot.moves.map((move) => {
         const point = move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
-        return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}`
+        return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}`
       }).join('\n')
     : '(none)'
   const sections = [
@@ -373,6 +378,7 @@ export function makeBenchmarkMovePrompt(
     '',
     '5. CURRENT BOARD AND PREVIOUS MOVES',
     `To move: ${snapshot.toMove}`,
+    `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
     asciiBoard(snapshot),
     'Previous moves:',
     moves,
@@ -415,6 +421,8 @@ function formatReflectionGame(game: {
   llmColor: Color
   winRateHistory?: string
 }) {
+  const ownCaptures = game.snapshot.captures[game.llmColor]
+  const opponentCaptures = game.snapshot.captures[game.llmColor === 'B' ? 'W' : 'B']
   const moves = game.snapshot.moves.length
     ? game.snapshot.moves.map((move, index) => [
         `--- MOVE ${index + 1}/${game.snapshot.moves.length} ---`,
@@ -423,6 +431,10 @@ function formatReflectionGame(game: {
           action: move.coordinate ?? move.action,
           comment: move.comment ?? '',
           thought: move.reasoning ?? '',
+          capturedStones: move.captured,
+          capturedAt: (move.capturedPoints ?? []).map(
+            (point) => `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
+          ),
           forced: move.forced ?? false,
         }),
       ].join('\n')).join('\n')
@@ -432,12 +444,20 @@ function formatReflectionGame(game: {
     `Played as: ${game.llmColor === 'B' ? 'Black' : 'White'}`,
     `Result: ${game.result}`,
     `Move count: ${game.snapshot.moves.length}`,
+    `Capture totals: LLM captured ${ownCaptures} opponent stones; opponent captured ${opponentCaptures} LLM stones.`,
     moves,
     ...(game.winRateHistory === undefined
       ? []
       : ['', `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`, game.winRateHistory || '(none)']),
     `=== END GAME ${game.sequence} ===`,
   ].join('\n')
+}
+
+function formatCapturedLocations(move: GameSnapshot['moves'][number], size: BoardSize) {
+  if (!move.capturedPoints?.length) return ''
+  return `; captured ${move.capturedPoints.length} at ${move.capturedPoints
+    .map((point) => `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`)
+    .join(', ')}`
 }
 
 function pointName(x: number, y: number, size: number): string {

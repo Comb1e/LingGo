@@ -85,7 +85,7 @@ export function playStone(
   color: Color,
   point: Point,
   previousHashes: Set<string>,
-): {board: Board; captured: number} {
+): {board: Board; captured: number; capturedPoints: Point[]} {
   const [x, y] = point
   if (!board[y] || board[y][x] === undefined)
     throw new IllegalMoveError('Coordinate is outside the board')
@@ -96,6 +96,7 @@ export function playStone(
   const enemy = colorStone(opposite(color))
   next[y][x] = own
   let captured = 0
+  const capturedPoints: Point[] = []
   const visitedEnemy = new Set<string>()
 
   for (const adjacent of neighbors(point, next.length)) {
@@ -107,7 +108,10 @@ export function playStone(
     const chain = chainAt(next, adjacent)
     chain.stones.forEach((stone) => visitedEnemy.add(pointKey(stone)))
     if (chain.liberties.length === 0) {
-      for (const [cx, cy] of chain.stones) next[cy][cx] = 0
+      for (const [cx, cy] of chain.stones) {
+        next[cy][cx] = 0
+        capturedPoints.push([cx, cy])
+      }
       captured += chain.stones.length
     }
   }
@@ -116,7 +120,7 @@ export function playStone(
     throw new IllegalMoveError('Suicide is not allowed')
   if (previousHashes.has(boardHash(next)))
     throw new IllegalMoveError('Move repeats an earlier whole-board position')
-  return {board: next, captured}
+  return {board: next, captured, capturedPoints}
 }
 
 export interface ReplayResult {
@@ -125,6 +129,7 @@ export interface ReplayResult {
   captures: {B: number; W: number}
   hashes: Set<string>
   consecutivePasses: number
+  capturedPointsByMove: Point[][]
 }
 
 export function replay(size: BoardSize, moves: Move[]): ReplayResult {
@@ -133,6 +138,7 @@ export function replay(size: BoardSize, moves: Move[]): ReplayResult {
   const captures = {B: 0, W: 0}
   const hashes = new Set([boardHash(board)])
   let consecutivePasses = 0
+  const capturedPointsByMove: Point[][] = []
   for (const move of moves) {
     if (move.color !== toMove)
       throw new Error(`Invalid move order at move ${move.number}`)
@@ -141,14 +147,18 @@ export function replay(size: BoardSize, moves: Move[]): ReplayResult {
       const result = playStone(board, move.color, move.point, hashes)
       board = result.board
       captures[move.color] += result.captured
+      capturedPointsByMove.push(result.capturedPoints)
       hashes.add(boardHash(board))
       consecutivePasses = 0
     } else if (move.action === 'pass') {
+      capturedPointsByMove.push([])
       consecutivePasses += 1
+    } else {
+      capturedPointsByMove.push([])
     }
     toMove = opposite(toMove)
   }
-  return {board, toMove, captures, hashes, consecutivePasses}
+  return {board, toMove, captures, hashes, consecutivePasses, capturedPointsByMove}
 }
 
 export function makeSnapshot(
@@ -162,7 +172,11 @@ export function makeSnapshot(
     komi,
     board: state.board,
     toMove: state.toMove,
-    moves,
+    moves: moves.map((move, index) => ({
+      ...move,
+      captured: state.capturedPointsByMove[index].length,
+      capturedPoints: state.capturedPointsByMove[index],
+    })),
     captures: state.captures,
     rules:
       'Chinese area scoring; positional whole-board repetition; suicide prohibited; komi applies to White.',

@@ -9,6 +9,7 @@ import type {
   Move,
   NewGameInput,
   PlayerAction,
+  Point,
 } from '../shared/types'
 import {commandSchema, newGameSchema} from '../shared/types'
 import {Store} from './database'
@@ -340,11 +341,13 @@ export class GameService {
     const color = game.toMove
     const state = replay(game.size, game.moves)
     let captured = 0
+    let capturedPoints = [] as Point[]
     let point
     if (action.action === 'play') {
       point = coordinateToPoint(action.coordinate, game.size)
       const result = playStone(state.board, color, point, state.hashes)
       captured = result.captured
+      capturedPoints = result.capturedPoints
     }
     const move: Move = {
       number: game.moves.length + 1,
@@ -355,6 +358,7 @@ export class GameService {
       comment: action.comment,
       reasoning: llm?.reasoning,
       captured,
+      capturedPoints,
       latencyMs: llm?.latencyMs,
       inputTokens: llm?.inputTokens,
       outputTokens: llm?.outputTokens,

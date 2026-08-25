@@ -56,7 +56,7 @@ describe('provider normalization', () => {
         board,
         toMove: 'B',
         moves: [],
-        captures: {B: 0, W: 0},
+        captures: {B: 3, W: 2},
         rules: 'Chinese area',
       },
       'Prefer influence over territory.',
@@ -75,6 +75,26 @@ describe('provider normalization', () => {
     expect(prompt).toContain('9 X . . . . . . . .')
     expect(prompt).toContain('8 . O . . . . . . .')
     expect(prompt).toContain('To move: Black')
+    expect(prompt).toContain('Black has captured 3 White stones')
+    expect(prompt).toContain('you have captured 3 opponent stones; the opponent has captured 2 of your stones')
+  })
+
+  it('includes the intersections where stones were captured', () => {
+    const snapshot = emptySnapshot()
+    snapshot.moves = [{
+      number: 1,
+      color: 'B',
+      action: 'play',
+      point: [2, 2],
+      coordinate: 'C7',
+      comment: '',
+      captured: 2,
+      capturedPoints: [[1, 1], [1, 2]],
+    }]
+
+    expect(makePrompt(snapshot)).toContain(
+      'captured 2 at B8 [1,1], B7 [1,2]',
+    )
   })
 
   it('states when no playing style is configured', () => {
