@@ -1,5 +1,7 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {
+  Brain,
+  ChevronDown,
   Download,
   Eye,
   EyeOff,
@@ -18,6 +20,7 @@ import {useCallback, useEffect, useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
+import {normalizeReasoning} from '../../shared/reasoning'
 import type {Color, Game, Point} from '../../shared/types'
 import {api} from '../api'
 import {Board} from '../Board'
@@ -415,6 +418,9 @@ export function GamePage() {
                     {game.commentsVisible && move.comment && (
                       <p>{move.comment}</p>
                     )}
+                    {game.commentsVisible && move.reasoning && (
+                      <MoveReasoning text={move.reasoning} />
+                    )}
                   </div>
                 ))
               ) : (
@@ -424,6 +430,27 @@ export function GamePage() {
           </section>
         </aside>
       </div>
+    </div>
+  )
+}
+
+function MoveReasoning({text}: {text: string}) {
+  const {t} = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="move-reasoning">
+      <button
+        type="button"
+        className="reasoning-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <Brain />
+        <span>{t('modelReasoning')}</span>
+        <ChevronDown className={expanded ? 'expanded' : ''} />
+      </button>
+      {expanded && <p className="reasoning-text">{normalizeReasoning(text)}</p>}
     </div>
   )
 }

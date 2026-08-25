@@ -33,7 +33,7 @@ Save any number of player profiles against those connections. The New Game page 
 
 Games, provider connections, and player profiles can be edited or deleted from their list or detail views. Game editing is limited to player display names, commentary visibility, and the move cap so board rules and move history remain valid. Deleting a connection also deletes its profiles. LingGo blocks profile or connection deletion while an unfinished game still uses it, and keeps the built-in deterministic profile available as a fallback.
 
-API keys are never persisted; enter one for the current server process or set the matching environment variable:
+API keys are never written to SQLite. Keys entered in Settings are kept in the current browser tab's session storage and automatically restored to server memory after a development or production restart. Closing the tab ends that browser session. For persistence independent of a browser tab, set the matching environment variable:
 
 | Provider          | Environment variable           |
 | ----------------- | ------------------------------ |
@@ -42,7 +42,9 @@ API keys are never persisted; enter one for the current server process or set th
 | Google Gemini     | `GOOGLE_GENERATIVE_AI_API_KEY` |
 | OpenAI-compatible | `OPENAI_COMPATIBLE_API_KEY`    |
 
-The built-in deterministic local profile requires no credentials and is useful for smoke tests. OpenAI uses the AI SDK OpenAI provider's Responses API path. Compatible endpoints can declare structured-output support; otherwise LingGo requests strict JSON text and validates it with the same schema.
+The built-in deterministic local profile requires no credentials and is useful for smoke tests. OpenAI uses the AI SDK OpenAI provider's Responses API path. Every provider is asked for plain text containing one JSON object; LingGo parses and validates the text itself instead of passing provider-specific structured-output parameters.
+
+Each model prompt contains the Go rules, the profile's optional style prompt, a single-move instruction, the exact `{"move":[column,row],"reason":"..."}` response schema, and the current board and move list. Array coordinates are zero-based from the top-left; `[-1,-1]` means pass and `[-2,-2]` means resign.
 
 For a manual provider smoke test, create a connection, enter a session key, create a profile with an available model ID, then start a 9x9 human-vs-model game. Confirm that the model produces one legal move, its comment appears when enabled, and usage is added once. Repeat for each configured provider. Network/provider errors intentionally pause without paid retries.
 

@@ -4,6 +4,7 @@ import type {
   PlayerProfile,
   ProviderConnection,
 } from '../shared/types'
+import {forgetSessionKey, rememberSessionKey, sessionKeys} from './sessionKeys'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -20,6 +21,41 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(payload.error ?? response.statusText)
   }
   return response.json() as Promise<T>
+}
+
+let restoringKeys: Promise<ProviderConnection[]> | undefined
+
+async function connectionsWithRestoredKeys(): Promise<ProviderConnection[]> {
+  if (restoringKeys) return restoringKeys
+  restoringKeys = (async () => {
+    const connections = await request<ProviderConnection[]>('/api/connections')
+    const keys = sessionKeys()
+    const connectionIds = new Set(connections.map(({id}) => id))
+    for (const id of Object.keys(keys)) {
+      if (!connectionIds.has(id)) forgetSessionKey(id)
+    }
+    const missing = connections.filter(
+      (connection) => !connection.hasSessionKey && keys[connection.id],
+    )
+    await Promise.all(
+      missing.map((connection) =>
+        request(`/api/connections/${connection.id}/key`, {
+          method: 'PUT',
+          body: JSON.stringify({apiKey: keys[connection.id]}),
+        }),
+      ),
+    )
+    return connections.map((connection) => ({
+      ...connection,
+      hasSessionKey:
+        connection.hasSessionKey || Boolean(keys[connection.id]?.trim()),
+    }))
+  })()
+  try {
+    return await restoringKeys
+  } finally {
+    restoringKeys = undefined
+  }
 }
 
 export const api = {
@@ -39,24 +75,45 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(command),
     }),
-  connections: () => request<ProviderConnection[]>('/api/connections'),
-  saveConnection: (input: Record<string, unknown>) =>
-    request<ProviderConnection>('/api/connections', {
+  connections: connectionsWithRestoredKeys,
+  restoreSessionKeys: connectionsWithRestoredKeys,
+  saveConnection: async (input: Record<string, unknown>) => {
+    const connection = await request<ProviderConnection>('/api/connections', {
       method: 'POST',
       body: JSON.stringify(input),
-    }),
-  updateConnection: (id: string, input: Record<string, unknown>) =>
-    request<ProviderConnection>(`/api/connections/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(input),
-    }),
-  deleteConnection: (id: string) =>
-    request<{ok: true}>(`/api/connections/${id}`, {method: 'DELETE'}),
-  setKey: (id: string, apiKey: string) =>
-    request<{ok: boolean}>(`/api/connections/${id}/key`, {
+    })
+    if (typeof input.apiKey === 'string' && input.apiKey.trim())
+      rememberSessionKey(connection.id, input.apiKey)
+    return connection
+  },
+  updateConnection: async (id: string, input: Record<string, unknown>) => {
+    const connection = await request<ProviderConnection>(
+      `/api/connections/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+    )
+    if (typeof input.apiKey === 'string' && input.apiKey.trim())
+      rememberSessionKey(id, input.apiKey)
+    return connection
+  },
+  deleteConnection: async (id: string) => {
+    const result = await request<{ok: true}>(`/api/connections/${id}`, {
+      method: 'DELETE',
+    })
+    forgetSessionKey(id)
+    return result
+  },
+  setKey: async (id: string, apiKey: string) => {
+    const result = await request<{ok: boolean}>(`/api/connections/${id}/key`, {
       method: 'PUT',
       body: JSON.stringify({apiKey}),
-    }),
+    })
+    if (apiKey.trim()) rememberSessionKey(id, apiKey)
+    else forgetSessionKey(id)
+    return result
+  },
   profiles: () => request<PlayerProfile[]>('/api/profiles'),
   saveProfile: (input: Record<string, unknown>) =>
     request<PlayerProfile>('/api/profiles', {

@@ -6,7 +6,9 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react'
 import {NavLink, Navigate, Route, Routes} from 'react-router-dom'
+import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
+import {api} from './api'
 import {GamesPage} from './pages/GamesPage'
 import {NewGamePage} from './pages/NewGamePage'
 import {GamePage} from './pages/GamePage'
@@ -14,6 +16,9 @@ import {SettingsPage} from './pages/SettingsPage'
 
 export function App() {
   const {t, i18n} = useTranslation()
+  useEffect(() => {
+    void api.restoreSessionKeys()
+  }, [])
   const changeLanguage = () => {
     const next = i18n.language.startsWith('zh') ? 'en' : 'zh'
     void i18n.changeLanguage(next)

@@ -28,6 +28,91 @@ test('switches the interface to Simplified Chinese', async ({page}) => {
   ).toBeVisible()
 })
 
+test('restores a session API key after server memory is cleared', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const connectionName = `Restart-safe API ${suffix}`
+  await page.goto('/settings')
+  await page.getByLabel('Connection name').fill(connectionName)
+  await page.getByLabel('Session API key').fill(`sk-session-${suffix}`)
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/connections') &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', {name: 'Save connection'}).click()
+  const {id} = await (await createdResponse).json()
+  const connectionRow = page
+    .locator('.existing-row')
+    .filter({hasText: connectionName})
+
+  await expect(connectionRow).toContainText('Ready')
+  await request.put(`/api/connections/${id}/key`, {data: {apiKey: ''}})
+  await expect
+    .poll(async () => {
+      const response = await request.get('/api/connections')
+      const connections = await response.json()
+      return connections.find(
+        (connection: {id: string}) => connection.id === id,
+      )?.hasSessionKey
+    })
+    .toBe(false)
+
+  await page.reload()
+  await expect(connectionRow).toContainText('Ready')
+  await expect
+    .poll(async () => {
+      const response = await request.get('/api/connections')
+      const connections = await response.json()
+      return connections.find(
+        (connection: {id: string}) => connection.id === id,
+      )?.hasSessionKey
+    })
+    .toBe(true)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await connectionRow
+    .getByRole('button', {name: `Delete ${connectionName}`})
+    .click()
+  await expect(connectionRow).toHaveCount(0)
+})
+
+test('expands saved model reasoning under LLM commentary', async ({
+  page,
+  request,
+}, testInfo) => {
+  const response = await request.post('/api/games', {
+    data: {
+      size: 9,
+      komi: 7.5,
+      black: {
+        type: 'llm',
+        name: 'Local learner',
+        profileId: 'builtin-fake-profile',
+      },
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    },
+  })
+  const {id} = await response.json()
+  await page.goto(`/games/${id}`)
+
+  const toggle = page.getByRole('button', {name: 'Model reasoning'})
+  await expect(toggle).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(
+    page.getByText(/select the first legal intersection/),
+  ).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('model-reasoning.png'),
+    fullPage: true,
+  })
+})
+
 test('chooses directly from multiple saved LLM players', async ({
   page,
   request,

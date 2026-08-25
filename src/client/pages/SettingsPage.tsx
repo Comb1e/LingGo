@@ -19,7 +19,6 @@ export function SettingsPage() {
   const [connectionName, setConnectionName] = useState('OpenAI')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [structured, setStructured] = useState(true)
   const [editingConnectionId, setEditingConnectionId] = useState('')
   const [profileName, setProfileName] = useState('')
   const [connectionId, setConnectionId] = useState('builtin-fake')
@@ -34,7 +33,6 @@ export function SettingsPage() {
     setConnectionName('OpenAI')
     setBaseUrl('')
     setApiKey('')
-    setStructured(true)
   }
   const resetProfileForm = () => {
     setEditingProfileId('')
@@ -52,7 +50,7 @@ export function SettingsPage() {
         name: connectionName,
         kind: provider,
         baseUrl: baseUrl || undefined,
-        supportsStructuredOutput: structured,
+        supportsStructuredOutput: false,
         apiKey: apiKey || undefined,
       }
       const result = editingConnectionId
@@ -94,7 +92,6 @@ export function SettingsPage() {
     setConnectionName(item.name)
     setBaseUrl(item.baseUrl ?? '')
     setApiKey('')
-    setStructured(item.supportsStructuredOutput)
     setError(undefined)
     setSaved('')
   }
@@ -254,14 +251,6 @@ export function SettingsPage() {
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
                 />
-              </label>
-              <label className="check-field">
-                <input
-                  type="checkbox"
-                  checked={structured}
-                  onChange={(event) => setStructured(event.target.checked)}
-                />
-                {t('structured')}
               </label>
               <p className="field-note">{t('keyNotice')}</p>
               <div className="form-actions">

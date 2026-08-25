@@ -2,15 +2,12 @@ import {createAnthropic} from '@ai-sdk/anthropic'
 import {createGoogle} from '@ai-sdk/google'
 import {createOpenAI} from '@ai-sdk/openai'
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
+import {createProviderRegistry, generateText, type LanguageModel} from 'ai'
+import {z} from 'zod'
+import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
+import {normalizeReasoning} from '../shared/reasoning'
 import {
-  createProviderRegistry,
-  generateText,
-  Output,
-  type LanguageModel,
-} from 'ai'
-import {coordinateToPoint} from '../shared/coordinates'
-import {
-  playerActionSchema,
+  type BoardSize,
   type GameSnapshot,
   type LlmActionResult,
   type PlayerAction,
@@ -18,6 +15,13 @@ import {
   type ProviderConnection,
 } from '../shared/types'
 import {asciiBoard, playStone, replay} from './go'
+
+const modelMoveSchema = z
+  .object({
+    move: z.tuple([z.number().int(), z.number().int()]),
+    reason: z.string().trim().min(1),
+  })
+  .strict()
 
 export interface PlayerAdapter {
   requestAction(
@@ -80,6 +84,8 @@ export class FakePlayerAdapter implements PlayerAdapter {
               coordinate: pointName(x, y, snapshot.size),
               comment: 'A calm move that keeps options open.',
             },
+            reasoning:
+              'I scan the board in reading order and select the first legal intersection.',
             latencyMs: Date.now() - started,
             inputTokens: 0,
             outputTokens: 0,
@@ -122,35 +128,24 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const combined = AbortSignal.any([signal, timeout])
     const prompt = makePrompt(snapshot, this.profile.stylePrompt)
     const model = this.createModel()
-
-    if (this.connection.supportsStructuredOutput) {
-      const result = await generateText({
-        model,
-        prompt,
-        temperature: this.profile.temperature,
-        maxRetries: 0,
-        abortSignal: combined,
-        output: Output.object({schema: playerActionSchema, name: 'go_action'}),
-      })
-      return {
-        action: result.output,
-        latencyMs: Date.now() - started,
-        inputTokens: result.usage.inputTokens ?? 0,
-        outputTokens: result.usage.outputTokens ?? 0,
-        model: this.profile.modelId,
-        retries: 0,
-      }
-    }
-
+    const requestsReasoning = this.connection.kind !== 'compatible'
     const result = await generateText({
       model,
-      prompt: `${prompt}\nReturn only a JSON object matching the specified schema.`,
+      prompt,
       temperature: this.profile.temperature,
+      reasoning: requestsReasoning ? 'medium' : undefined,
+      providerOptions:
+        this.connection.kind === 'google'
+          ? {google: {thinkingConfig: {includeThoughts: true}}}
+          : undefined,
       maxRetries: 0,
       abortSignal: combined,
     })
     return {
-      action: parseJsonAction(result.text),
+      action: parseJsonAction(result.text, snapshot.size),
+      reasoning: result.finalStep.reasoningText
+        ? normalizeReasoning(result.finalStep.reasoningText) || undefined
+        : undefined,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
       outputTokens: result.usage.outputTokens ?? 0,
@@ -195,7 +190,6 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         name: this.connection.id,
         apiKey: this.key,
         baseURL: this.connection.baseUrl,
-        supportsStructuredOutputs: this.connection.supportsStructuredOutput,
       })
       const registry = createProviderRegistry({compatible})
       return registry.languageModel(`compatible:${id}`)
@@ -215,16 +209,29 @@ export function createPlayerAdapter(
   return new LlmPlayerAdapter(connection, profile, key)
 }
 
-export function parseJsonAction(text: string): PlayerAction {
+export function parseJsonAction(text: string, size: BoardSize): PlayerAction {
   const candidate = text
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '')
   try {
-    return playerActionSchema.parse(JSON.parse(candidate))
+    const response = modelMoveSchema.parse(JSON.parse(candidate))
+    const [x, y] = response.move
+    if (x === -1 && y === -1) return {action: 'pass', comment: response.reason}
+    if (x === -2 && y === -2)
+      return {action: 'resign', comment: response.reason}
+    if (x < 0 || y < 0 || x >= size || y >= size)
+      throw new Error(`Move [${x},${y}] is outside the ${size}x${size} board`)
+    return {
+      action: 'play',
+      coordinate: pointToCoordinate([x, y], size),
+      comment: response.reason,
+    }
   } catch (error) {
     throw new MalformedModelOutputError(
-      error instanceof Error ? error.message : 'Invalid JSON action',
+      `Invalid model move JSON: ${
+        error instanceof Error ? error.message : 'unknown validation error'
+      }`,
     )
   }
 }
@@ -242,23 +249,42 @@ export function makePrompt(
         .join('\n')
     : '(none)'
   return [
-    'You are playing a game of Go. Choose exactly one legal action without external analysis.',
-    stylePrompt ? `Style: ${stylePrompt}` : '',
-    `Board: ${snapshot.size}x${snapshot.size}`,
-    `Rules: ${snapshot.rules}`,
-    `Komi: ${snapshot.komi}`,
-    `To move: ${snapshot.toMove === 'B' ? 'Black' : 'White'}`,
+    '1. GO RULES',
+    `- Board size: ${snapshot.size}x${snapshot.size}.`,
+    '- Black and White alternate placing one stone on an empty intersection.',
+    '- Connected stones share liberties. Remove an opposing chain when its last liberty is filled.',
+    '- Suicide is prohibited. A move may not repeat any earlier whole-board position.',
+    `- Use Chinese area scoring. White receives ${snapshot.komi} komi. Two consecutive passes end play for scoring.`,
+    '- A player may resign.',
+    `- Authoritative rules summary: ${snapshot.rules}`,
+    '',
+    '2. PLAYING STYLE',
+    stylePrompt?.trim() || '(none)',
+    '',
+    '3. INSTRUCTION',
+    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Choose exactly one legal intersection for your next Go stone. Do not use external analysis or suggest multiple moves.`,
+    ...(snapshot.previousError
+      ? [
+          `Your previous response was rejected: ${snapshot.previousError}. Use the unchanged position and correct the response.`,
+        ]
+      : []),
+    '',
+    '4. RESPONSE SCHEMA',
+    'Return only plain text containing one valid JSON object. Do not use Markdown or code fences.',
+    '{"move":[column,row],"reason":"brief reason for this move"}',
+    `move must be a two-integer array. column and row are zero-based from the top-left, each from 0 to ${snapshot.size - 1}.`,
+    'Use {"move":[-1,-1],"reason":"..."} to pass or {"move":[-2,-2],"reason":"..."} to resign.',
+    '',
+    '5. CURRENT POSITION',
+    `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
     `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}`,
+    'X = Black stone, O = White stone, . = empty intersection.',
     '',
     asciiBoard(snapshot),
     '',
     'Move list:',
     moves,
-    '',
-    'Coordinates skip I. Return action play with a coordinate, pass, or resign, plus a brief public comment.',
-  ]
-    .filter(Boolean)
-    .join('\n')
+  ].join('\n')
 }
 
 function pointName(x: number, y: number, size: number): string {

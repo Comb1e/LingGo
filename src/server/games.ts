@@ -256,7 +256,12 @@ export class GameService {
 
   restoreAutoplay() {
     for (const game of this.store.listGames()) {
-      if (game.status === 'active' && game.autoplay) this.schedule(game.id)
+      if (
+        game.status === 'active' &&
+        game.autoplay &&
+        this.hasCredentialsForCurrentSeat(game)
+      )
+        this.schedule(game.id)
     }
   }
 
@@ -288,6 +293,7 @@ export class GameService {
       point,
       coordinate: point ? pointToCoordinate(point, game.size) : undefined,
       comment: action.comment,
+      reasoning: llm?.reasoning,
       captured,
       latencyMs: llm?.latencyMs,
       inputTokens: llm?.inputTokens,
@@ -356,8 +362,7 @@ export class GameService {
           )
         const adapter = createPlayerAdapter(connection, profile, this.vault)
         const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-        if (feedback)
-          snapshot.rules += ` Previous response was rejected: ${feedback}. Use the unchanged position.`
+        if (feedback) snapshot.previousError = feedback
         try {
           const result = await adapter.requestAction(
             snapshot,
@@ -423,6 +428,16 @@ export class GameService {
 
   private seat(game: Game) {
     return game.toMove === 'B' ? game.black : game.white
+  }
+
+  private hasCredentialsForCurrentSeat(game: Game) {
+    const seat = this.seat(game)
+    if (seat.type !== 'llm') return true
+    const profile = this.store.getProfile(seat.profileId)
+    if (!profile) return true
+    const connection = this.store.getConnection(profile.connectionId)
+    if (!connection) return true
+    return connection.kind === 'fake' || Boolean(this.vault.get(connection))
   }
 
   private assertHumanTurn(game: Game) {

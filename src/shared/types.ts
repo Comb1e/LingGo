@@ -57,6 +57,7 @@ export interface Move {
   point?: Point
   coordinate?: string
   comment?: string
+  reasoning?: string
   captured: number
   latencyMs?: number
   inputTokens?: number
@@ -153,10 +154,12 @@ export interface GameSnapshot {
   captures: {B: number; W: number}
   komi: number
   rules: string
+  previousError?: string
 }
 
 export interface LlmActionResult {
   action: PlayerAction
+  reasoning?: string
   latencyMs: number
   inputTokens: number
   outputTokens: number

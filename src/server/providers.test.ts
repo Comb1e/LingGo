@@ -11,22 +11,33 @@ import {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('provider normalization', () => {
-  it('parses strict JSON and fenced fallback output', () => {
-    expect(parseJsonAction('{"action":"pass","comment":"done"}').action).toBe(
-      'pass',
-    )
+  it('parses plain JSON array moves and fenced fallback output', () => {
+    expect(parseJsonAction('{"move":[-1,-1],"reason":"done"}', 9)).toEqual({
+      action: 'pass',
+      comment: 'done',
+    })
+    expect(parseJsonAction('{"move":[-2,-2],"reason":"concede"}', 9)).toEqual({
+      action: 'resign',
+      comment: 'concede',
+    })
     expect(
-      parseJsonAction(
-        '```json\n{"action":"play","coordinate":"D4","comment":"shape"}\n```',
-      ),
+      parseJsonAction('```json\n{"move":[3,5],"reason":"shape"}\n```', 9),
     ).toMatchObject({
       action: 'play',
       coordinate: 'D4',
+      comment: 'shape',
     })
   })
 
   it('rejects malformed action output', () =>
-    expect(() => parseJsonAction('{"action":"dance"}')).toThrow('Invalid'))
+    expect(() => parseJsonAction('{"move":[1],"reason":"bad"}', 9)).toThrow(
+      'Invalid',
+    ))
+
+  it('rejects array coordinates outside the board', () =>
+    expect(() =>
+      parseJsonAction('{"move":[9,0],"reason":"outside"}', 9),
+    ).toThrow('outside the 9x9 board'))
 
   it('does not expose stored secrets', () => {
     const vault = new SecretVault()
@@ -35,17 +46,39 @@ describe('provider normalization', () => {
   })
 
   it('builds a stateless complete position prompt', () => {
-    const prompt = makePrompt({
-      size: 9,
-      komi: 7.5,
-      board: emptyBoard(9),
-      toMove: 'B',
-      moves: [],
-      captures: {B: 0, W: 0},
-      rules: 'Chinese area',
-    })
+    const board = emptyBoard(9)
+    board[0][0] = 1
+    board[1][1] = 2
+    const prompt = makePrompt(
+      {
+        size: 9,
+        komi: 7.5,
+        board,
+        toMove: 'B',
+        moves: [],
+        captures: {B: 0, W: 0},
+        rules: 'Chinese area',
+      },
+      'Prefer influence over territory.',
+    )
+    expect(prompt).toContain('1. GO RULES')
+    expect(prompt).toContain(
+      '2. PLAYING STYLE\nPrefer influence over territory.',
+    )
+    expect(prompt).toContain('3. INSTRUCTION')
+    expect(prompt).toContain('4. RESPONSE SCHEMA')
+    expect(prompt).toContain(
+      '{"move":[column,row],"reason":"brief reason for this move"}',
+    )
+    expect(prompt).toContain('5. CURRENT POSITION')
     expect(prompt).toContain('A B C D E F G H J')
+    expect(prompt).toContain('9 X . . . . . . . .')
+    expect(prompt).toContain('8 . O . . . . . . .')
     expect(prompt).toContain('To move: Black')
+  })
+
+  it('states when no playing style is configured', () => {
+    expect(makePrompt(emptySnapshot())).toContain('2. PLAYING STYLE\n(none)')
   })
 
   it.each([
@@ -56,10 +89,12 @@ describe('provider normalization', () => {
     'sends %s requests to its custom base URL',
     async (kind, expectedPath) => {
       let requestedUrl = ''
+      let requestBody = ''
       vi.stubGlobal(
         'fetch',
-        vi.fn(async (input: RequestInfo | URL) => {
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
           requestedUrl = String(input)
+          requestBody = String(init?.body ?? '')
           return new Response('{"error":{"message":"test stop"}}', {
             status: 500,
             headers: {'content-type': 'application/json'},
@@ -72,13 +107,13 @@ describe('provider normalization', () => {
           name: `Custom ${kind}`,
           kind,
           baseUrl: `https://models.example.test/proxy/${kind}/v1${kind === 'google' ? 'beta' : ''}`,
-          supportsStructuredOutput: false,
+          supportsStructuredOutput: true,
         },
         {
           id: `profile-${kind}`,
           name: 'Test profile',
           connectionId: `custom-${kind}`,
-          modelId: 'test-model',
+          modelId: kind === 'openai' ? 'gpt-5.6-sol' : 'test-model',
           temperature: 0,
         },
         'test-key',
@@ -88,6 +123,19 @@ describe('provider normalization', () => {
         adapter.requestAction(emptySnapshot(), new AbortController().signal),
       ).rejects.toThrow()
       expect(new URL(requestedUrl).pathname).toBe(expectedPath)
+      expect(requestBody).toContain('4. RESPONSE SCHEMA')
+      expect(requestBody).not.toContain('go_action')
+      expect(requestBody).not.toContain('json_schema')
+      const body = JSON.parse(requestBody)
+      if (kind === 'openai') {
+        expect(body.reasoning).toEqual({effort: 'medium', summary: 'detailed'})
+      } else if (kind === 'anthropic') {
+        expect(body.thinking).toBeTruthy()
+      } else {
+        expect(body.generationConfig.thinkingConfig).toMatchObject({
+          includeThoughts: true,
+        })
+      }
     },
   )
 })

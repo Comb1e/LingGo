@@ -14,7 +14,7 @@ const connectionSchema = z
     name: z.string().min(1),
     kind: providerKindSchema.exclude(['fake']),
     baseUrl: z.string().url().optional(),
-    supportsStructuredOutput: z.boolean().default(true),
+    supportsStructuredOutput: z.boolean().default(false),
     apiKey: z.string().optional(),
   })
   .superRefine((connection, context) => {
@@ -129,7 +129,10 @@ export function createApp(options: {store?: Store} = {}) {
     const input = connectionSchema.parse(request.body)
     const id = input.id ?? crypto.randomUUID()
     store.saveConnection({...input, id})
-    if (input.apiKey !== undefined) games.vault.set(id, input.apiKey)
+    if (input.apiKey !== undefined) {
+      games.vault.set(id, input.apiKey)
+      games.restoreAutoplay()
+    }
     return reply
       .code(201)
       .send({...store.getConnection(id), hasSessionKey: games.vault.has(id)})
@@ -144,7 +147,10 @@ export function createApp(options: {store?: Store} = {}) {
         .send({error: 'The built-in connection cannot be edited'})
     const input = connectionSchema.parse(request.body)
     store.saveConnection({...input, id})
-    if (input.apiKey !== undefined) games.vault.set(id, input.apiKey)
+    if (input.apiKey !== undefined) {
+      games.vault.set(id, input.apiKey)
+      games.restoreAutoplay()
+    }
     return {
       ...store.getConnection(id),
       hasSessionKey:
@@ -157,6 +163,7 @@ export function createApp(options: {store?: Store} = {}) {
     if (!store.getConnection(id)) return notFound()
     const {apiKey} = z.object({apiKey: z.string()}).parse(request.body)
     games.vault.set(id, apiKey)
+    if (apiKey.trim()) games.restoreAutoplay()
     return {ok: true, hasSessionKey: games.vault.has(id)}
   })
   app.delete('/api/connections/:id', async (request, reply) => {

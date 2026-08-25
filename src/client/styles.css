@@ -859,6 +859,42 @@ svg {
   color: #58635c;
   line-height: 1.45;
 }
+.move-reasoning {
+  grid-column: 2 / -1;
+  min-width: 0;
+}
+.reasoning-toggle {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  padding: 3px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+.reasoning-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+.reasoning-toggle svg:last-child {
+  transition: transform 160ms ease;
+}
+.reasoning-toggle svg:last-child.expanded {
+  transform: rotate(180deg);
+}
+.move-row p.reasoning-text {
+  margin: 5px 0 2px;
+  padding: 9px 10px;
+  border-left: 2px solid #9ab5c7;
+  background: #f4f8fa;
+  color: #43535d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .move-number {
   color: #929b95;
   text-align: right;

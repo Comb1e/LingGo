@@ -97,7 +97,48 @@ describe('game orchestration', () => {
     const updated = service.get(game.id)!
     expect(updated.moves).toHaveLength(1)
     expect(updated.moves[0].comment).toBeTruthy()
+    expect(updated.moves[0].reasoning).toContain('first legal intersection')
     expect(updated.toMove).toBe('W')
+  })
+
+  it('waits for a session key when restoring LLM autoplay', async () => {
+    setup()
+    store.saveConnection({
+      id: 'restart-provider',
+      name: 'Restart provider',
+      kind: 'openai',
+      supportsStructuredOutput: false,
+    })
+    store.saveProfile({
+      id: 'restart-profile',
+      name: 'Restart model',
+      connectionId: 'restart-provider',
+      modelId: 'gpt-5.6-sol',
+      temperature: 0,
+    })
+    const game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'Temporary human'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+    const persisted = store.getGame(game.id)!
+    persisted.black = {
+      type: 'llm',
+      name: 'Restart model',
+      profileId: 'restart-profile',
+    }
+    store.saveGame(persisted)
+
+    service.restoreAutoplay()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(service.get(game.id)).toMatchObject({
+      status: 'active',
+      autoplay: true,
+      moves: [],
+    })
   })
 
   it('allows operator recovery actions after a model error', async () => {

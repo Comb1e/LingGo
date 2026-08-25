@@ -38,6 +38,7 @@ const resources = {
       confirmScore: 'Confirm final score',
       moveHistory: 'Move history',
       noMoves: 'No moves yet',
+      modelReasoning: 'Model reasoning',
       captures: 'captures',
       usage: 'Provider usage',
       calls: 'calls',
@@ -55,7 +56,6 @@ const resources = {
       endpointNotice:
         'Override the provider endpoint for a proxy or your own API. Required for OpenAI-compatible connections.',
       apiKey: 'Session API key',
-      structured: 'Supports structured output',
       saveConnection: 'Save connection',
       updateConnection: 'Update connection',
       profileName: 'Profile name',
@@ -76,7 +76,8 @@ const resources = {
       deleteConnectionConfirm:
         'Delete this connection and all of its player profiles?',
       deleteProfileConfirm: 'Delete this player profile?',
-      keyNotice: 'Keys stay in server memory and are never written to SQLite.',
+      keyNotice:
+        'Keys stay in this browser tab session and server memory. They are never written to SQLite.',
       language: 'Language',
       result: 'Result',
       exportSgf: 'Export SGF',
@@ -127,6 +128,7 @@ const resources = {
       confirmScore: '确认最终结果',
       moveHistory: '棋谱',
       noMoves: '尚未落子',
+      modelReasoning: '模型思考',
       captures: '提子',
       usage: '模型用量',
       calls: '次调用',
@@ -143,7 +145,6 @@ const resources = {
       endpoint: '基础 URL（可选）',
       endpointNotice: '可填写代理或自有 API 地址。OpenAI 兼容连接必须填写。',
       apiKey: '会话 API 密钥',
-      structured: '支持结构化输出',
       saveConnection: '保存连接',
       updateConnection: '更新连接',
       profileName: '配置名称',
@@ -163,7 +164,8 @@ const resources = {
       deleteGameConfirm: '要永久删除此对局吗？',
       deleteConnectionConfirm: '要删除此连接及其所有棋手配置吗？',
       deleteProfileConfirm: '要删除此棋手配置吗？',
-      keyNotice: '密钥仅保存在服务器内存中，绝不写入 SQLite。',
+      keyNotice:
+        '密钥仅保存在当前浏览器标签页会话和服务器内存中，绝不写入 SQLite。',
       language: '语言',
       result: '结果',
       exportSgf: '导出 SGF',
