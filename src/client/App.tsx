@@ -20,7 +20,7 @@ import {BenchmarkPage} from './pages/BenchmarkPage'
 export function App() {
   const {t, i18n} = useTranslation()
   useEffect(() => {
-    void api.restoreSessionKeys()
+    void api.restoreBrowserKeys()
   }, [])
   const changeLanguage = () => {
     const next = i18n.language.startsWith('zh') ? 'en' : 'zh'

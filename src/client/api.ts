@@ -9,7 +9,7 @@ import type {
   PlayerProfile,
   ProviderConnection,
 } from '../shared/types'
-import {forgetSessionKey, rememberSessionKey, sessionKeys} from './sessionKeys'
+import {browserKeys, forgetBrowserKey, rememberBrowserKey} from './browserKeys'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -40,10 +40,10 @@ async function connectionsWithRestoredKeys(): Promise<ProviderConnection[]> {
   if (restoringKeys) return restoringKeys
   restoringKeys = (async () => {
     const connections = await request<ProviderConnection[]>('/api/connections')
-    const keys = sessionKeys()
+    const keys = browserKeys()
     const connectionIds = new Set(connections.map(({id}) => id))
     for (const id of Object.keys(keys)) {
-      if (!connectionIds.has(id)) forgetSessionKey(id)
+      if (!connectionIds.has(id)) forgetBrowserKey(id)
     }
     const missing = connections.filter(
       (connection) => !connection.hasSessionKey && keys[connection.id],
@@ -102,14 +102,14 @@ export const api = {
     request<KataGoSettings>('/api/katago/settings', {method: 'PUT', body: JSON.stringify(input)}),
   testKataGo: () => request<KataGoHealth>('/api/katago/test', {method: 'POST'}),
   connections: connectionsWithRestoredKeys,
-  restoreSessionKeys: connectionsWithRestoredKeys,
+  restoreBrowserKeys: connectionsWithRestoredKeys,
   saveConnection: async (input: Record<string, unknown>) => {
     const connection = await request<ProviderConnection>('/api/connections', {
       method: 'POST',
       body: JSON.stringify(input),
     })
     if (typeof input.apiKey === 'string' && input.apiKey.trim())
-      rememberSessionKey(connection.id, input.apiKey)
+      rememberBrowserKey(connection.id, input.apiKey)
     return connection
   },
   updateConnection: async (id: string, input: Record<string, unknown>) => {
@@ -121,14 +121,14 @@ export const api = {
       },
     )
     if (typeof input.apiKey === 'string' && input.apiKey.trim())
-      rememberSessionKey(id, input.apiKey)
+      rememberBrowserKey(id, input.apiKey)
     return connection
   },
   deleteConnection: async (id: string) => {
     const result = await request<{ok: true}>(`/api/connections/${id}`, {
       method: 'DELETE',
     })
-    forgetSessionKey(id)
+    forgetBrowserKey(id)
     return result
   },
   setKey: async (id: string, apiKey: string) => {
@@ -136,8 +136,8 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({apiKey}),
     })
-    if (apiKey.trim()) rememberSessionKey(id, apiKey)
-    else forgetSessionKey(id)
+    if (apiKey.trim()) rememberBrowserKey(id, apiKey)
+    else forgetBrowserKey(id)
     return result
   },
   profiles: () => request<PlayerProfile[]>('/api/profiles'),

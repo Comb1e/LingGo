@@ -62,7 +62,7 @@ test('switches the interface to Simplified Chinese', async ({page}) => {
   ).toBeVisible()
 })
 
-test('restores a session API key after server memory is cleared', async ({
+test('restores a browser API key after server memory and session storage are cleared', async ({
   page,
   request,
 }, testInfo) => {
@@ -70,7 +70,7 @@ test('restores a session API key after server memory is cleared', async ({
   const connectionName = `Restart-safe API ${suffix}`
   await page.goto('/settings')
   await page.getByLabel('Connection name').fill(connectionName)
-  await page.getByLabel('Session API key').fill(`sk-session-${suffix}`)
+  await page.getByLabel('Browser API key').fill(`sk-session-${suffix}`)
   const createdResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith('/api/connections') &&
@@ -94,6 +94,7 @@ test('restores a session API key after server memory is cleared', async ({
     })
     .toBe(false)
 
+  await page.evaluate(() => sessionStorage.clear())
   await page.reload()
   await expect(connectionRow).toContainText('Ready')
   await expect

@@ -56,7 +56,7 @@ const resources = {
       endpoint: 'Base URL (optional)',
       endpointNotice:
         'Override the provider endpoint for a proxy or your own API. Required for OpenAI-compatible connections.',
-      apiKey: 'Session API key',
+      apiKey: 'Browser API key',
       saveConnection: 'Save connection',
       updateConnection: 'Update connection',
       profileName: 'Profile name',
@@ -78,7 +78,7 @@ const resources = {
         'Delete this connection and all of its player profiles?',
       deleteProfileConfirm: 'Delete this player profile?',
       keyNotice:
-        'Keys stay in this browser tab session and server memory. They are never written to SQLite.',
+        'Keys stay in this browser and are restored after server restarts. They are never written to SQLite.',
       language: 'Language',
       result: 'Result',
       exportSgf: 'Export SGF',
@@ -192,7 +192,7 @@ const resources = {
       provider: '服务商',
       endpoint: '基础 URL（可选）',
       endpointNotice: '可填写代理或自有 API 地址。OpenAI 兼容连接必须填写。',
-      apiKey: '会话 API 密钥',
+      apiKey: '浏览器 API 密钥',
       saveConnection: '保存连接',
       updateConnection: '更新连接',
       profileName: '配置名称',
@@ -213,7 +213,7 @@ const resources = {
       deleteConnectionConfirm: '要删除此连接及其所有棋手配置吗？',
       deleteProfileConfirm: '要删除此棋手配置吗？',
       keyNotice:
-        '密钥仅保存在当前浏览器标签页会话和服务器内存中，绝不写入 SQLite。',
+        '密钥保存在此浏览器中，服务器重启后会自动恢复，绝不写入 SQLite。',
       language: '语言',
       result: '结果',
       exportSgf: '导出 SGF',
