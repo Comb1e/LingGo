@@ -45,6 +45,10 @@ export class SecretVault {
     return this.keys.has(connectionId)
   }
 
+  delete(connectionId: string) {
+    this.keys.delete(connectionId)
+  }
+
   get(connection: ProviderConnection): string | undefined {
     if (this.keys.has(connection.id)) return this.keys.get(connection.id)
     const envName = {

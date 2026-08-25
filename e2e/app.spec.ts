@@ -32,8 +32,9 @@ test('chooses directly from multiple saved LLM players', async ({
   page,
   request,
 }, testInfo) => {
-  const modelId = `${testInfo.project.name}-go-model-large`
-  const profileName = `${testInfo.project.name} territory specialist`
+  const runId = `${testInfo.project.name}-${Date.now()}`
+  const modelId = `${runId}-go-model-large`
+  const profileName = `${runId} territory specialist`
   const connection = await request.post('/api/connections', {
     data: {
       name: 'Team API',
@@ -53,6 +54,7 @@ test('chooses directly from multiple saved LLM players', async ({
     },
   })
   expect(profile.ok()).toBeTruthy()
+  const {id: profileId} = await profile.json()
 
   await page.goto('/new')
   const whiteSeat = page.locator('.seat-editor.white')
@@ -62,4 +64,104 @@ test('chooses directly from multiple saved LLM players', async ({
   await expect(savedPlayer).toContainText(`${profileName} · Team API`)
   await savedPlayer.click()
   await expect(savedPlayer).toHaveAttribute('aria-checked', 'true')
+
+  await request.delete(`/api/profiles/${profileId}`)
+  await request.delete(`/api/connections/${connectionId}`)
+})
+
+test('edits and deletes a game, player profile, and provider connection', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const connectionName = `Disposable API ${suffix}`
+  const profileName = `Disposable player ${suffix}`
+  const blackName = `Disposable Black ${suffix}`
+  const editedConnectionName = `Edited API ${suffix}`
+  const editedProfileName = `Edited player ${suffix}`
+  const editedBlackName = `Edited Black ${suffix}`
+  const connection = await request.post('/api/connections', {
+    data: {
+      name: connectionName,
+      kind: 'openai',
+      supportsStructuredOutput: true,
+    },
+  })
+  const {id: connectionId} = await connection.json()
+  await request.post('/api/profiles', {
+    data: {
+      name: profileName,
+      connectionId,
+      modelId: `disposable-model-${suffix}`,
+      temperature: 0,
+    },
+  })
+
+  await page.goto('/settings')
+  const connectionRow = page
+    .locator('.existing-row')
+    .filter({hasText: connectionName})
+  await connectionRow
+    .getByRole('button', {name: `Edit ${connectionName}`})
+    .click()
+  await page.getByLabel('Connection name').fill(editedConnectionName)
+  await page.getByLabel(/Base URL/).fill('https://edited.example.test/v1')
+  await page.getByRole('button', {name: 'Update connection'}).click()
+  const editedConnectionRow = page
+    .locator('.existing-row')
+    .filter({hasText: editedConnectionName})
+  await expect(editedConnectionRow).toContainText(
+    'https://edited.example.test/v1',
+  )
+
+  const profileRow = page
+    .locator('.existing-row')
+    .filter({hasText: profileName})
+  await profileRow.getByRole('button', {name: `Edit ${profileName}`}).click()
+  await page.getByLabel('Profile name').fill(editedProfileName)
+  await page.getByLabel('Model ID').fill(`gpt-5.6-sol-${suffix}`)
+  await page.getByRole('button', {name: 'Update profile'}).click()
+  const editedProfileRow = page
+    .locator('.existing-row')
+    .filter({hasText: editedProfileName})
+  await expect(editedProfileRow).toContainText(`gpt-5.6-sol-${suffix}`)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await editedProfileRow
+    .getByRole('button', {name: `Delete ${editedProfileName}`})
+    .click()
+  await expect(editedProfileRow).toHaveCount(0)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await editedConnectionRow
+    .getByRole('button', {name: `Delete ${editedConnectionName}`})
+    .click()
+  await expect(editedConnectionRow).toHaveCount(0)
+
+  const gameResponse = await request.post('/api/games', {
+    data: {
+      black: {type: 'human', name: blackName},
+      white: {type: 'human', name: 'Disposable White'},
+    },
+  })
+  const {id: gameId} = await gameResponse.json()
+  await page.goto(`/games/${gameId}`)
+  await page.getByRole('button', {name: 'Edit game'}).click()
+  await page.getByLabel('Black').fill(editedBlackName)
+  await page.getByLabel('White').fill('Edited White')
+  await page.getByLabel('Move cap').fill('500')
+  await page.getByRole('button', {name: 'Save changes'}).click()
+  await expect(
+    page.getByRole('heading', {
+      name: `${editedBlackName} · Edited White`,
+    }),
+  ).toBeVisible()
+
+  await page.goto('/games')
+  const gameRow = page.locator('.game-row').filter({hasText: editedBlackName})
+  page.once('dialog', (dialog) => dialog.accept())
+  await gameRow
+    .getByRole('button', {name: `Delete ${editedBlackName} vs Edited White`})
+    .click()
+  await expect(gameRow).toHaveCount(0)
 })

@@ -1,5 +1,5 @@
 import {useQuery, useQueryClient} from '@tanstack/react-query'
-import {KeyRound, Save} from 'lucide-react'
+import {KeyRound, Pencil, Save, Trash2, X} from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {api} from '../api'
@@ -20,27 +20,48 @@ export function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [structured, setStructured] = useState(true)
+  const [editingConnectionId, setEditingConnectionId] = useState('')
   const [profileName, setProfileName] = useState('')
   const [connectionId, setConnectionId] = useState('builtin-fake')
   const [modelId, setModelId] = useState('')
   const [temperature, setTemperature] = useState(0.7)
   const [stylePrompt, setStylePrompt] = useState('')
+  const [editingProfileId, setEditingProfileId] = useState('')
+
+  const resetConnectionForm = () => {
+    setEditingConnectionId('')
+    setProvider('openai')
+    setConnectionName('OpenAI')
+    setBaseUrl('')
+    setApiKey('')
+    setStructured(true)
+  }
+  const resetProfileForm = () => {
+    setEditingProfileId('')
+    setProfileName('')
+    setModelId('')
+    setTemperature(0.7)
+    setStylePrompt('')
+  }
 
   const saveConnection = async (event: FormEvent) => {
     event.preventDefault()
     setError(undefined)
     try {
-      const result = await api.saveConnection({
+      const input = {
         name: connectionName,
         kind: provider,
         baseUrl: baseUrl || undefined,
         supportsStructuredOutput: structured,
-        apiKey,
-      })
+        apiKey: apiKey || undefined,
+      }
+      const result = editingConnectionId
+        ? await api.updateConnection(editingConnectionId, input)
+        : await api.saveConnection(input)
       await queryClient.invalidateQueries({queryKey: ['connections']})
       setConnectionId(result.id)
-      setApiKey('')
-      setSaved(t('saved'))
+      setSaved(t(editingConnectionId ? 'updated' : 'saved'))
+      resetConnectionForm()
     } catch (caught) {
       setError(caught)
     }
@@ -49,17 +70,77 @@ export function SettingsPage() {
     event.preventDefault()
     setError(undefined)
     try {
-      await api.saveProfile({
+      const input = {
         name: profileName,
         connectionId,
         modelId,
         temperature,
         stylePrompt: stylePrompt || undefined,
-      })
+      }
+      if (editingProfileId) await api.updateProfile(editingProfileId, input)
+      else await api.saveProfile(input)
       await queryClient.invalidateQueries({queryKey: ['profiles']})
-      setSaved(t('saved'))
-      setProfileName('')
-      setModelId('')
+      setSaved(t(editingProfileId ? 'updated' : 'saved'))
+      resetProfileForm()
+    } catch (caught) {
+      setError(caught)
+    }
+  }
+  const editConnection = (id: string) => {
+    const item = connections.data?.find((connection) => connection.id === id)
+    if (!item) return
+    setEditingConnectionId(item.id)
+    setProvider(item.kind)
+    setConnectionName(item.name)
+    setBaseUrl(item.baseUrl ?? '')
+    setApiKey('')
+    setStructured(item.supportsStructuredOutput)
+    setError(undefined)
+    setSaved('')
+  }
+  const editProfile = (id: string) => {
+    const item = profiles.data?.find((profile) => profile.id === id)
+    if (!item) return
+    setEditingProfileId(item.id)
+    setProfileName(item.name)
+    setConnectionId(item.connectionId)
+    setModelId(item.modelId)
+    setTemperature(item.temperature)
+    setStylePrompt(item.stylePrompt ?? '')
+    setError(undefined)
+    setSaved('')
+  }
+  const deleteConnection = async (id: string) => {
+    if (!window.confirm(t('deleteConnectionConfirm'))) return
+    setError(undefined)
+    setSaved('')
+    try {
+      await api.deleteConnection(id)
+      await Promise.all([
+        queryClient.invalidateQueries({queryKey: ['connections']}),
+        queryClient.invalidateQueries({queryKey: ['profiles']}),
+      ])
+      if (connectionId === id) setConnectionId('builtin-fake')
+      if (editingConnectionId === id) resetConnectionForm()
+      const deletedProfileIds =
+        profiles.data
+          ?.filter((profile) => profile.connectionId === id)
+          .map((profile) => profile.id) ?? []
+      if (deletedProfileIds.includes(editingProfileId)) resetProfileForm()
+      setSaved(t('deleted'))
+    } catch (caught) {
+      setError(caught)
+    }
+  }
+  const deleteProfile = async (id: string) => {
+    if (!window.confirm(t('deleteProfileConfirm'))) return
+    setError(undefined)
+    setSaved('')
+    try {
+      await api.deleteProfile(id)
+      await queryClient.invalidateQueries({queryKey: ['profiles']})
+      if (editingProfileId === id) resetProfileForm()
+      setSaved(t('deleted'))
     } catch (caught) {
       setError(caught)
     }
@@ -86,18 +167,42 @@ export function SettingsPage() {
                       {item.baseUrl ? ` · ${item.baseUrl}` : ''}
                     </small>
                   </span>
-                  <span
-                    className={
-                      item.hasSessionKey || item.kind === 'fake'
-                        ? 'key-ready'
-                        : 'key-missing'
-                    }
-                  >
-                    <KeyRound />
-                    {item.hasSessionKey || item.kind === 'fake'
-                      ? 'Ready'
-                      : 'No key'}
-                  </span>
+                  <div className="existing-actions">
+                    <span
+                      className={
+                        item.hasSessionKey || item.kind === 'fake'
+                          ? 'key-ready'
+                          : 'key-missing'
+                      }
+                    >
+                      <KeyRound />
+                      {item.hasSessionKey || item.kind === 'fake'
+                        ? 'Ready'
+                        : 'No key'}
+                    </span>
+                    {item.id !== 'builtin-fake' && (
+                      <>
+                        <Button
+                          type="button"
+                          className="icon-button compact-icon"
+                          title={`${t('edit')} ${item.name}`}
+                          aria-label={`${t('edit')} ${item.name}`}
+                          onClick={() => editConnection(item.id)}
+                        >
+                          <Pencil />
+                        </Button>
+                        <Button
+                          type="button"
+                          className="icon-button danger-quiet compact-icon"
+                          title={`${t('delete')} ${item.name}`}
+                          aria-label={`${t('delete')} ${item.name}`}
+                          onClick={() => void deleteConnection(item.id)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -159,10 +264,20 @@ export function SettingsPage() {
                 {t('structured')}
               </label>
               <p className="field-note">{t('keyNotice')}</p>
-              <Button className="primary">
-                <Save />
-                {t('saveConnection')}
-              </Button>
+              <div className="form-actions">
+                <Button className="primary">
+                  <Save />
+                  {t(
+                    editingConnectionId ? 'updateConnection' : 'saveConnection',
+                  )}
+                </Button>
+                {editingConnectionId && (
+                  <Button type="button" onClick={resetConnectionForm}>
+                    <X />
+                    {t('cancel')}
+                  </Button>
+                )}
+              </div>
             </form>
           </section>
           <section className="settings-section">
@@ -174,7 +289,31 @@ export function SettingsPage() {
                     <strong>{item.name}</strong>
                     <small>{item.modelId}</small>
                   </span>
-                  <span>{item.temperature}</span>
+                  <div className="existing-actions">
+                    <span>{item.temperature}</span>
+                    {item.id !== 'builtin-fake-profile' && (
+                      <>
+                        <Button
+                          type="button"
+                          className="icon-button compact-icon"
+                          title={`${t('edit')} ${item.name}`}
+                          aria-label={`${t('edit')} ${item.name}`}
+                          onClick={() => editProfile(item.id)}
+                        >
+                          <Pencil />
+                        </Button>
+                        <Button
+                          type="button"
+                          className="icon-button danger-quiet compact-icon"
+                          title={`${t('delete')} ${item.name}`}
+                          aria-label={`${t('delete')} ${item.name}`}
+                          onClick={() => void deleteProfile(item.id)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -232,10 +371,18 @@ export function SettingsPage() {
                   onChange={(event) => setStylePrompt(event.target.value)}
                 />
               </label>
-              <Button className="primary">
-                <Save />
-                {t('saveProfile')}
-              </Button>
+              <div className="form-actions">
+                <Button className="primary">
+                  <Save />
+                  {t(editingProfileId ? 'updateProfile' : 'saveProfile')}
+                </Button>
+                {editingProfileId && (
+                  <Button type="button" onClick={resetProfileForm}>
+                    <X />
+                    {t('cancel')}
+                  </Button>
+                )}
+              </div>
             </form>
           </section>
         </div>

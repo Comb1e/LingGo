@@ -104,6 +104,10 @@ export class Store {
       )
   }
 
+  deleteGame(id: string) {
+    return this.db.prepare('DELETE FROM games WHERE id = ?').run(id).changes > 0
+  }
+
   deleteAllForTests() {
     this.db.exec(
       'DELETE FROM games; DELETE FROM player_profiles; DELETE FROM provider_connections;',
@@ -149,6 +153,13 @@ export class Store {
       )
   }
 
+  deleteConnection(id: string) {
+    return (
+      this.db.prepare('DELETE FROM provider_connections WHERE id = ?').run(id)
+        .changes > 0
+    )
+  }
+
   listProfiles(): PlayerProfile[] {
     return (
       this.db
@@ -187,6 +198,13 @@ export class Store {
         now,
         now,
       )
+  }
+
+  deleteProfile(id: string) {
+    return (
+      this.db.prepare('DELETE FROM player_profiles WHERE id = ?').run(id)
+        .changes > 0
+    )
   }
 }
 

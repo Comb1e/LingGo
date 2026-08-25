@@ -52,6 +52,35 @@ export class GameService {
     return game ? this.withPending(game) : undefined
   }
 
+  delete(id: string) {
+    if (!this.store.getGame(id)) return false
+    this.cancel(id)
+    this.store.deleteGame(id)
+    this.events.emit(id, null)
+    return true
+  }
+
+  updateDetails(
+    id: string,
+    input: {
+      expectedVersion: number
+      blackName: string
+      whiteName: string
+      commentsVisible: boolean
+      moveCap: number
+    },
+  ) {
+    const game = this.requireGame(id)
+    if (game.version !== input.expectedVersion) throw new StaleVersionError()
+    if (input.moveCap < game.moves.length)
+      throw new Error('Move cap cannot be lower than the current move count')
+    game.black = {...game.black, name: input.blackName}
+    game.white = {...game.white, name: input.whiteName}
+    game.commentsVisible = input.commentsVisible
+    game.moveCap = input.moveCap
+    return this.commit(game)
+  }
+
   create(input: NewGameInput): Game {
     const values = newGameSchema.parse(input)
     const now = new Date().toISOString()
@@ -334,8 +363,10 @@ export class GameService {
             snapshot,
             controller.signal,
           )
+          if (controller.signal.aborted) return
           result.retries = attempt
-          this.accept(game, result.action, result)
+          const latest = this.requireGame(id)
+          this.accept(latest, result.action, result)
           return
         } catch (error) {
           if (controller.signal.aborted) return
@@ -420,7 +451,7 @@ export class GameService {
   }
 
   private emit(id: string) {
-    this.events.emit(id, this.get(id))
+    this.events.emit(id, this.get(id) ?? null)
   }
 
   private requireGame(id: string): Game {

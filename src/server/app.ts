@@ -36,6 +36,14 @@ const profileSchema = z.object({
   stylePrompt: z.string().max(4000).optional(),
 })
 
+const gameEditSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  blackName: z.string().trim().min(1).max(120),
+  whiteName: z.string().trim().min(1).max(120),
+  commentsVisible: z.boolean(),
+  moveCap: z.number().int().positive(),
+})
+
 export function createApp(options: {store?: Store} = {}) {
   const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
   const store = options.store ?? new Store()
@@ -50,6 +58,18 @@ export function createApp(options: {store?: Store} = {}) {
     '/api/games/:id',
     async (request) =>
       games.get((request.params as {id: string}).id) ?? notFound(),
+  )
+  app.delete('/api/games/:id', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!games.delete(id))
+      return reply.code(404).send({error: 'Game not found'})
+    return {ok: true}
+  })
+  app.patch('/api/games/:id', async (request) =>
+    games.updateDetails(
+      (request.params as {id: string}).id,
+      gameEditSchema.parse(request.body),
+    ),
   )
   app.post('/api/games/:id/commands', async (request) =>
     games.command((request.params as {id: string}).id, request.body),
@@ -114,12 +134,54 @@ export function createApp(options: {store?: Store} = {}) {
       .code(201)
       .send({...store.getConnection(id), hasSessionKey: games.vault.has(id)})
   })
+  app.put('/api/connections/:id', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!store.getConnection(id))
+      return reply.code(404).send({error: 'Provider connection not found'})
+    if (id === 'builtin-fake')
+      return reply
+        .code(400)
+        .send({error: 'The built-in connection cannot be edited'})
+    const input = connectionSchema.parse(request.body)
+    store.saveConnection({...input, id})
+    if (input.apiKey !== undefined) games.vault.set(id, input.apiKey)
+    return {
+      ...store.getConnection(id),
+      hasSessionKey:
+        games.vault.has(id) ||
+        Boolean(games.vault.get(store.getConnection(id)!)),
+    }
+  })
   app.put('/api/connections/:id/key', async (request) => {
     const {id} = request.params as {id: string}
     if (!store.getConnection(id)) return notFound()
     const {apiKey} = z.object({apiKey: z.string()}).parse(request.body)
     games.vault.set(id, apiKey)
     return {ok: true, hasSessionKey: games.vault.has(id)}
+  })
+  app.delete('/api/connections/:id', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    const connection = store.getConnection(id)
+    if (!connection)
+      return reply.code(404).send({error: 'Provider connection not found'})
+    if (id === 'builtin-fake')
+      return reply
+        .code(400)
+        .send({error: 'The built-in connection cannot be deleted'})
+    const profileIds = new Set(
+      store
+        .listProfiles()
+        .filter((profile) => profile.connectionId === id)
+        .map((profile) => profile.id),
+    )
+    if (unfinishedGameUsesProfile(store, profileIds))
+      return reply.code(409).send({
+        error:
+          'This connection has a player profile used by an unfinished game',
+      })
+    store.deleteConnection(id)
+    games.vault.delete(id)
+    return {ok: true}
   })
 
   app.get('/api/profiles', async () => store.listProfiles())
@@ -130,6 +192,35 @@ export function createApp(options: {store?: Store} = {}) {
     const id = input.id ?? crypto.randomUUID()
     store.saveProfile({...input, id})
     return reply.code(201).send(store.getProfile(id))
+  })
+  app.put('/api/profiles/:id', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!store.getProfile(id))
+      return reply.code(404).send({error: 'Player profile not found'})
+    if (id === 'builtin-fake-profile')
+      return reply
+        .code(400)
+        .send({error: 'The built-in player profile cannot be edited'})
+    const input = profileSchema.parse(request.body)
+    if (!store.getConnection(input.connectionId))
+      return reply.code(400).send({error: 'Provider connection not found'})
+    store.saveProfile({...input, id})
+    return store.getProfile(id)
+  })
+  app.delete('/api/profiles/:id', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!store.getProfile(id))
+      return reply.code(404).send({error: 'Player profile not found'})
+    if (id === 'builtin-fake-profile')
+      return reply
+        .code(400)
+        .send({error: 'The built-in player profile cannot be deleted'})
+    if (unfinishedGameUsesProfile(store, new Set([id])))
+      return reply
+        .code(409)
+        .send({error: 'This player profile is used by an unfinished game'})
+    store.deleteProfile(id)
+    return {ok: true}
   })
 
   app.setErrorHandler((error, _request, reply) => {
@@ -164,4 +255,17 @@ export function createApp(options: {store?: Store} = {}) {
 
 function notFound(): never {
   throw new Error('Game not found')
+}
+
+function unfinishedGameUsesProfile(store: Store, profileIds: Set<string>) {
+  if (!profileIds.size) return false
+  return store
+    .listGames()
+    .some(
+      (game) =>
+        game.status !== 'finished' &&
+        [game.black, game.white].some(
+          (seat) => seat.type === 'llm' && profileIds.has(seat.profileId),
+        ),
+    )
 }

@@ -31,6 +31,8 @@ Settings separates reusable provider connections from player profiles. Connectio
 
 Save any number of player profiles against those connections. The New Game page lists every saved LLM player for both seats, with the model ID emphasized and the profile name and connection underneath, so a profile can be selected directly for Black or White.
 
+Games, provider connections, and player profiles can be edited or deleted from their list or detail views. Game editing is limited to player display names, commentary visibility, and the move cap so board rules and move history remain valid. Deleting a connection also deletes its profiles. LingGo blocks profile or connection deletion while an unfinished game still uses it, and keeps the built-in deterministic profile available as a fallback.
+
 API keys are never persisted; enter one for the current server process or set the matching environment variable:
 
 | Provider          | Environment variable           |

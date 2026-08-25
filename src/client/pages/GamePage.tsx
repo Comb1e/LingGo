@@ -4,15 +4,19 @@ import {
   Eye,
   EyeOff,
   Pause,
+  Pencil,
   Play,
   Redo2,
   RotateCcw,
+  Save,
   SkipForward,
+  Trash2,
+  X,
   XCircle,
 } from 'lucide-react'
 import {useCallback, useEffect, useState} from 'react'
 import {useTranslation} from 'react-i18next'
-import {useParams} from 'react-router-dom'
+import {useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
 import type {Color, Game, Point} from '../../shared/types'
 import {api} from '../api'
@@ -27,9 +31,17 @@ import {
 
 export function GamePage() {
   const {id = ''} = useParams()
+  const navigate = useNavigate()
   const {t} = useTranslation()
   const queryClient = useQueryClient()
   const [commandError, setCommandError] = useState<unknown>()
+  const [editing, setEditing] = useState(false)
+  const [editDraft, setEditDraft] = useState({
+    blackName: '',
+    whiteName: '',
+    commentsVisible: true,
+    moveCap: 1,
+  })
   const gameQuery = useQuery({
     queryKey: ['game', id],
     queryFn: () => api.game(id),
@@ -47,18 +59,44 @@ export function GamePage() {
       await queryClient.invalidateQueries({queryKey: ['game', id]})
     },
   })
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteGame(id),
+    onSuccess: async () => {
+      queryClient.removeQueries({queryKey: ['game', id]})
+      await queryClient.invalidateQueries({queryKey: ['games']})
+      navigate('/games')
+    },
+  })
+  const editMutation = useMutation({
+    mutationFn: (input: Record<string, unknown>) => api.updateGame(id, input),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(['game', id], updated)
+      await queryClient.invalidateQueries({queryKey: ['games']})
+      setEditing(false)
+      setCommandError(undefined)
+    },
+    onError: async (error) => {
+      setCommandError(error)
+      await queryClient.invalidateQueries({queryKey: ['game', id]})
+    },
+  })
   const game = gameQuery.data
 
   useEffect(() => {
     if (!id) return
     const events = new EventSource(`/api/games/${id}/events`)
     events.onmessage = (event) => {
-      const next = JSON.parse(event.data) as Game
+      const next = JSON.parse(event.data) as Game | null
+      if (!next) {
+        queryClient.removeQueries({queryKey: ['game', id]})
+        navigate('/games')
+        return
+      }
       queryClient.setQueryData(['game', id], next)
       void queryClient.invalidateQueries({queryKey: ['games']})
     }
     return () => events.close()
-  }, [id, queryClient])
+  }, [id, navigate, queryClient])
 
   const send = useCallback(
     (type: string, extra: Record<string, unknown> = {}) => {
@@ -98,6 +136,16 @@ export function GamePage() {
     {calls: 0, tokens: 0},
   )
   const humanTurn = game.status === 'active' && current.type === 'human'
+  const startEditing = () => {
+    setEditDraft({
+      blackName: game.black.name,
+      whiteName: game.white.name,
+      commentsVisible: game.commentsVisible,
+      moveCap: game.moveCap,
+    })
+    setCommandError(undefined)
+    setEditing(true)
+  }
 
   return (
     <div className="page game-page">
@@ -113,10 +161,120 @@ export function GamePage() {
             >
               <Download />
             </a>
+            <Button
+              className="icon-button"
+              type="button"
+              title={t('editGame')}
+              aria-label={t('editGame')}
+              onClick={startEditing}
+            >
+              <Pencil />
+            </Button>
+            <Button
+              className="icon-button danger-quiet"
+              type="button"
+              title={t('delete')}
+              aria-label={t('delete')}
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (window.confirm(t('deleteGameConfirm')))
+                  deleteMutation.mutate()
+              }}
+            >
+              <Trash2 />
+            </Button>
           </>
         }
       />
-      <ErrorBanner error={commandError ?? gameQuery.error} />
+      <ErrorBanner
+        error={commandError ?? deleteMutation.error ?? gameQuery.error}
+      />
+      {editing && (
+        <form
+          className="game-edit-panel"
+          onSubmit={(event) => {
+            event.preventDefault()
+            editMutation.mutate({
+              expectedVersion: game.version,
+              ...editDraft,
+            })
+          }}
+        >
+          <div className="game-edit-heading">
+            <h2>{t('editGame')}</h2>
+            <Button
+              className="icon-button compact-icon"
+              type="button"
+              title={t('cancel')}
+              aria-label={t('cancel')}
+              onClick={() => setEditing(false)}
+            >
+              <X />
+            </Button>
+          </div>
+          <div className="game-edit-fields">
+            <label className="field">
+              <span>{t('black')}</span>
+              <input
+                required
+                maxLength={120}
+                value={editDraft.blackName}
+                onChange={(event) =>
+                  setEditDraft({...editDraft, blackName: event.target.value})
+                }
+              />
+            </label>
+            <label className="field">
+              <span>{t('white')}</span>
+              <input
+                required
+                maxLength={120}
+                value={editDraft.whiteName}
+                onChange={(event) =>
+                  setEditDraft({...editDraft, whiteName: event.target.value})
+                }
+              />
+            </label>
+            <label className="field">
+              <span>{t('moveCap')}</span>
+              <input
+                required
+                type="number"
+                min={Math.max(1, game.moves.length)}
+                value={editDraft.moveCap}
+                onChange={(event) =>
+                  setEditDraft({
+                    ...editDraft,
+                    moveCap: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label className="check-field game-edit-check">
+              <input
+                type="checkbox"
+                checked={editDraft.commentsVisible}
+                onChange={(event) =>
+                  setEditDraft({
+                    ...editDraft,
+                    commentsVisible: event.target.checked,
+                  })
+                }
+              />
+              {t('commentary')}
+            </label>
+          </div>
+          <div className="form-actions">
+            <Button className="primary" disabled={editMutation.isPending}>
+              <Save />
+              {t('saveChanges')}
+            </Button>
+            <Button type="button" onClick={() => setEditing(false)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </form>
+      )}
       <div className="game-workspace">
         <section className="board-column">
           <div className="player-strip white-player">

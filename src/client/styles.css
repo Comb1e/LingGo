@@ -253,16 +253,24 @@ svg {
   border-top: 1px solid var(--line);
 }
 .game-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.game-row-main {
   min-height: 88px;
   padding: 17px 10px;
   display: grid;
   grid-template-columns: minmax(260px, 1.2fr) minmax(260px, 1fr) auto;
   align-items: center;
   gap: 20px;
-  border-bottom: 1px solid var(--line);
 }
-.game-row:hover {
+.game-row-main:hover {
   background: #eaf0eb;
+}
+.row-delete {
+  margin: 0 7px;
 }
 .game-players {
   display: flex;
@@ -592,6 +600,12 @@ svg {
   display: grid;
   gap: 16px;
 }
+.form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .existing-list {
   max-height: 230px;
   overflow: auto;
@@ -617,6 +631,18 @@ svg {
 .existing-row small {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+.existing-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.compact-icon {
+  width: 34px;
+  min-height: 34px;
+  padding: 6px;
 }
 .key-ready,
 .key-missing {
@@ -651,6 +677,35 @@ svg {
 }
 .game-page {
   width: min(1400px, 100%);
+}
+.game-edit-panel {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  display: grid;
+  gap: 16px;
+}
+.game-edit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.game-edit-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.game-edit-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(130px, 0.5fr) auto;
+  align-items: end;
+  gap: 16px;
+}
+.game-edit-check {
+  min-height: 40px;
+  white-space: nowrap;
 }
 .game-workspace {
   display: grid;
@@ -935,6 +990,9 @@ svg {
   .settings-grid {
     grid-template-columns: 1fr;
   }
+  .game-edit-fields {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 @media (max-width: 620px) {
   .page {
@@ -957,6 +1015,9 @@ svg {
     width: 18px;
   }
   .game-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .game-row-main {
     grid-template-columns: 1fr auto;
     gap: 8px 12px;
     min-height: 105px;
@@ -988,6 +1049,12 @@ svg {
     padding: 7px;
   }
   .seat-grid {
+    grid-template-columns: 1fr;
+  }
+  .game-edit-panel {
+    padding: 16px;
+  }
+  .game-edit-fields {
     grid-template-columns: 1fr;
   }
   .seat-editor {

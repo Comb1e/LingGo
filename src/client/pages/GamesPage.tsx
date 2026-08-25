@@ -1,5 +1,5 @@
-import {useQuery} from '@tanstack/react-query'
-import {Download, FileUp, Plus} from 'lucide-react'
+import {useQuery, useQueryClient} from '@tanstack/react-query'
+import {Download, FileUp, Plus, Trash2} from 'lucide-react'
 import {useRef, useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
@@ -15,9 +15,12 @@ import {
 export function GamesPage() {
   const {t, i18n} = useTranslation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const fileInput = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState<unknown>()
   const [warnings, setWarnings] = useState<string[]>([])
+  const [deletingId, setDeletingId] = useState('')
+  const [deleteError, setDeleteError] = useState<unknown>()
   const games = useQuery({queryKey: ['games'], queryFn: api.games})
 
   const importFile = async (file?: File) => {
@@ -30,6 +33,20 @@ export function GamesPage() {
       else setTimeout(() => navigate(`/games/${result.game.id}`), 1800)
     } catch (error) {
       setImportError(error)
+    }
+  }
+
+  const deleteGame = async (id: string) => {
+    if (!window.confirm(t('deleteGameConfirm'))) return
+    setDeletingId(id)
+    setDeleteError(undefined)
+    try {
+      await api.deleteGame(id)
+      await queryClient.invalidateQueries({queryKey: ['games']})
+    } catch (error) {
+      setDeleteError(error)
+    } finally {
+      setDeletingId('')
     }
   }
 
@@ -57,7 +74,7 @@ export function GamesPage() {
           </>
         }
       />
-      <ErrorBanner error={importError ?? games.error} />
+      <ErrorBanner error={importError ?? deleteError ?? games.error} />
       {warnings.length > 0 && (
         <div className="banner warning-banner">{warnings.join(' ')}</div>
       )}
@@ -66,37 +83,49 @@ export function GamesPage() {
       ) : games.data?.length ? (
         <div className="game-list">
           {games.data.map((game) => (
-            <Link to={`/games/${game.id}`} className="game-row" key={game.id}>
-              <div className="game-players">
-                <strong>
-                  <i className="stone black-stone" />
-                  {game.black.name}
-                </strong>
-                <span>vs</span>
-                <strong>
-                  <i className="stone white-stone" />
-                  {game.white.name}
-                </strong>
-              </div>
-              <div className="game-meta">
-                <span>
-                  {game.size}×{game.size}
-                </span>
-                <span>{game.moves.length} moves</span>
-                <span>
-                  {new Intl.DateTimeFormat(i18n.language, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  }).format(new Date(game.updatedAt))}
-                </span>
-              </div>
-              <div className="game-result">
-                {game.result ?? (
-                  <StatusBadge status={game.status} label={t(game.status)} />
-                )}
-                <Download className="row-arrow" />
-              </div>
-            </Link>
+            <div className="game-row" key={game.id}>
+              <Link to={`/games/${game.id}`} className="game-row-main">
+                <div className="game-players">
+                  <strong>
+                    <i className="stone black-stone" />
+                    {game.black.name}
+                  </strong>
+                  <span>vs</span>
+                  <strong>
+                    <i className="stone white-stone" />
+                    {game.white.name}
+                  </strong>
+                </div>
+                <div className="game-meta">
+                  <span>
+                    {game.size}×{game.size}
+                  </span>
+                  <span>{game.moves.length} moves</span>
+                  <span>
+                    {new Intl.DateTimeFormat(i18n.language, {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    }).format(new Date(game.updatedAt))}
+                  </span>
+                </div>
+                <div className="game-result">
+                  {game.result ?? (
+                    <StatusBadge status={game.status} label={t(game.status)} />
+                  )}
+                  <Download className="row-arrow" />
+                </div>
+              </Link>
+              <Button
+                className="icon-button danger-quiet row-delete"
+                type="button"
+                title={t('delete')}
+                aria-label={`${t('delete')} ${game.black.name} vs ${game.white.name}`}
+                disabled={deletingId === game.id}
+                onClick={() => void deleteGame(game.id)}
+              >
+                <Trash2 />
+              </Button>
+            </div>
           ))}
         </div>
       ) : (
