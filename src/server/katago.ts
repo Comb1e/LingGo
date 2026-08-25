@@ -2,9 +2,10 @@ import {EventEmitter} from 'node:events'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {createInterface} from 'node:readline'
 import {pointToCoordinate} from '../shared/coordinates'
-import type {BoardSize, Color, Game, KataGoHealth, KataGoSettings, Move} from '../shared/types'
+import type {BoardSize, Game, KataGoHealth, KataGoSettings, Move} from '../shared/types'
 
 export interface KataGoRoot {
+  /** Win rate and score lead are normalized to Black's perspective. */
   winrate: number
   scoreLead: number
   visits: number
@@ -102,7 +103,15 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
     this.closing = false
     const child = spawn(
       this.settings.executablePath,
-      ['analysis', '-model', this.settings.modelPath, '-config', this.settings.configPath],
+      [
+        'analysis',
+        '-model',
+        this.settings.modelPath,
+        '-config',
+        this.settings.configPath,
+        '-override-config',
+        'reportAnalysisWinratesAs=BLACK',
+      ],
       {shell: false, stdio: ['pipe', 'pipe', 'pipe']},
     )
     this.child = child
@@ -206,13 +215,12 @@ export function kataGoMove(move: Move, size: BoardSize): string {
   return pointToCoordinate(move.point, size)
 }
 
-export function rootFromBlack(result: KataGoResult, toMove: Color) {
-  const currentWinRate = result.rootInfo.winrate
-  const currentScoreLead = result.rootInfo.scoreLead
+export function rootFromBlack(result: KataGoResult) {
+  const blackWinRate = result.rootInfo.winrate
   return {
-    blackWinRate: toMove === 'B' ? currentWinRate : 1 - currentWinRate,
-    whiteWinRate: toMove === 'W' ? currentWinRate : 1 - currentWinRate,
-    blackScoreLead: toMove === 'B' ? currentScoreLead : -currentScoreLead,
+    blackWinRate,
+    whiteWinRate: 1 - blackWinRate,
+    blackScoreLead: result.rootInfo.scoreLead,
     visits: result.rootInfo.visits,
   }
 }

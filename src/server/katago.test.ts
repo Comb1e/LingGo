@@ -8,15 +8,11 @@ describe('KataGo protocol normalization', () => {
     moveInfos: [{move: 'D4', visits: 50, winrate: 0.7, scoreLead: 3.5}],
   }
 
-  it('converts root values from the side to move into Black and White perspectives', () => {
-    const black = rootFromBlack(response, 'B')
-    const white = rootFromBlack(response, 'W')
-    expect(black.blackWinRate).toBeCloseTo(0.7)
-    expect(black.whiteWinRate).toBeCloseTo(0.3)
-    expect(black.blackScoreLead).toBe(3.5)
-    expect(white.blackWinRate).toBeCloseTo(0.3)
-    expect(white.whiteWinRate).toBeCloseTo(0.7)
-    expect(white.blackScoreLead).toBe(-3.5)
+  it('keeps root values in the configured Black perspective', () => {
+    const value = rootFromBlack(response)
+    expect(value.blackWinRate).toBeCloseTo(0.7)
+    expect(value.whiteWinRate).toBeCloseTo(0.3)
+    expect(value.blackScoreLead).toBe(3.5)
   })
 
   it('converts board moves, pass, and selected candidates', () => {

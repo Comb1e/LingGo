@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it} from 'vitest'
+import {readFileSync} from 'node:fs'
 import {Store} from './database'
 
 let store: Store | undefined
@@ -12,6 +13,33 @@ describe('database migrations', () => {
     const versions = store.db
       .prepare('SELECT version FROM schema_migrations')
       .all()
-    expect(versions).toEqual([{version: 1}, {version: 2}, {version: 3}])
+    expect(versions).toEqual([
+      {version: 1},
+      {version: 2},
+      {version: 3},
+      {version: 4},
+    ])
+  })
+
+  it('repairs cached White-to-play analysis from the old perspective conversion', () => {
+    store = new Store(':memory:')
+    store.db.prepare(
+      `INSERT INTO games (id, status, game_json, created_at, updated_at)
+       VALUES ('game', 'active', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run()
+    store.db.prepare(
+      `INSERT INTO position_analyses
+       (game_id, turn, black_win_rate, white_win_rate, black_score_lead, visits, position_hash, created_at)
+       VALUES ('game', 1, 0.3, 0.7, -2.5, 500, 'hash:W', CURRENT_TIMESTAMP)`,
+    ).run()
+
+    store.db.exec(
+      readFileSync(new URL('./migrations/004_fix_analysis_perspective.sql', import.meta.url), 'utf8'),
+    )
+
+    const repaired = store.getGameAnalysis('game').positions[0]
+    expect(repaired.blackWinRate).toBeCloseTo(0.7)
+    expect(repaired.whiteWinRate).toBeCloseTo(0.3)
+    expect(repaired.blackScoreLead).toBe(2.5)
   })
 })

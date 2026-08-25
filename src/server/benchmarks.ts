@@ -250,7 +250,7 @@ export class BenchmarkService {
     while (run.status === 'running' && game.status !== 'finished') {
       signal.throwIfAborted()
       const beforeResult = await this.analyze(game, run.config.visits, signal)
-      const before = rootFromBlack(beforeResult, game.toMove)
+      const before = rootFromBlack(beforeResult)
       if (game.toMove === llmColor) {
         const adapter = this.adapter(run)
         if (!adapter) {
@@ -271,7 +271,7 @@ export class BenchmarkService {
         game = this.games.acceptAutomated(game.id, response.action, response)
         const afterResult = await this.analyze(game, run.config.visits, signal)
         if (run.currentGame === 10) {
-          const after = rootFromBlack(afterResult, game.toMove)
+          const after = rootFromBlack(afterResult)
           const beforeScore = llmColor === 'B' ? before.blackScoreLead : -before.blackScoreLead
           const afterScore = llmColor === 'B' ? after.blackScoreLead : -after.blackScoreLead
           const beforeWin = llmColor === 'B' ? before.blackWinRate : before.whiteWinRate
@@ -293,7 +293,7 @@ export class BenchmarkService {
         game.status === 'finished' && game.moves.at(-1)?.action !== 'resign'
       if (game.status === 'scoring' || endedWithoutResignation || (game.status === 'paused' && game.moves.length >= 722)) {
         const final = await this.analyze(game, run.config.visits, signal)
-        const lead = rootFromBlack(final, game.toMove).blackScoreLead
+        const lead = rootFromBlack(final).blackScoreLead
         game = this.games.finishAutomated(game.id, scoreLeadResult(lead))
       }
     }
@@ -341,7 +341,7 @@ export class BenchmarkService {
     const value: PositionAnalysis = {
       gameId: game.id,
       turn: game.moves.length,
-      ...rootFromBlack(result, state.toMove),
+      ...rootFromBlack(result),
       positionHash: `${boardHash(state.board)}:${state.toMove}`,
       createdAt: new Date().toISOString(),
     }

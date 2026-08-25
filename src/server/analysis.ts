@@ -134,12 +134,11 @@ export class AnalysisService {
           if (controller.signal.aborted) return
           const latest = this.games.get(game.id)
           if (!latest || turn > latest.moves.length) continue
-          const state = replay(latest.size, latest.moves.slice(0, turn))
           const result = await this.engine.analyze({...gamePosition(latest, turn), visits}, controller.signal)
           this.store.savePositionAnalysis({
             gameId: game.id,
             turn,
-            ...rootFromBlack(result, state.toMove),
+            ...rootFromBlack(result),
             positionHash: positionHash(latest, turn),
             createdAt: new Date().toISOString(),
           })
