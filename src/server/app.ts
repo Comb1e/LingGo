@@ -7,7 +7,7 @@ import {newGameSchema, playerActionSchema, providerKindSchema} from '../shared/t
 import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
 import {AnalysisService} from './analysis'
-import {KataGoEngine, type KataGoAnalyzer} from './katago'
+import {DeterministicKataGo, KataGoEngine, type KataGoAnalyzer} from './katago'
 import {BenchmarkService} from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
@@ -67,7 +67,11 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
   const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
   const store = options.store ?? new Store()
   const games = new GameService(store)
-  const kataGo = options.kataGo ?? new KataGoEngine(store.getKataGoSettings())
+  const kataGo: KataGoAnalyzer =
+    options.kataGo ??
+    (process.env.LINGGO_FAKE_KATAGO === '1'
+      ? new DeterministicKataGo()
+      : new KataGoEngine(store.getKataGoSettings()))
   const analysis = new AnalysisService(store, games, kataGo)
   const benchmarks = new BenchmarkService(store, games, kataGo, options.notebookStore)
 
@@ -257,6 +261,7 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
         error:
           'This connection has a player profile used by an unfinished game',
       })
+    await Promise.all([...profileIds].map((profileId) => benchmarks.notebooks.deleteCurrent(profileId)))
     store.deleteConnection(id)
     games.vault.delete(id)
     return {ok: true}

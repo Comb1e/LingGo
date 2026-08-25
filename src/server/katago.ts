@@ -184,6 +184,22 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
   }
 }
 
+export class DeterministicKataGo implements KataGoAnalyzer {
+  async analyze(input: {size: BoardSize; komi: number; moves: Move[]; visits: number}) {
+    return {
+      id: `fake-${input.moves.length}`,
+      rootInfo: {winrate: 0.5, scoreLead: 0, visits: input.visits},
+      moveInfos: [{move: 'pass', visits: input.visits, winrate: 0.5, scoreLead: 0}],
+    }
+  }
+
+  async healthCheck(): Promise<KataGoHealth> {
+    return {ok: true, message: 'Deterministic KataGo is ready.', winRate: 0.5, scoreLead: 0}
+  }
+
+  async close() {}
+}
+
 export function kataGoMove(move: Move, size: BoardSize): string {
   if (move.action === 'pass' || move.action === 'resign') return 'pass'
   if (!move.point) throw new Error(`Move ${move.number} has no point`)

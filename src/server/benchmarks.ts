@@ -19,6 +19,8 @@ import {createPlayerAdapter, makeBenchmarkMovePrompt, makeReflectionPrompt} from
 
 type InternalRun = BenchmarkRun & {pointLosses?: number[]; winRateLosses?: number[]}
 
+class KataGoUnavailableError extends Error {}
+
 export class BenchmarkService {
   readonly events = new EventEmitter()
   private scheduled = new Set<string>()
@@ -165,6 +167,7 @@ export class BenchmarkService {
       if (!['queued', 'running'].includes(run.status)) return
       run.status = 'running'
       run.waitingFor = undefined
+      run.error = undefined
       this.save(run)
       while (run.currentGame < 11 && run.status === 'running') {
         run.phase = run.currentGame < 10 ? 'training' : 'final'
@@ -205,8 +208,13 @@ export class BenchmarkService {
       if (!controller.signal.aborted) {
         const run = this.get(id) as InternalRun | undefined
         if (run && run.status === 'running') {
-          run.status = 'paused'
           run.error = publicError(error)
+          if (error instanceof KataGoUnavailableError) {
+            run.waitingFor = 'katago'
+            retry = true
+          } else {
+            run.status = 'paused'
+          }
           this.save(run)
         }
       }
@@ -322,7 +330,13 @@ export class BenchmarkService {
   }
 
   private async analyze(game: Game, visits: number, signal: AbortSignal) {
-    const result = await this.engine.analyze({...gamePosition(game), visits, priority: 50}, signal)
+    let result
+    try {
+      result = await this.engine.analyze({...gamePosition(game), visits, priority: 50}, signal)
+    } catch (error) {
+      if (signal.aborted) throw error
+      throw new KataGoUnavailableError(publicError(error))
+    }
     const state = replay(game.size, game.moves)
     const value: PositionAnalysis = {
       gameId: game.id,

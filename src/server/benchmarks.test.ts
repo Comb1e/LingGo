@@ -7,7 +7,7 @@ import {Store} from './database'
 import {GameService} from './games'
 import {BenchmarkService, calculateMetrics, pointLossQuality} from './benchmarks'
 import {NotebookStore} from './notebooks'
-import {makeBenchmarkMovePrompt} from './providers'
+import {makeBenchmarkMovePrompt, makeReflectionPrompt} from './providers'
 import {makeSnapshot} from './go'
 
 let store: Store | undefined
@@ -53,6 +53,17 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).not.toContain('scoreLead')
     expect(prompt).not.toContain('candidate')
     expect(prompt).not.toContain('variation')
+  })
+
+  it('adds complete training feedback only to training move and reflection prompts', () => {
+    const snapshot = makeSnapshot(19, 7.5, [])
+    const history = 'Turn 0: 50.00%\nTurn 1: 42.00%'
+    const movePrompt = makeBenchmarkMovePrompt(snapshot, '', {phase: 'training', winRateHistory: history})
+    const reflection = makeReflectionPrompt({notebook: '', snapshot, result: 'W+2.5', llmColor: 'B', winRateHistory: history})
+    expect(movePrompt).toContain(`6. TRAINING WIN-RATE HISTORY\n${history}`)
+    expect(reflection).toContain(`TURN-ALIGNED WIN-RATE HISTORY\n${history}`)
+    expect(movePrompt).not.toContain('PLAYING STYLE')
+    expect(reflection).not.toContain('PLAYING STYLE')
   })
 
   it('runs ten alternating training games and one scored final game', async () => {
