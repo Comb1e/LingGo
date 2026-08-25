@@ -1,0 +1,167 @@
+import Fastify from 'fastify'
+import fastifyStatic from '@fastify/static'
+import {existsSync} from 'node:fs'
+import {join} from 'node:path'
+import {z, ZodError} from 'zod'
+import {newGameSchema, providerKindSchema} from '../shared/types'
+import {Store} from './database'
+import {GameService, StaleVersionError} from './games'
+import {exportSgf, importSgf} from './sgf'
+
+const connectionSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z.string().min(1),
+    kind: providerKindSchema.exclude(['fake']),
+    baseUrl: z.string().url().optional(),
+    supportsStructuredOutput: z.boolean().default(true),
+    apiKey: z.string().optional(),
+  })
+  .superRefine((connection, context) => {
+    if (connection.kind === 'compatible' && !connection.baseUrl) {
+      context.addIssue({
+        code: 'custom',
+        path: ['baseUrl'],
+        message: 'Base URL is required for OpenAI-compatible connections',
+      })
+    }
+  })
+
+const profileSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  connectionId: z.string().min(1),
+  modelId: z.string().min(1),
+  temperature: z.number().min(0).max(2).default(0.7),
+  stylePrompt: z.string().max(4000).optional(),
+})
+
+export function createApp(options: {store?: Store} = {}) {
+  const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
+  const store = options.store ?? new Store()
+  const games = new GameService(store)
+
+  app.get('/api/health', async () => ({ok: true}))
+  app.get('/api/games', async () => games.list())
+  app.post('/api/games', async (request, reply) =>
+    reply.code(201).send(games.create(newGameSchema.parse(request.body))),
+  )
+  app.get(
+    '/api/games/:id',
+    async (request) =>
+      games.get((request.params as {id: string}).id) ?? notFound(),
+  )
+  app.post('/api/games/:id/commands', async (request) =>
+    games.command((request.params as {id: string}).id, request.body),
+  )
+
+  app.get('/api/games/:id/events', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!games.get(id)) return notFound()
+    reply.hijack()
+    const response = reply.raw
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = (game: unknown) =>
+      response.write(`data: ${JSON.stringify(game)}\n\n`)
+    send(games.get(id))
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
+    games.events.on(id, send)
+    request.raw.on('close', () => {
+      clearInterval(keepAlive)
+      games.events.off(id, send)
+    })
+  })
+
+  app.post('/api/import', async (request, reply) => {
+    const {sgf: contents} = z
+      .object({sgf: z.string().min(1)})
+      .parse(request.body)
+    const record = importSgf(contents)
+    const game = games.importRecord(record)
+    return reply.code(201).send({game, warnings: record.warnings})
+  })
+  app.get('/api/games/:id/export.sgf', async (request, reply) => {
+    const game = games.get((request.params as {id: string}).id)
+    if (!game) return notFound()
+    reply.type('application/x-go-sgf; charset=utf-8')
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename="linggo-${game.id}.sgf"`,
+    )
+    return exportSgf(game)
+  })
+
+  app.get('/api/connections', async () =>
+    store.listConnections().map((connection) => ({
+      ...connection,
+      hasSessionKey:
+        games.vault.has(connection.id) || Boolean(games.vault.get(connection)),
+    })),
+  )
+  app.post('/api/connections', async (request, reply) => {
+    const input = connectionSchema.parse(request.body)
+    const id = input.id ?? crypto.randomUUID()
+    store.saveConnection({...input, id})
+    if (input.apiKey !== undefined) games.vault.set(id, input.apiKey)
+    return reply
+      .code(201)
+      .send({...store.getConnection(id), hasSessionKey: games.vault.has(id)})
+  })
+  app.put('/api/connections/:id/key', async (request) => {
+    const {id} = request.params as {id: string}
+    if (!store.getConnection(id)) return notFound()
+    const {apiKey} = z.object({apiKey: z.string()}).parse(request.body)
+    games.vault.set(id, apiKey)
+    return {ok: true, hasSessionKey: games.vault.has(id)}
+  })
+
+  app.get('/api/profiles', async () => store.listProfiles())
+  app.post('/api/profiles', async (request, reply) => {
+    const input = profileSchema.parse(request.body)
+    if (!store.getConnection(input.connectionId))
+      throw new Error('Provider connection not found')
+    const id = input.id ?? crypto.randomUUID()
+    store.saveProfile({...input, id})
+    return reply.code(201).send(store.getProfile(id))
+  })
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof StaleVersionError)
+      return reply.code(409).send({error: error.message})
+    if (error instanceof ZodError)
+      return reply
+        .code(400)
+        .send({error: error.issues.map((issue) => issue.message).join('; ')})
+    const message =
+      error instanceof Error ? error.message : 'Unexpected server error'
+    const status = message === 'Game not found' ? 404 : 400
+    return reply.code(status).send({error: message})
+  })
+
+  const clientDir = join(process.cwd(), 'dist', 'client')
+  if (process.env.NODE_ENV === 'production' && existsSync(clientDir)) {
+    void app.register(fastifyStatic, {root: clientDir, wildcard: false})
+    app.setNotFoundHandler((request, reply) => {
+      if (request.url.startsWith('/api/'))
+        return reply.code(404).send({error: 'Not found'})
+      return reply.sendFile('index.html')
+    })
+  }
+
+  app.addHook('onClose', async () => {
+    for (const game of games.list()) games.cancel(game.id)
+    store.close()
+  })
+  return {app, games, store}
+}
+
+function notFound(): never {
+  throw new Error('Game not found')
+}

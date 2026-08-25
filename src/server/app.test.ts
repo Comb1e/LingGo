@@ -1,0 +1,84 @@
+import {afterEach, beforeEach, describe, expect, it} from 'vitest'
+import {createApp} from './app'
+import {Store} from './database'
+
+let store: Store
+let app: ReturnType<typeof createApp>['app']
+
+beforeEach(() => {
+  store = new Store(':memory:')
+  app = createApp({store}).app
+})
+afterEach(() => app.close())
+
+describe('game API', () => {
+  it('creates, mutates, and exports a game', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/games',
+      payload: {
+        black: {type: 'human', name: 'Black'},
+        white: {type: 'human', name: 'White'},
+      },
+    })
+    expect(created.statusCode).toBe(201)
+    const game = created.json()
+    expect(game.size).toBe(19)
+    const moved = await app.inject({
+      method: 'POST',
+      url: `/api/games/${game.id}/commands`,
+      payload: {expectedVersion: game.version, type: 'play', coordinate: 'D4'},
+    })
+    expect(moved.statusCode).toBe(200)
+    expect(moved.json().moves).toHaveLength(1)
+    const sgf = await app.inject({
+      method: 'GET',
+      url: `/api/games/${game.id}/export.sgf`,
+    })
+    expect(sgf.body).toContain('SZ[19]')
+  })
+
+  it('never returns an API key', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'OpenAI',
+        kind: 'openai',
+        supportsStructuredOutput: true,
+        apiKey: 'sk-secret-value',
+      },
+    })
+    const response = await app.inject({method: 'GET', url: '/api/connections'})
+    expect(response.body).not.toContain('sk-secret-value')
+  })
+
+  it('persists custom base URLs for official providers', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'Private OpenAI proxy',
+        kind: 'openai',
+        baseUrl: 'https://models.example.test/openai/v1',
+        supportsStructuredOutput: true,
+      },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json().baseUrl).toBe('https://models.example.test/openai/v1')
+  })
+
+  it('requires a base URL for OpenAI-compatible providers', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'Self-hosted model',
+        kind: 'compatible',
+        supportsStructuredOutput: false,
+      },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toContain('Base URL is required')
+  })
+})
