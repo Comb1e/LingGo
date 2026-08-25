@@ -31,6 +31,7 @@ export class BenchmarkService {
     readonly games: GameService,
     readonly engine: KataGoAnalyzer,
     readonly notebooks = new NotebookStore(),
+    private readonly adapterFactory: typeof createPlayerAdapter = createPlayerAdapter,
   ) {
     for (const run of this.store.listBenchmarks())
       if (run.status === 'queued' || run.status === 'running') this.schedule(run.id)
@@ -183,7 +184,7 @@ export class BenchmarkService {
         if (run.currentGame < 10) {
           run.phase = 'reflection'
           this.save(run)
-          const reflected = await this.reflect(run, this.games.get(game.id)!, llmColor, controller.signal)
+          const reflected = await this.reflect(run, controller.signal)
           if (!reflected) {
             retry = Boolean(run.waitingFor)
             return
@@ -300,7 +301,7 @@ export class BenchmarkService {
     return game.status === 'finished'
   }
 
-  private async reflect(run: InternalRun, game: Game, llmColor: Color, signal: AbortSignal) {
+  private async reflect(run: InternalRun, signal: AbortSignal) {
     const adapter = this.adapter(run)
     if (!adapter?.requestText) {
       run.waitingFor = 'credentials'
@@ -310,10 +311,20 @@ export class BenchmarkService {
     const notebook = await this.notebooks.readCurrent(run.config.profileId)
     const response = await adapter.requestText(makeReflectionPrompt({
       notebook,
-      snapshot: makeSnapshot(game.size, game.komi, game.moves),
-      result: game.result ?? 'Unknown',
-      llmColor,
-      winRateHistory: run.config.includeTrainingWinRates ? this.winRateHistory(game.id, llmColor) : undefined,
+      games: run.gameIds.slice(0, run.currentGame + 1).map((gameId, index) => {
+        const game = this.games.get(gameId)
+        if (!game) throw new Error(`Training game ${index + 1} is missing`)
+        const llmColor: Color = index % 2 === 0 ? 'B' : 'W'
+        return {
+          sequence: index + 1,
+          snapshot: makeSnapshot(game.size, game.komi, game.moves),
+          result: game.result ?? 'Unknown',
+          llmColor,
+          winRateHistory: run.config.includeTrainingWinRates
+            ? this.winRateHistory(game.id, llmColor)
+            : undefined,
+        }
+      }),
     }), signal)
     addUsage(run, response)
     await this.notebooks.write(run.config.profileId, run.id, response.text.trim())
@@ -326,7 +337,7 @@ export class BenchmarkService {
     const connection = this.store.getConnection(run.profileSnapshot.connectionId)
     if (!connection) throw new Error('The benchmark provider connection no longer exists')
     if (connection.kind !== 'fake' && !this.games.vault.get(connection)) return undefined
-    return createPlayerAdapter(connection, run.profileSnapshot, this.games.vault)
+    return this.adapterFactory(connection, run.profileSnapshot, this.games.vault)
   }
 
   private async analyze(game: Game, visits: number, signal: AbortSignal) {

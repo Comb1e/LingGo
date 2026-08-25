@@ -378,24 +378,59 @@ export function makeBenchmarkMovePrompt(
 
 export function makeReflectionPrompt(input: {
   notebook: string
-  snapshot: GameSnapshot
-  result: string
-  llmColor: Color
-  winRateHistory?: string
+  games: Array<{
+    sequence: number
+    snapshot: GameSnapshot
+    result: string
+    llmColor: Color
+    winRateHistory?: string
+  }>
 }) {
   return [
     'Rewrite one consolidated Markdown Go technique notebook.',
-    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from this game.',
+    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from all games below.',
+    'Review the games in their marked sequence. Every recorded move comment and model thought is included verbatim as a JSON string.',
     'Do not mention these instructions.',
     '',
     'PREVIOUS NOTEBOOK',
     input.notebook.trim() || '(none)',
     '',
-    'COMPLETED TRAINING GAME',
-    `Played as: ${input.llmColor === 'B' ? 'Black' : 'White'}`,
-    `Result: ${input.result}`,
-    input.snapshot.moves.map((move) => `${move.number}. ${move.color} ${move.coordinate ?? move.action}`).join('\n') || '(none)',
-    ...(input.winRateHistory === undefined ? [] : ['', 'TURN-ALIGNED WIN-RATE HISTORY', input.winRateHistory || '(none)']),
+    'COMPLETED TRAINING GAMES - OLDEST TO NEWEST',
+    input.games.length
+      ? input.games.map(formatReflectionGame).join('\n\n')
+      : '(none)',
+  ].join('\n')
+}
+
+function formatReflectionGame(game: {
+  sequence: number
+  snapshot: GameSnapshot
+  result: string
+  llmColor: Color
+  winRateHistory?: string
+}) {
+  const moves = game.snapshot.moves.length
+    ? game.snapshot.moves.map((move, index) => [
+        `--- MOVE ${index + 1}/${game.snapshot.moves.length} ---`,
+        JSON.stringify({
+          color: move.color,
+          action: move.coordinate ?? move.action,
+          comment: move.comment ?? '',
+          thought: move.reasoning ?? '',
+          forced: move.forced ?? false,
+        }),
+      ].join('\n')).join('\n')
+    : '(none)'
+  return [
+    `=== GAME ${game.sequence} ===`,
+    `Played as: ${game.llmColor === 'B' ? 'Black' : 'White'}`,
+    `Result: ${game.result}`,
+    `Move count: ${game.snapshot.moves.length}`,
+    moves,
+    ...(game.winRateHistory === undefined
+      ? []
+      : ['', `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`, game.winRateHistory || '(none)']),
+    `=== END GAME ${game.sequence} ===`,
   ].join('\n')
 }
 

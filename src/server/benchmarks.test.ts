@@ -7,7 +7,7 @@ import {Store} from './database'
 import {GameService} from './games'
 import {BenchmarkService, calculateMetrics, pointLossQuality} from './benchmarks'
 import {NotebookStore} from './notebooks'
-import {makeBenchmarkMovePrompt, makeReflectionPrompt} from './providers'
+import {makeBenchmarkMovePrompt, makeReflectionPrompt, type PlayerAdapter} from './providers'
 import {makeSnapshot} from './go'
 
 let store: Store | undefined
@@ -59,18 +59,98 @@ describe('benchmark scoring and prompts', () => {
     const snapshot = makeSnapshot(19, 7.5, [])
     const history = 'Turn 0: 50.00%\nTurn 1: 42.00%'
     const movePrompt = makeBenchmarkMovePrompt(snapshot, '', {phase: 'training', winRateHistory: history})
-    const reflection = makeReflectionPrompt({notebook: '', snapshot, result: 'W+2.5', llmColor: 'B', winRateHistory: history})
+    const reflection = makeReflectionPrompt({
+      notebook: '',
+      games: [{sequence: 1, snapshot, result: 'W+2.5', llmColor: 'B', winRateHistory: history}],
+    })
     expect(movePrompt).toContain(`6. TRAINING WIN-RATE HISTORY\n${history}`)
-    expect(reflection).toContain(`TURN-ALIGNED WIN-RATE HISTORY\n${history}`)
+    expect(reflection).toContain(`TURN-ALIGNED WIN-RATE HISTORY - GAME 1\n${history}`)
     expect(movePrompt).not.toContain('PLAYING STYLE')
     expect(reflection).not.toContain('PLAYING STYLE')
+  })
+
+  it('marks every game and move in sequence with all recorded comments and thoughts', () => {
+    const first = makeSnapshot(19, 7.5, [{
+      number: 1,
+      color: 'B',
+      action: 'play',
+      point: [3, 15],
+      coordinate: 'D4',
+      comment: 'Build lower-side influence.\nKeep sente.',
+      reasoning: 'I compared the two open corners.',
+      captured: 0,
+    }])
+    const second = makeSnapshot(19, 7.5, [{
+      number: 1,
+      color: 'B',
+      action: 'pass',
+      comment: 'KataGo passed.',
+      captured: 0,
+    }, {
+      number: 2,
+      color: 'W',
+      action: 'resign',
+      comment: 'The position is lost.',
+      reasoning: 'No practical winning chances remain.',
+      captured: 0,
+    }])
+
+    const prompt = makeReflectionPrompt({
+      notebook: '# Existing lesson',
+      games: [
+        {sequence: 1, snapshot: first, result: 'B+R', llmColor: 'B'},
+        {sequence: 2, snapshot: second, result: 'B+R', llmColor: 'W'},
+      ],
+    })
+
+    expect(prompt.indexOf('=== GAME 1 ===')).toBeLessThan(prompt.indexOf('=== GAME 2 ==='))
+    expect(prompt).toContain('--- MOVE 1/1 ---')
+    expect(prompt).toContain('--- MOVE 1/2 ---')
+    expect(prompt).toContain('--- MOVE 2/2 ---')
+    expect(prompt).toContain('"comment":"Build lower-side influence.\\nKeep sente."')
+    expect(prompt).toContain('"thought":"I compared the two open corners."')
+    expect(prompt).toContain('"comment":"The position is lost."')
+    expect(prompt).toContain('"thought":"No practical winning chances remain."')
+    expect(prompt).toContain('=== END GAME 2 ===')
   })
 
   it('runs ten alternating training games and one scored final game', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-'))
     const games = new GameService(store)
-    const service = new BenchmarkService(store, games, fakeKataGo, new NotebookStore(directory))
+    const reflectionPrompts: string[] = []
+    const adapter = {
+      async requestAction(snapshot, signal) {
+        signal.throwIfAborted()
+        return {
+          action: {action: 'pass', comment: `Comment at turn ${snapshot.moves.length}`},
+          reasoning: `Thought at turn ${snapshot.moves.length}`,
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(prompt, signal) {
+        signal.throwIfAborted()
+        reflectionPrompts.push(prompt)
+        return {
+          text: '# Go techniques',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
     const run = await service.create({
       profileId: 'builtin-fake-profile',
       finalColor: 'W',
@@ -89,6 +169,16 @@ describe('benchmark scoring and prompts', () => {
     ])
     expect(records[10].white.type).toBe('llm')
     expect((await service.notebooks.readSnapshot(run.id))).toContain('# Go techniques')
+    expect(reflectionPrompts).toHaveLength(10)
+    expect(reflectionPrompts[0].match(/^=== GAME \d+ ===$/gm)).toHaveLength(1)
+    expect(reflectionPrompts[9].match(/^=== GAME \d+ ===$/gm)).toHaveLength(10)
+    expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 0"')
+    expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 1"')
+    expect(reflectionPrompts[9]).toContain('"thought":"Thought at turn 0"')
+    expect(reflectionPrompts[9]).toContain('"thought":"Thought at turn 1"')
+    expect(reflectionPrompts[9].match(/"comment":"Comment at turn/g)).toHaveLength(10)
+    expect(reflectionPrompts[9].match(/"comment":"KataGo passed\."/g)).toHaveLength(10)
+    expect(reflectionPrompts[9].match(/"thought":"Thought at turn/g)).toHaveLength(10)
     await service.close()
   })
 })
