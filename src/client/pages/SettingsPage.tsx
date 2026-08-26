@@ -339,6 +339,8 @@ export function SettingsPage() {
                     setConnectionName(
                       event.target.value === 'google'
                         ? 'Google Gemini'
+                        : event.target.value === 'deepseek'
+                          ? 'DeepSeek'
                         : event.target.value[0].toUpperCase() +
                             event.target.value.slice(1),
                     )
@@ -347,6 +349,7 @@ export function SettingsPage() {
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="google">Google Gemini</option>
+                  <option value="deepseek">DeepSeek</option>
                   <option value="compatible">OpenAI-compatible</option>
                 </select>
               </label>
@@ -624,6 +627,7 @@ function endpointPlaceholder(provider: string) {
   if (provider === 'anthropic') return 'https://api.anthropic.com/v1'
   if (provider === 'google')
     return 'https://generativelanguage.googleapis.com/v1beta'
+  if (provider === 'deepseek') return 'https://api.deepseek.com'
   if (provider === 'compatible') return 'https://example.com/v1'
   return 'https://api.openai.com/v1'
 }

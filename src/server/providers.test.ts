@@ -194,6 +194,7 @@ describe('provider normalization', () => {
     ['openai', '/proxy/openai/v1/responses'],
     ['anthropic', '/proxy/anthropic/v1/messages'],
     ['google', '/proxy/google/v1beta/models/test-model:streamGenerateContent'],
+    ['deepseek', '/proxy/deepseek/v1/chat/completions'],
   ] satisfies Array<[ProviderKind, string]>)(
     'sends %s requests to its custom base URL',
     async (kind, expectedPath) => {
@@ -250,13 +251,121 @@ describe('provider normalization', () => {
       } else if (kind === 'anthropic') {
         expect(body.stream).toBe(true)
         expect(body.thinking).toBeTruthy()
-      } else {
+      } else if (kind === 'google') {
         expect(body.generationConfig.thinkingConfig).toMatchObject({
           includeThoughts: true,
         })
+      } else {
+        expect(body).not.toHaveProperty('temperature')
+        expect(body.thinking).toEqual({type: 'enabled'})
+        expect(body.reasoning_effort).toBe('high')
+        expect(body.stream).toBe(true)
+        expect(body.stream_options).toEqual({include_usage: true})
       }
     },
   )
+
+  it('receives DeepSeek reasoning separately from response content', async () => {
+    let requestedUrl = ''
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input)
+        requestBody = String(init?.body ?? '')
+        const events = [
+          'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Compare the open corners."},"finish_reason":null}]}\n\n',
+          'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[{"index":0,"delta":{"content":"{\\"move\\":[0,0],\\"reason\\":\\"Take the corner.\\"}"},"finish_reason":null}]}\n\n',
+          'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}\n\n',
+          'data: [DONE]\n\n',
+        ].join('')
+        const encoder = new TextEncoder()
+        const body = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(events.slice(0, 73)))
+            controller.enqueue(encoder.encode(events.slice(73, 251)))
+            controller.enqueue(encoder.encode(events.slice(251)))
+            controller.close()
+          },
+        })
+        return new Response(body, {headers: {'content-type': 'text/event-stream'}})
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        kind: 'deepseek',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'deepseek-profile',
+        name: 'DeepSeek player',
+        connectionId: 'deepseek',
+        modelId: 'deepseek-v4-pro',
+        temperature: 0,
+      },
+      'test-key',
+    )
+
+    const result = await adapter.requestAction(
+      emptySnapshot(),
+      new AbortController().signal,
+    )
+
+    expect(result.action).toMatchObject({
+      action: 'play',
+      coordinate: 'A9',
+      comment: 'Take the corner.',
+    })
+    expect(result.reasoning).toBe('Compare the open corners.')
+    expect(result.inputTokens).toBe(12)
+    expect(result.outputTokens).toBe(8)
+    expect(requestedUrl).toBe('https://api.deepseek.com/chat/completions')
+    expect(JSON.parse(requestBody)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      thinking: {type: 'enabled'},
+      reasoning_effort: 'high',
+      stream: true,
+      stream_options: {include_usage: true},
+    })
+  })
+
+  it('aborts a DeepSeek request that does not produce a first token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal
+          const rejectWithAbort = () => reject(signal?.reason)
+          if (signal?.aborted) rejectWithAbort()
+          else signal?.addEventListener('abort', rejectWithAbort, {once: true})
+        }),
+      ),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'timeout-deepseek',
+        name: 'DeepSeek',
+        kind: 'deepseek',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'timeout-deepseek-profile',
+        name: 'DeepSeek timeout profile',
+        connectionId: 'timeout-deepseek',
+        modelId: 'deepseek-v4-pro',
+        temperature: 0,
+      },
+      'test-key',
+      1_000,
+      25,
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow('First token timeout of 25ms exceeded')
+  })
 
   it('aborts a provider request that does not produce a first token', async () => {
     vi.stubGlobal(

@@ -25,6 +25,7 @@ export const providerKindSchema = z.enum([
   'openai',
   'anthropic',
   'google',
+  'deepseek',
   'compatible',
   'fake',
 ])

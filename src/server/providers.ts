@@ -40,6 +40,34 @@ const modelMoveSchema = z
   })
   .strict()
 
+const deepSeekErrorSchema = z.object({message: z.string().optional()}).passthrough()
+const deepSeekStreamEventSchema = z
+  .object({
+    choices: z
+      .array(
+        z
+          .object({
+            delta: z
+              .object({
+                reasoning_content: z.string().nullish(),
+                content: z.string().nullish(),
+              })
+              .passthrough(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    usage: z
+      .object({
+        prompt_tokens: z.number().nullish(),
+        completion_tokens: z.number().nullish(),
+      })
+      .passthrough()
+      .nullish(),
+    error: deepSeekErrorSchema.optional(),
+  })
+  .passthrough()
+
 const DEFAULT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS = 60_000
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60_000
 
@@ -87,6 +115,7 @@ export class SecretVault {
       openai: 'OPENAI_API_KEY',
       anthropic: 'ANTHROPIC_API_KEY',
       google: 'GOOGLE_GENERATIVE_AI_API_KEY',
+      deepseek: 'DEEPSEEK_API_KEY',
       compatible: 'OPENAI_COMPATIBLE_API_KEY',
       fake: '',
     }[connection.kind]
@@ -183,24 +212,10 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   ): Promise<LlmActionResult> {
     const started = Date.now()
     const prompt = promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
-    const model = this.createModel()
-    const requestsReasoning = this.connection.kind !== 'compatible'
-    const request = {
-      model,
-      prompt,
-      temperature: this.temperature(),
-      reasoning: requestsReasoning ? ('medium' as const) : undefined,
-      providerOptions:
-        this.connection.kind === 'google'
-          ? {google: {thinkingConfig: {includeThoughts: true}}}
-          : undefined,
-      maxRetries: 0,
-      abortSignal: signal,
-      timeout: {
-        totalMs: this.timeoutMs,
-      },
-    }
-    const result = await streamedTextResult(request, this.firstTokenTimeoutMs)
+    const result =
+      this.connection.kind === 'deepseek'
+        ? await this.requestDeepSeek(prompt, signal)
+        : await this.requestActionWithSdk(prompt, signal)
     const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
       ...parsed,
@@ -217,17 +232,20 @@ export class LlmPlayerAdapter implements PlayerAdapter {
 
   async requestText(prompt: string, signal: AbortSignal) {
     const started = Date.now()
-    const request = {
-      model: this.createModel(),
-      prompt,
-      temperature: this.temperature(),
-      maxRetries: 0,
-      abortSignal: signal,
-      timeout: {
-        totalMs: this.timeoutMs,
-      },
-    }
-    const result = await streamedTextResult(request, this.firstTokenTimeoutMs)
+    const result =
+      this.connection.kind === 'deepseek'
+        ? await this.requestDeepSeek(prompt, signal)
+        : await streamedTextResult(
+            {
+              model: this.createModel(),
+              prompt,
+              temperature: this.temperature(),
+              maxRetries: 0,
+              abortSignal: signal,
+              timeout: {totalMs: this.timeoutMs},
+            },
+            this.firstTokenTimeoutMs,
+          )
     return {
       text: result.text,
       latencyMs: Date.now() - started,
@@ -235,6 +253,39 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
     }
+  }
+
+  private requestActionWithSdk(prompt: string, signal: AbortSignal) {
+    const request = {
+      model: this.createModel(),
+      prompt,
+      temperature: this.temperature(),
+      reasoning:
+        this.connection.kind !== 'compatible'
+          ? ('medium' as const)
+          : undefined,
+      providerOptions:
+        this.connection.kind === 'google'
+          ? {google: {thinkingConfig: {includeThoughts: true}}}
+          : undefined,
+      maxRetries: 0,
+      abortSignal: signal,
+      timeout: {totalMs: this.timeoutMs},
+    }
+    return streamedTextResult(request, this.firstTokenTimeoutMs)
+  }
+
+  private requestDeepSeek(prompt: string, signal: AbortSignal) {
+    return deepSeekStreamedTextResult({
+      baseUrl: this.connection.baseUrl,
+      apiKey: this.key,
+      modelId: this.profile.modelId,
+      prompt,
+      requestOptions: this.profile.requestOptions,
+      signal,
+      timeoutMs: this.timeoutMs,
+      firstTokenTimeoutMs: this.firstTokenTimeoutMs,
+    })
   }
 
   private createModel(): LanguageModel {
@@ -308,6 +359,161 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       })
     }
   }
+}
+
+interface DeepSeekStreamState {
+  phase: 'reasoning' | 'content' | 'done'
+  reasoningText: string
+  text: string
+  inputTokens: number
+  outputTokens: number
+}
+
+async function deepSeekStreamedTextResult(options: {
+  baseUrl?: string
+  apiKey: string
+  modelId: string
+  prompt: string
+  requestOptions?: PlayerProfile['requestOptions']
+  signal: AbortSignal
+  timeoutMs: number
+  firstTokenTimeoutMs: number
+}) {
+  const firstTokenController = new AbortController()
+  const totalController = new AbortController()
+  const firstTokenTimer = setTimeout(
+    () => firstTokenController.abort(timeoutError('First token', options.firstTokenTimeoutMs)),
+    options.firstTokenTimeoutMs,
+  )
+  const totalTimer = setTimeout(
+    () => totalController.abort(timeoutError('Provider', options.timeoutMs)),
+    options.timeoutMs,
+  )
+  const signal = AbortSignal.any([
+    options.signal,
+    firstTokenController.signal,
+    totalController.signal,
+  ])
+  const body = mergeRequestOptions(
+    {
+      model: options.modelId,
+      messages: [{role: 'user', content: options.prompt}],
+      thinking: {type: 'enabled'},
+      reasoning_effort: 'high',
+      stream: true,
+      stream_options: {include_usage: true},
+    },
+    options.requestOptions,
+  )
+
+  try {
+    const response = await globalThis.fetch(deepSeekChatCompletionsUrl(options.baseUrl), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!response.ok) throw await deepSeekApiError(response)
+    if (!response.body) throw new Error('DeepSeek response body is empty')
+
+    const state: DeepSeekStreamState = {
+      phase: 'reasoning',
+      reasoningText: '',
+      text: '',
+      inputTokens: 0,
+      outputTokens: 0,
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let pending = ''
+    while (true) {
+      const {done, value} = await reader.read()
+      pending += decoder.decode(value, {stream: !done})
+      const lines = pending.split('\n')
+      pending = done ? '' : lines.pop() ?? ''
+      for (const line of lines) {
+        updateDeepSeekStream(state, line, () => clearTimeout(firstTokenTimer))
+      }
+      if (done) break
+    }
+    if (pending)
+      updateDeepSeekStream(state, pending, () => clearTimeout(firstTokenTimer))
+    return {
+      text: state.text,
+      reasoningText: state.reasoningText || undefined,
+      usage: {
+        inputTokens: state.inputTokens,
+        outputTokens: state.outputTokens,
+      },
+    }
+  } finally {
+    clearTimeout(firstTokenTimer)
+    clearTimeout(totalTimer)
+  }
+}
+
+function updateDeepSeekStream(
+  state: DeepSeekStreamState,
+  line: string,
+  receivedFirstToken: () => void,
+) {
+  const data = /^data:\s*(.+?)\r?$/.exec(line)?.[1]
+  if (!data || state.phase === 'done') return
+  if (data === '[DONE]') {
+    state.phase = 'done'
+    return
+  }
+  let event: z.infer<typeof deepSeekStreamEventSchema>
+  try {
+    event = deepSeekStreamEventSchema.parse(JSON.parse(data))
+  } catch {
+    throw new Error('DeepSeek returned an invalid streaming event')
+  }
+  if (event.error)
+    throw new Error(event.error.message ?? 'DeepSeek streaming request failed')
+  if (event.usage) {
+    state.inputTokens = event.usage.prompt_tokens ?? state.inputTokens
+    state.outputTokens = event.usage.completion_tokens ?? state.outputTokens
+  }
+  for (const choice of event.choices ?? []) {
+    const reasoning = choice?.delta?.reasoning_content
+    const content = choice?.delta?.content
+    if (typeof reasoning === 'string' && reasoning) {
+      receivedFirstToken()
+      state.reasoningText += reasoning
+    }
+    if (typeof content === 'string' && content) {
+      receivedFirstToken()
+      state.phase = 'content'
+      state.text += content
+    }
+  }
+}
+
+function deepSeekChatCompletionsUrl(baseUrl?: string) {
+  return `${(baseUrl ?? 'https://api.deepseek.com').replace(/\/+$/, '')}/chat/completions`
+}
+
+async function deepSeekApiError(response: Response) {
+  let message = `DeepSeek API request failed with status ${response.status}`
+  try {
+    const body = z.object({error: deepSeekErrorSchema}).parse(await response.json())
+    if (body.error.message) message = body.error.message
+  } catch {
+    // Keep the HTTP status fallback.
+  }
+  return Object.assign(new Error(message), {
+    statusCode: response.status,
+    isRetryable: response.status === 429 || response.status >= 500,
+    responseHeaders: Object.fromEntries(response.headers),
+  })
+}
+
+function timeoutError(label: string, timeoutMs: number) {
+  return new DOMException(`${label} timeout of ${timeoutMs}ms exceeded`, 'TimeoutError')
 }
 
 async function streamedTextResult(

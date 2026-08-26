@@ -158,6 +158,20 @@ describe('game API', () => {
     expect(response.json().error).toContain('Base URL is required')
   })
 
+  it('allows DeepSeek to use its default API endpoint', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'DeepSeek',
+        kind: 'deepseek',
+        supportsStructuredOutput: false,
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({name: 'DeepSeek', kind: 'deepseek'})
+  })
+
   it('deletes games', async () => {
     const created = await app.inject({
       method: 'POST',

@@ -154,6 +154,12 @@ test('restores a browser API key after server memory and session storage are cle
   const suffix = `${testInfo.project.name}-${Date.now()}`
   const connectionName = `Restart-safe API ${suffix}`
   await page.goto('/settings')
+  await page.getByLabel('Provider').first().selectOption('deepseek')
+  await expect(page.getByLabel('Base URL (optional)')).toHaveAttribute(
+    'placeholder',
+    'https://api.deepseek.com',
+  )
+  await page.getByLabel('Provider').first().selectOption('openai')
   await page.getByLabel('Connection name').fill(connectionName)
   await page.getByLabel('Browser API key').fill(`sk-session-${suffix}`)
   const createdResponse = page.waitForResponse(

@@ -27,7 +27,7 @@ Open <http://127.0.0.1:4173>. Game data is stored in `data/linggo.db`. Set `LING
 
 ## Providers
 
-Settings separates reusable provider connections from player profiles. Connections support OpenAI, Anthropic, Google Gemini, and OpenAI-compatible endpoints. Every connection can override its base URL, so multiple proxies or self-hosted APIs can be saved as separate connections. Leave the base URL empty to use the official OpenAI, Anthropic, or Gemini endpoint; it is required for OpenAI-compatible connections.
+Settings separates reusable provider connections from player profiles. Connections support OpenAI, Anthropic, Google Gemini, DeepSeek, and OpenAI-compatible endpoints. Every connection can override its base URL, so multiple proxies or self-hosted APIs can be saved as separate connections. Leave the base URL empty to use the official OpenAI, Anthropic, Gemini, or DeepSeek endpoint; it is required for OpenAI-compatible connections.
 
 Save any number of player profiles against those connections. The New Game page lists every saved LLM player for both seats, with the model ID emphasized and the profile name and connection underneath, so a profile can be selected directly for Black or White.
 
@@ -64,9 +64,10 @@ API keys are never written to SQLite. Keys entered in Settings are kept in the c
 | OpenAI            | `OPENAI_API_KEY`               |
 | Anthropic         | `ANTHROPIC_API_KEY`            |
 | Google Gemini     | `GOOGLE_GENERATIVE_AI_API_KEY` |
+| DeepSeek          | `DEEPSEEK_API_KEY`             |
 | OpenAI-compatible | `OPENAI_COMPATIBLE_API_KEY`    |
 
-The built-in deterministic local profile requires no credentials and is useful for smoke tests. OpenAI uses the AI SDK OpenAI provider's Responses API path. Every provider is asked for plain text containing one JSON object; LingGo parses and validates the text itself instead of passing provider-specific structured-output parameters.
+The built-in deterministic local profile requires no credentials and is useful for smoke tests. OpenAI uses the AI SDK OpenAI provider's Responses API path. DeepSeek uses a dedicated Chat Completions stream receiver that separately accumulates `reasoning_content` and final `content`, with thinking mode enabled by default. Every provider is asked for plain text containing one JSON object; LingGo parses and validates the text itself instead of passing provider-specific structured-output parameters.
 
 Each model prompt contains the Go rules, the profile's optional style prompt, a single-move instruction, the exact `{"move":[column,row],"reason":"..."}` response schema, and the current board and move list. Array coordinates are zero-based from the top-left; `[-1,-1]` means pass and `[-2,-2]` means resign.
 
