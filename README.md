@@ -74,14 +74,17 @@ For a manual provider smoke test, create a connection, enter a session key, crea
 
 ### WSL with Clash Verge
 
-Windows system-proxy settings are not automatically inherited by processes running inside WSL. In Clash Verge, enable **Allow LAN** and note the HTTP or mixed proxy port. Start LingGo with a proxy address reachable from WSL:
+Windows system-proxy settings are not automatically inherited by processes running inside WSL. In Clash Verge, enable **Allow LAN** and note the HTTP or mixed proxy port.
+
+When WSL uses mirrored networking, Windows services are available on localhost. This machine's Clash Verge Rev mixed port is `7897`, so start LingGo with:
 
 ```bash
-WINDOWS_HOST=$(ip route show | awk '/default/ {print $3; exit}')
-LINGGO_PROXY_URL="http://${WINDOWS_HOST}:7890" pnpm dev
+LINGGO_PROXY_URL="http://127.0.0.1:7897" pnpm dev
 ```
 
-Replace `7890` with the port shown by Clash Verge. `LINGGO_PROXY_URL` applies to both HTTP and HTTPS provider requests. LingGo also honors the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` variables. Keep `localhost,127.0.0.1` in `NO_PROXY` so local LingGo traffic stays direct.
+Replace `7897` if Clash Verge shows a different port. Do not use LingGo's Vite port `5173` as the proxy port. For WSL NAT networking, use the Windows host address instead of `127.0.0.1`; select the normal WSL network route rather than a Clash/TUN route. LingGo checks `LINGGO_PROXY_URL` during startup and exits with a direct error if the proxy listener is unreachable.
+
+`LINGGO_PROXY_URL` applies to both HTTP and HTTPS provider requests. LingGo also honors the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` variables. Keep `localhost,127.0.0.1` in `NO_PROXY` so local LingGo traffic stays direct.
 
 ## Rules and records
 
