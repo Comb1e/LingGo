@@ -51,6 +51,7 @@ export interface PlayerProfile {
   connectionId: string
   modelId: string
   temperature: number
+  reasoningEnabled?: boolean
   requestOptions?: RequestOption[]
   stylePrompt?: string
 }

@@ -68,6 +68,7 @@ const resources = {
       profileName: 'Profile name',
       modelId: 'Model ID',
       temperature: 'Temperature',
+      deepSeekReasoning: 'DeepSeek reasoning',
       requestOptions: 'Request options (optional)',
       requestOptionsNotice:
         'Add top-level provider request fields. JSON objects, arrays, numbers, and booleans are parsed; other content is sent as text.',
@@ -235,6 +236,7 @@ const resources = {
       profileName: '配置名称',
       modelId: '模型 ID',
       temperature: '温度',
+      deepSeekReasoning: 'DeepSeek 推理',
       requestOptions: '请求选项（可选）',
       requestOptionsNotice:
         '添加服务商请求体的顶层字段。JSON 对象、数组、数字和布尔值会被解析，其他内容按文本发送。',

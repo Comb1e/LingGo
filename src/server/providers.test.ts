@@ -335,6 +335,46 @@ describe('provider normalization', () => {
     })
   })
 
+  it('disables DeepSeek reasoning in the provider request body', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {status: 500})
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        kind: 'deepseek',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'deepseek-profile',
+        name: 'DeepSeek player',
+        connectionId: 'deepseek',
+        modelId: 'deepseek-chat',
+        temperature: 0,
+        reasoningEnabled: false,
+        requestOptions: [
+          {name: 'thinking', content: '{"type":"enabled"}'},
+          {name: 'reasoning_effort', content: 'medium'},
+        ],
+      },
+      'test-key',
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow('test stop')
+
+    const body = JSON.parse(requestBody)
+    expect(body.thinking).toEqual({type: 'disabled'})
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
   it('aborts a DeepSeek request that does not produce a first token', async () => {
     vi.stubGlobal(
       'fetch',

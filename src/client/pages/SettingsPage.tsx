@@ -39,6 +39,7 @@ export function SettingsPage() {
   const [connectionId, setConnectionId] = useState('builtin-fake')
   const [modelId, setModelId] = useState('')
   const [temperature, setTemperature] = useState(0.7)
+  const [reasoningEnabled, setReasoningEnabled] = useState(true)
   const [requestOptions, setRequestOptions] = useState<RequestOption[]>([])
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
@@ -59,6 +60,9 @@ export function SettingsPage() {
     queryFn: () => api.profileNotebook(notebookProfileId),
     enabled: Boolean(notebookProfileId),
   })
+  const selectedConnection = connections.data?.find(
+    (connection) => connection.id === connectionId,
+  )
 
   const kataValues = kataEdited || !kataGo.data ? kataDraft : {
     executablePath: kataGo.data.executablePath,
@@ -79,6 +83,7 @@ export function SettingsPage() {
     setProfileName('')
     setModelId('')
     setTemperature(0.7)
+    setReasoningEnabled(true)
     setRequestOptions([])
     setStylePrompt('')
     setProfileTestResult('')
@@ -115,6 +120,7 @@ export function SettingsPage() {
         connectionId,
         modelId,
         temperature,
+        reasoningEnabled,
         requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       }
@@ -146,6 +152,7 @@ export function SettingsPage() {
     setConnectionId(item.connectionId)
     setModelId(item.modelId)
     setTemperature(item.temperature)
+    setReasoningEnabled(item.reasoningEnabled !== false)
     setRequestOptions(item.requestOptions?.map((option) => ({...option})) ?? [])
     setStylePrompt(item.stylePrompt ?? '')
     setError(undefined)
@@ -174,6 +181,7 @@ export function SettingsPage() {
         connectionId,
         modelId,
         temperature,
+        reasoningEnabled,
         requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       })
@@ -467,6 +475,20 @@ export function SettingsPage() {
                   onChange={(event) => setModelId(event.target.value)}
                 />
               </label>
+              {selectedConnection?.kind === 'deepseek' && (
+                <label className="switch-field">
+                  <input
+                    type="checkbox"
+                    checked={reasoningEnabled}
+                    onChange={(event) => {
+                      setReasoningEnabled(event.target.checked)
+                      setProfileTestResult('')
+                    }}
+                  />
+                  <span className="switch" />
+                  <span>{t('deepSeekReasoning')}</span>
+                </label>
+              )}
               <div className="field request-options-field">
                 <span>{t('requestOptions')}</span>
                 <small className="field-note">{t('requestOptionsNotice')}</small>

@@ -285,6 +285,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       apiKey: this.key,
       modelId: this.profile.modelId,
       prompt,
+      reasoningEnabled: this.profile.reasoningEnabled !== false,
       requestOptions: this.profile.requestOptions,
       signal,
       timeoutMs: this.timeoutMs,
@@ -378,6 +379,7 @@ async function deepSeekStreamedTextResult(options: {
   apiKey: string
   modelId: string
   prompt: string
+  reasoningEnabled: boolean
   requestOptions?: PlayerProfile['requestOptions']
   signal: AbortSignal
   timeoutMs: number
@@ -402,13 +404,14 @@ async function deepSeekStreamedTextResult(options: {
     {
       model: options.modelId,
       messages: [{role: 'user', content: options.prompt}],
-      thinking: {type: 'enabled'},
       reasoning_effort: 'high',
       stream: true,
       stream_options: {include_usage: true},
     },
     options.requestOptions,
   )
+  body.thinking = {type: options.reasoningEnabled ? 'enabled' : 'disabled'}
+  if (!options.reasoningEnabled) delete body.reasoning_effort
 
   try {
     const response = await globalThis.fetch(deepSeekChatCompletionsUrl(options.baseUrl), {

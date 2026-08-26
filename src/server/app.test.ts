@@ -382,6 +382,7 @@ describe('game API', () => {
         connectionId,
         modelId: 'gpt-5.6-sol',
         temperature: 0.2,
+        reasoningEnabled: false,
         requestOptions: [{name: 'reasoning', content: '{"effort":"high"}'}],
         stylePrompt: 'Prefer influence.',
       },
@@ -392,6 +393,7 @@ describe('game API', () => {
       name: 'Edited player',
       modelId: 'gpt-5.6-sol',
       temperature: 0.2,
+      reasoningEnabled: false,
       requestOptions: [{name: 'reasoning', content: '{"effort":"high"}'}],
       stylePrompt: 'Prefer influence.',
     })

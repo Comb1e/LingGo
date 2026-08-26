@@ -307,6 +307,55 @@ test('adds, tests, and saves custom profile request options', async ({
   await expect(profileRow).toHaveCount(0)
 })
 
+test('saves disabled reasoning for a DeepSeek profile', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const connectionName = `DeepSeek reasoning ${suffix}`
+  const profileName = `Direct DeepSeek ${suffix}`
+  const connectionResponse = await request.post('/api/connections', {
+    data: {
+      name: connectionName,
+      kind: 'deepseek',
+      supportsStructuredOutput: false,
+    },
+  })
+  const connection = await connectionResponse.json()
+
+  await page.goto('/settings')
+  await page.getByLabel('Profile name').fill(profileName)
+  await page
+    .getByRole('combobox', {name: 'Provider'})
+    .nth(1)
+    .selectOption(connection.id)
+  await page.getByLabel('Model ID').fill('deepseek-chat')
+  const reasoning = page.getByRole('checkbox', {
+    name: 'DeepSeek reasoning',
+    exact: true,
+  })
+  await expect(reasoning).toBeChecked()
+  await reasoning.uncheck()
+  await page.screenshot({
+    path: testInfo.outputPath('deepseek-reasoning-disabled.png'),
+    fullPage: true,
+  })
+  await page.getByRole('button', {name: 'Save profile'}).click()
+
+  const profileRow = page.locator('.existing-row').filter({hasText: profileName})
+  await profileRow.getByRole('button', {name: `Edit ${profileName}`}).click()
+  await expect(reasoning).not.toBeChecked()
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await profileRow.getByRole('button', {name: `Delete ${profileName}`}).click()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page
+    .locator('.existing-row')
+    .filter({hasText: connectionName})
+    .getByRole('button', {name: `Delete ${connectionName}`})
+    .click()
+})
+
 test('expands saved model reasoning under LLM commentary', async ({
   page,
   request,

@@ -21,6 +21,7 @@ describe('database migrations', () => {
       {version: 5},
       {version: 6},
       {version: 7},
+      {version: 8},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
   })
@@ -57,6 +58,20 @@ describe('database migrations', () => {
     expect(store.getProfile('custom-profile')?.requestOptions).toEqual([
       {name: 'reasoning', content: '{"effort":"high"}'},
     ])
+  })
+
+  it('round-trips disabled profile reasoning', () => {
+    store = new Store(':memory:')
+    store.saveProfile({
+      id: 'non-reasoning-profile',
+      name: 'Non-reasoning profile',
+      connectionId: 'builtin-fake',
+      modelId: 'test-model',
+      temperature: 0.5,
+      reasoningEnabled: false,
+    })
+
+    expect(store.getProfile('non-reasoning-profile')?.reasoningEnabled).toBe(false)
   })
 
   it('lists player profiles alphabetically regardless of creation order or case', () => {

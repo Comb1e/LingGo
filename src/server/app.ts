@@ -45,6 +45,7 @@ const profileSchema = z
     connectionId: z.string().min(1),
     modelId: z.string().min(1),
     temperature: z.number().min(0).max(2).default(0.7),
+    reasoningEnabled: z.boolean().default(true),
     requestOptions: z
       .array(
         z.object({
