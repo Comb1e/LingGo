@@ -48,7 +48,9 @@ export class BenchmarkConflictError extends Error {
 export class BenchmarkService {
   readonly events = new EventEmitter()
   private scheduled = new Set<string>()
+  private reschedule = new Set<string>()
   private controllers = new Map<string, AbortController>()
+  private activeRuns = new Map<string, InternalRun>()
   private reservedProfiles = new Set<string>()
 
   constructor(
@@ -127,6 +129,7 @@ export class BenchmarkService {
     this.controllers.get(id)?.abort()
     run.status = 'paused'
     run.waitingFor = undefined
+    run.pauseAfterLlmMove = false
     this.save(run)
     return run
   }
@@ -137,6 +140,7 @@ export class BenchmarkService {
     run.status = 'running'
     run.error = undefined
     run.waitingFor = undefined
+    run.pauseAfterLlmMove = false
     const game = this.currentGame(run)
     this.store.transaction(() => {
       if (game?.error) this.games.clearAutomatedError(game.id)
@@ -150,12 +154,33 @@ export class BenchmarkService {
     for (const run of this.list()) if (run.status === 'running' && run.waitingFor) this.schedule(run.id)
   }
 
+  nextMoveAndPause(id: string) {
+    const saved = this.require(id)
+    if (!['queued', 'running', 'paused'].includes(saved.status))
+      throw new Error('Benchmark cannot play another move')
+    const run = saved.status === 'running'
+      ? (this.activeRuns.get(id) ?? saved)
+      : saved
+    run.status = 'running'
+    run.error = undefined
+    run.waitingFor = undefined
+    run.pauseAfterLlmMove = true
+    const game = this.currentGame(run)
+    this.store.transaction(() => {
+      if (game?.error) this.games.clearAutomatedError(game.id)
+      this.save(run)
+    })
+    if (run !== this.activeRuns.get(id)) this.schedule(id)
+    return run
+  }
+
   cancel(id: string) {
     const run = this.require(id)
     if (!['queued', 'running', 'paused'].includes(run.status)) throw new Error('Benchmark has already ended')
     this.controllers.get(id)?.abort()
     run.status = 'cancelled'
     run.waitingFor = undefined
+    run.pauseAfterLlmMove = false
     this.save(run)
     return run
   }
@@ -198,7 +223,10 @@ export class BenchmarkService {
   }
 
   private schedule(id: string, delay = 0) {
-    if (this.scheduled.has(id)) return
+    if (this.scheduled.has(id)) {
+      this.reschedule.add(id)
+      return
+    }
     this.scheduled.add(id)
     const start = () => void this.run(id)
     if (delay) setTimeout(start, delay).unref()
@@ -212,6 +240,7 @@ export class BenchmarkService {
     try {
       const run = this.require(id)
       if (!['queued', 'running'].includes(run.status)) return
+      this.activeRuns.set(id, run)
       run.status = 'running'
       run.waitingFor = undefined
       run.error = undefined
@@ -262,6 +291,7 @@ export class BenchmarkService {
             this.save(run)
           } else {
             run.status = 'paused'
+            run.pauseAfterLlmMove = false
             const game = this.currentGame(run)
             this.store.transaction(() => {
               if (game) this.games.reportAutomatedError(game.id, run.error!)
@@ -272,8 +302,10 @@ export class BenchmarkService {
       }
     } finally {
       this.controllers.delete(id)
+      this.activeRuns.delete(id)
       this.scheduled.delete(id)
-      if (retry) this.schedule(id, 3_000)
+      if (this.reschedule.delete(id)) this.schedule(id)
+      else if (retry) this.schedule(id, 3_000)
     }
   }
 
@@ -305,6 +337,7 @@ export class BenchmarkService {
   ) {
     let game = this.games.get(original.id)!
     while (run.status === 'running' && game.status !== 'finished') {
+      let llmMoved = false
       signal.throwIfAborted()
       const beforeResult = await this.analyze(game, run.config.visits, signal)
       const before = rootFromBlack(beforeResult)
@@ -355,6 +388,7 @@ export class BenchmarkService {
               )
               run.currentTurn = game.moves.length
               this.save(run)
+              llmMoved = true
               break
             } catch (error) {
               if (signal.aborted) throw error
@@ -417,6 +451,12 @@ export class BenchmarkService {
         const final = await this.analyze(game, run.config.visits, signal)
         const lead = rootFromBlack(final).blackScoreLead
         game = this.games.finishAutomated(game.id, scoreLeadResult(lead))
+      }
+      if (llmMoved && run.pauseAfterLlmMove) {
+        run.pauseAfterLlmMove = false
+        run.status = 'paused'
+        run.waitingFor = undefined
+        this.save(run)
       }
     }
     return game.status === 'finished'

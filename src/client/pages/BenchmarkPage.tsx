@@ -48,6 +48,14 @@ export function BenchmarkPage() {
           <StatusBadge status={run.status} label={t(run.status)} />
           {run.status === 'running' && <Button onClick={() => command.mutate({type: 'pause'})}><Pause />{t('pause')}</Button>}
           {run.status === 'paused' && <Button className="primary" onClick={() => command.mutate({type: 'resume'})}><Play />{t('resume')}</Button>}
+          {['running', 'paused'].includes(run.status) && (
+            <Button
+              onClick={() => command.mutate({type: 'nextMoveAndPause'})}
+              disabled={command.isPending || run.pauseAfterLlmMove}
+            >
+              <SkipForward />{t('nextMoveAndPause')}
+            </Button>
+          )}
           {['queued', 'running', 'paused'].includes(run.status) && <Button className="danger-quiet" onClick={() => command.mutate({type: 'cancel'})}><XCircle />{t('cancel')}</Button>}
           <Button className="icon-button danger-quiet" title={t('delete')} onClick={() => {if (window.confirm(t('deleteBenchmarkConfirm'))) remove.mutate()}}><Trash2 /></Button>
         </>}

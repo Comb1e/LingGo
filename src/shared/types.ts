@@ -311,6 +311,7 @@ export interface BenchmarkRun {
   metrics?: BenchmarkMetrics
   error?: string
   waitingFor?: 'credentials' | 'katago'
+  pauseAfterLlmMove?: boolean
   createdAt: string
   updatedAt: string
 }

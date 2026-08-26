@@ -414,9 +414,10 @@ export function createApp(
   )
   app.post('/api/benchmarks/:id/commands', async (request) => {
     const {id} = request.params as {id: string}
-    const command = z.object({type: z.enum(['pause', 'resume', 'cancel', 'force']), action: playerActionSchema.optional()}).parse(request.body)
+    const command = z.object({type: z.enum(['pause', 'resume', 'nextMoveAndPause', 'cancel', 'force']), action: playerActionSchema.optional()}).parse(request.body)
     if (command.type === 'pause') return benchmarks.pause(id)
     if (command.type === 'resume') return benchmarks.resume(id)
+    if (command.type === 'nextMoveAndPause') return benchmarks.nextMoveAndPause(id)
     if (command.type === 'cancel') return benchmarks.cancel(id)
     if (!command.action) throw new Error('A forced action is required')
     return benchmarks.force(id, command.action)

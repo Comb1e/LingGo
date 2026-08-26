@@ -326,6 +326,76 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
+  it('pauses after the next LLM move without aborting an in-flight request', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-step-'))
+    const games = new GameService(store)
+    const requestEntered = deferred()
+    const actionGate = deferred()
+    let requestSignal: AbortSignal | undefined
+    let requests = 0
+    const adapter = {
+      async requestAction(snapshot, signal) {
+        requests += 1
+        requestSignal = signal
+        requestEntered.resolve()
+        if (requests === 1) await actionGate.promise
+        signal.throwIfAborted()
+        return {
+          action: {
+            action: 'play' as const,
+            coordinate: snapshot.moves.length === 0 ? 'A19' : 'B19',
+            comment: 'Continue the benchmark.',
+          },
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create(benchmarkConfig('builtin-fake-profile'))
+    await requestEntered.promise
+
+    const armed = service.nextMoveAndPause(created.id)
+    expect(armed.pauseAfterLlmMove).toBe(true)
+    expect(requestSignal?.aborted).toBe(false)
+    actionGate.resolve()
+
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2_000),
+    ).toBe(true)
+    let run = service.get(created.id)!
+    expect(run.pauseAfterLlmMove).toBe(false)
+    expect(games.get(run.gameIds[0])?.moves).toHaveLength(1)
+
+    service.nextMoveAndPause(created.id)
+    expect(
+      await waitFor(
+        () =>
+          service.get(created.id)?.status === 'paused' &&
+          games.get(service.get(created.id)!.gameIds[0])?.moves.length === 3,
+        2_000,
+      ),
+    ).toBe(true)
+    run = service.get(created.id)!
+    expect(requests).toBe(2)
+    expect(games.get(run.gameIds[0])?.moves.map((move) => move.color)).toEqual([
+      'B',
+      'W',
+      'B',
+    ])
+    await service.close()
+  })
+
   it('runs different profiles concurrently and isolates their lifecycle', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-concurrent-'))
