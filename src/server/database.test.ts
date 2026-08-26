@@ -59,6 +59,28 @@ describe('database migrations', () => {
     ])
   })
 
+  it('lists player profiles alphabetically regardless of creation order or case', () => {
+    store = new Store(':memory:')
+    for (const [id, name] of [
+      ['zulu-profile', 'Zulu'],
+      ['alpha-profile', 'alpha'],
+    ]) {
+      store.saveProfile({
+        id,
+        name,
+        connectionId: 'builtin-fake',
+        modelId: 'test-model',
+        temperature: 0.5,
+      })
+    }
+
+    expect(store.listProfiles().map(({name}) => name)).toEqual([
+      'alpha',
+      'Local learner',
+      'Zulu',
+    ])
+  })
+
   it('repairs cached White-to-play analysis from the old perspective conversion', () => {
     store = new Store(':memory:')
     store.db.prepare(

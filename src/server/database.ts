@@ -294,7 +294,8 @@ export class Store {
     return (
       this.db
         .prepare(
-          'SELECT id, name, connection_id, model_id, temperature, request_options_json, style_prompt FROM player_profiles ORDER BY created_at',
+          `SELECT id, name, connection_id, model_id, temperature, request_options_json, style_prompt
+           FROM player_profiles ORDER BY name COLLATE NOCASE, name, id`,
         )
         .all() as Array<any>
     ).map(mapProfile)
