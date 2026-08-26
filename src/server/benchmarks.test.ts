@@ -4,11 +4,10 @@ import {join} from 'node:path'
 import {afterEach, describe, expect, it} from 'vitest'
 import type {KataGoAnalyzer} from './katago'
 import {Store} from './database'
-import {GameService} from './games'
+import {GameService, mergeInGameReflections} from './games'
 import {
   BenchmarkService,
   calculateMetrics,
-  mergeInGameReflections,
   pointLossQuality,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
@@ -443,7 +442,14 @@ describe('benchmark scoring and prompts', () => {
     expect(reflectionPrompts[0]).not.toContain('Initial lesson for game 1')
     expect(reflectionPrompts[9]).toContain('IN-GAME REFLECTIONS - GAME 10')
     expect(reflectionPrompts[9]).not.toContain('IN-GAME REFLECTIONS - GAME 9')
-    expect((service.get(run.id) as {inGameReflections?: unknown[]}).inGameReflections).toEqual([])
+    expect(games.get(service.get(run.id)!.gameIds[0])?.inGameReflections).toEqual([
+      {number: 1, reflection: 'Revised lesson for game 1.'},
+      {number: 2, reflection: 'Second lesson for game 1.'},
+    ])
+    expect(games.get(service.get(run.id)!.gameIds[1])?.inGameReflections).toEqual([
+      {number: 1, reflection: 'Revised lesson for game 2.'},
+      {number: 2, reflection: 'Second lesson for game 2.'},
+    ])
     await service.close()
   })
 })

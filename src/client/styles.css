@@ -824,12 +824,59 @@ svg {
   border-radius: 7px;
   overflow: hidden;
 }
-.winrate-panel {
-  width: min(100%, calc(100vh - 225px));
+.analysis-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.analysis-row.has-reflections {
+  grid-template-columns: minmax(0, 2fr) minmax(230px, 1fr);
+}
+.winrate-panel,
+.in-game-reflections-panel {
+  min-width: 0;
   margin-top: 16px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 12px 0 8px;
+}
+.in-game-reflections-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.in-game-reflections-panel > header {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.in-game-reflections-panel > header svg {
+  width: 17px;
+  height: 17px;
+  color: var(--green);
+}
+.in-game-reflections-panel h2 {
+  margin: 0;
+  font-size: 14px;
+}
+.in-game-reflections-panel ol {
+  max-height: 222px;
+  margin: 10px 0 0;
+  padding: 0 4px 0 30px;
+  overflow-y: auto;
+}
+.in-game-reflections-panel li {
+  padding: 0 0 10px 3px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.in-game-reflections-panel li::marker {
+  color: var(--green);
+  font-weight: 700;
 }
 .winrate-panel > header {
   display: flex;
@@ -1471,6 +1518,10 @@ svg {
   }
   .winrate-panel {
     width: 100%;
+  }
+  .analysis-row.has-reflections {
+    grid-template-columns: 1fr;
+    gap: 0;
   }
   .katago-settings form,
   .benchmark-form-grid,

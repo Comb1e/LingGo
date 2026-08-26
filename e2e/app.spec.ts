@@ -99,6 +99,32 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
     fullPage: true,
   })
 
+  await page.locator('.benchmark-games a').first().click()
+  await expect(
+    page.getByRole('heading', {name: 'In-game reflections'}),
+  ).toBeVisible()
+  await expect(
+    page.getByText(
+      'Check liberties and forcing moves before choosing a passive continuation.',
+    ),
+  ).toBeVisible()
+  const chartPanel = await page.locator('.winrate-panel').boundingBox()
+  const reflectionPanel = await page
+    .locator('.in-game-reflections-panel')
+    .boundingBox()
+  if (!chartPanel || !reflectionPanel)
+    throw new Error('Benchmark analysis panels are not visible')
+  if (testInfo.project.name === 'desktop')
+    expect(reflectionPanel.x).toBeGreaterThan(chartPanel.x + chartPanel.width - 2)
+  else
+    expect(reflectionPanel.y).toBeGreaterThan(chartPanel.y + chartPanel.height - 2)
+  await page.screenshot({
+    path: testInfo.outputPath('benchmark-game-reflections.png'),
+    fullPage: true,
+  })
+  await page.goBack()
+  await expect(page.getByText('Completed')).toBeVisible()
+
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByTitle('Delete').click()
   await expect(page).toHaveURL(/\/benchmarks$/)

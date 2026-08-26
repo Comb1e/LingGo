@@ -368,14 +368,23 @@ export function GamePage() {
               {game.captures.B} {t('captures')}
             </b>
           </div>
-          <WinRatePanel
-            analysis={analysisQuery.data}
-            moveCount={game.moves.length}
-            busy={analysisMutation.isPending || backfillMutation.isPending}
-            onToggle={(enabled) => analysisMutation.mutate(enabled)}
-            onShare={(shareWithLlm) => analysisMutation.mutate({shareWithLlm})}
-            onAnalyze={() => backfillMutation.mutate()}
-          />
+          <div
+            className={`analysis-row${game.benchmarkRunId ? ' has-reflections' : ''}`}
+          >
+            <WinRatePanel
+              analysis={analysisQuery.data}
+              moveCount={game.moves.length}
+              busy={analysisMutation.isPending || backfillMutation.isPending}
+              onToggle={(enabled) => analysisMutation.mutate(enabled)}
+              onShare={(shareWithLlm) => analysisMutation.mutate({shareWithLlm})}
+              onAnalyze={() => backfillMutation.mutate()}
+            />
+            {game.benchmarkRunId && (
+              <InGameReflectionsPanel
+                reflections={game.inGameReflections ?? []}
+              />
+            )}
+          </div>
         </section>
         <aside className="game-panel">
           <section className="turn-panel">
@@ -502,6 +511,33 @@ export function GamePage() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function InGameReflectionsPanel({
+  reflections,
+}: {
+  reflections: NonNullable<Game['inGameReflections']>
+}) {
+  const {t} = useTranslation()
+  return (
+    <section className="in-game-reflections-panel">
+      <header>
+        <Brain />
+        <h2>{t('inGameReflections')}</h2>
+      </header>
+      {reflections.length ? (
+        <ol>
+          {reflections.map((reflection) => (
+            <li key={reflection.number} value={reflection.number}>
+              {reflection.reflection}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="muted analysis-empty">{t('noInGameReflections')}</p>
+      )}
+    </section>
   )
 }
 

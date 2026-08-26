@@ -99,6 +99,7 @@ export interface Game {
   shareAnalysisWithLlm?: boolean
   benchmarkRunId?: string
   benchmarkGameIndex?: number
+  inGameReflections?: InGameReflection[]
   createdAt: string
   updatedAt: string
 }

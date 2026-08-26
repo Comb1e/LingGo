@@ -5,6 +5,7 @@ import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import type {
   Color,
   Game,
+  InGameReflection,
   LlmActionResult,
   Move,
   NewGameInput,
@@ -164,6 +165,7 @@ export class GameService {
     game.autoplay = false
     game.benchmarkRunId = input.runId
     game.benchmarkGameIndex = input.gameIndex
+    game.inGameReflections = []
     return this.commit(game)
   }
 
@@ -366,6 +368,11 @@ export class GameService {
       retries: llm?.retries,
     }
     game.moves.push(move)
+    if (game.benchmarkRunId && llm?.inGameReflections)
+      game.inGameReflections = mergeInGameReflections(
+        game.inGameReflections,
+        llm.inGameReflections,
+      )
     this.refreshPosition(game)
 
     if (action.action === 'resign') {
@@ -560,6 +567,18 @@ export class GameService {
           : undefined,
     }
   }
+}
+
+export function mergeInGameReflections(
+  current: InGameReflection[] | undefined,
+  updates: InGameReflection[] | undefined,
+) {
+  const reflections = new Map(
+    (current ?? []).map((reflection) => [reflection.number, reflection]),
+  )
+  for (const reflection of updates ?? [])
+    reflections.set(reflection.number, reflection)
+  return [...reflections.values()].sort((a, b) => a.number - b.number)
 }
 
 function publicError(error: unknown): string {

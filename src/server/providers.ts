@@ -95,6 +95,12 @@ export class FakePlayerAdapter implements PlayerAdapter {
     if (promptOverride) {
       return {
         action: {action: 'pass', comment: 'Training pass.'},
+        inGameReflections: [
+          {
+            number: 1,
+            reflection: 'Check liberties and forcing moves before choosing a passive continuation.',
+          },
+        ],
         latencyMs: Date.now() - started,
         inputTokens: 0,
         outputTokens: 0,
@@ -398,13 +404,13 @@ export function makeBenchmarkMovePrompt(
     'in_game_reflections is optional. Omit it or return an empty array when no new lesson is warranted. It is a patch: use the next unused positive number for a new lesson, or reuse a number to replace an incorrect earlier entry.',
     '',
     '5. CURRENT BOARD AND PREVIOUS MOVES',
+    'Current in-game reflections (this game only):',
+    formatInGameReflections(options.inGameReflections),
     `To move: ${snapshot.toMove}`,
     `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
     asciiBoard(snapshot),
     'Previous moves:',
     moves,
-    'Current in-game reflections (this game only):',
-    formatInGameReflections(options.inGameReflections),
   ]
   if (options.phase === 'training' && options.winRateHistory !== undefined)
     sections.push('', '6. TRAINING WIN-RATE HISTORY', options.winRateHistory || '(none)')
