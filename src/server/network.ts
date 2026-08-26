@@ -104,6 +104,8 @@ export function publicProviderError(
     /(?:sk-|AIza)[A-Za-z0-9_-]+/g,
     '[redacted]',
   )
+  if (/other side closed|UND_ERR_SOCKET/i.test(redacted))
+    return `The API response connection closed before LingGo received complete output. The provider may still finish the request, so a retry can create a duplicate response. Transport details: ${redacted}`
   if (
     /Client network socket disconnected before secure TLS connection was established/i.test(
       redacted,

@@ -72,6 +72,19 @@ describe('provider network configuration', () => {
     expect(publicProviderError(error)).toContain('[ECONNRESET]')
   })
 
+  it('explains that a closed response socket can leave provider work running', () => {
+    const error = Object.assign(new Error('Cannot connect to API: other side closed'), {
+      cause: Object.assign(new Error('other side closed'), {
+        code: 'UND_ERR_SOCKET',
+      }),
+    })
+
+    expect(publicProviderError(error)).toContain(
+      'The provider may still finish the request',
+    )
+    expect(publicProviderError(error)).toContain('[UND_ERR_SOCKET]')
+  })
+
   it('does not retry permanent provider request errors', () => {
     const error = Object.assign(new Error('Unsupported request field'), {
       statusCode: 400,

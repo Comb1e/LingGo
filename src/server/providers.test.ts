@@ -244,6 +244,7 @@ describe('provider normalization', () => {
       const body = JSON.parse(requestBody)
       expect(body.linggo_test).toEqual({enabled: true})
       if (kind === 'openai') {
+        expect(body.stream).toBe(true)
         expect(body.reasoning).toEqual({effort: 'high', summary: 'detailed'})
         expect(body).not.toHaveProperty('temperature')
       } else if (kind === 'anthropic') {

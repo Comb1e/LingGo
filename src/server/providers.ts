@@ -2,7 +2,12 @@ import {createAnthropic} from '@ai-sdk/anthropic'
 import {createGoogle} from '@ai-sdk/google'
 import {createOpenAI} from '@ai-sdk/openai'
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
-import {createProviderRegistry, generateText, type LanguageModel} from 'ai'
+import {
+  createProviderRegistry,
+  generateText,
+  streamText,
+  type LanguageModel,
+} from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import {normalizeReasoning} from '../shared/reasoning'
@@ -33,6 +38,8 @@ const modelMoveSchema = z
     in_game_reflections: z.array(inGameReflectionSchema).optional(),
   })
   .strict()
+
+const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60_000
 
 export interface PlayerAdapter {
   requestAction(
@@ -163,7 +170,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     private connection: ProviderConnection,
     private profile: PlayerProfile,
     private key: string,
-    private timeoutMs = 90_000,
+    private timeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS,
   ) {}
 
   async requestAction(
@@ -177,23 +184,27 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const prompt = promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
     const model = this.createModel()
     const requestsReasoning = this.connection.kind !== 'compatible'
-    const result = await generateText({
+    const request = {
       model,
       prompt,
       temperature: this.temperature(),
-      reasoning: requestsReasoning ? 'medium' : undefined,
+      reasoning: requestsReasoning ? ('medium' as const) : undefined,
       providerOptions:
         this.connection.kind === 'google'
           ? {google: {thinkingConfig: {includeThoughts: true}}}
           : undefined,
       maxRetries: 0,
       abortSignal: combined,
-    })
+    }
+    const result =
+      this.connection.kind === 'openai'
+        ? await streamedTextResult(request)
+        : await generatedTextResult(request)
     const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
       ...parsed,
-      reasoning: result.finalStep.reasoningText
-        ? normalizeReasoning(result.finalStep.reasoningText) || undefined
+      reasoning: result.reasoningText
+        ? normalizeReasoning(result.reasoningText) || undefined
         : undefined,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
@@ -205,13 +216,17 @@ export class LlmPlayerAdapter implements PlayerAdapter {
 
   async requestText(prompt: string, signal: AbortSignal) {
     const started = Date.now()
-    const result = await generateText({
+    const request = {
       model: this.createModel(),
       prompt,
       temperature: this.temperature(),
       maxRetries: 0,
       abortSignal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
-    })
+    }
+    const result =
+      this.connection.kind === 'openai'
+        ? await streamedTextResult(request)
+        : await generatedTextResult(request)
     return {
       text: result.text,
       latencyMs: Date.now() - started,
@@ -292,6 +307,27 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       })
     }
   }
+}
+
+async function generatedTextResult(
+  request: Parameters<typeof generateText>[0],
+) {
+  const result = await generateText(request)
+  return {
+    text: result.text,
+    reasoningText: result.finalStep.reasoningText,
+    usage: result.usage,
+  }
+}
+
+async function streamedTextResult(request: Parameters<typeof streamText>[0]) {
+  const result = streamText(request)
+  const [text, finalStep, usage] = await Promise.all([
+    result.text,
+    result.finalStep,
+    result.usage,
+  ])
+  return {text, reasoningText: finalStep.reasoningText, usage}
 }
 
 export function isOpenAiReasoningModel(modelId: string) {
