@@ -6,6 +6,7 @@ import {Link, useNavigate} from 'react-router-dom'
 import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
 import type {Color} from '../../shared/types'
 import {api} from '../api'
+import {hasLiveBenchmarkForProfile} from '../benchmarkAvailability'
 import {Button, ErrorBanner, Loading, PageHeader, StatusBadge} from '../components'
 
 export function BenchmarksPage() {
@@ -30,7 +31,7 @@ export function BenchmarksPage() {
     mutationFn: (id: string) => api.deleteBenchmark(id),
     onSuccess: () => void queryClient.invalidateQueries({queryKey: ['benchmarks']}),
   })
-  const live = runs.data?.some((run) => ['queued', 'running', 'paused'].includes(run.status))
+  const profileIsLive = hasLiveBenchmarkForProfile(runs.data, profileId)
 
   if (runs.isLoading || profiles.isLoading) return <div className="page"><Loading /></div>
   return (
@@ -71,7 +72,7 @@ export function BenchmarksPage() {
             <span className="switch" />
             <span>{t('trainingFeedback')}</span>
           </label>
-          <Button className="primary" disabled={create.isPending || live}>
+          <Button className="primary" disabled={create.isPending || profileIsLive}>
             <Play />
             {t('startBenchmark')}
           </Button>

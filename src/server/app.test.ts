@@ -2,6 +2,7 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import type {BenchmarkRun} from '../shared/types'
 import {createApp} from './app'
 import {Store} from './database'
 
@@ -403,5 +404,43 @@ describe('game API', () => {
         })
       ).statusCode,
     ).toBe(400)
+  })
+
+  it('returns conflict for another live benchmark on the same profile', async () => {
+    const now = new Date().toISOString()
+    const profile = store.getProfile('builtin-fake-profile')!
+    const existing: BenchmarkRun = {
+      id: 'existing-benchmark',
+      status: 'paused',
+      phase: 'training',
+      config: {
+        profileId: profile.id,
+        finalColor: 'B',
+        visits: 25,
+        includeTrainingWinRates: false,
+        notebookMode: 'continue',
+      },
+      profileSnapshot: profile,
+      modelFingerprint: 'test',
+      currentGame: 0,
+      currentTurn: 0,
+      gameIds: [],
+      usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+      notebook: {profileId: profile.id},
+      createdAt: now,
+      updatedAt: now,
+    }
+    store.saveBenchmark(existing)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/benchmarks',
+      payload: existing.config,
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({
+      error: 'This player profile already has a queued, running, or paused benchmark',
+    })
   })
 })

@@ -38,10 +38,18 @@ type InternalRun = BenchmarkRun & {
 
 class KataGoUnavailableError extends Error {}
 
+export class BenchmarkConflictError extends Error {
+  constructor() {
+    super('This player profile already has a queued, running, or paused benchmark')
+    this.name = 'BenchmarkConflictError'
+  }
+}
+
 export class BenchmarkService {
   readonly events = new EventEmitter()
   private scheduled = new Set<string>()
   private controllers = new Map<string, AbortController>()
+  private reservedProfiles = new Set<string>()
 
   constructor(
     readonly store: Store,
@@ -64,39 +72,53 @@ export class BenchmarkService {
   }
 
   async create(config: BenchmarkConfig) {
-    if (this.list().some((run) => ['queued', 'running', 'paused'].includes(run.status)))
-      throw new Error('Only one active or paused benchmark is allowed')
-    const profile = this.store.getProfile(config.profileId)
-    if (!profile) throw new Error('Player profile not found')
-    const connection = this.store.getConnection(profile.connectionId)
-    if (!connection) throw new Error('Provider connection not found')
-    const health = this.engine.healthCheck
-      ? await this.engine.healthCheck()
-      : await healthFromAnalysis(this.engine)
-    if (!health.ok) throw new Error(`KataGo is unavailable: ${health.message}`)
-    const now = new Date().toISOString()
-    const id = randomUUID()
-    if (config.notebookMode === 'reset') await this.notebooks.deleteCurrent(profile.id)
-    const run: InternalRun = {
-      id,
-      status: 'queued',
-      phase: 'training',
-      config,
-      profileSnapshot: {...profile},
-      modelFingerprint: createHash('sha256').update(JSON.stringify({profile, connection})).digest('hex'),
-      currentGame: 0,
-      currentTurn: 0,
-      gameIds: [],
-      usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
-      notebook: {profileId: profile.id, currentUrl: `/api/profiles/${profile.id}/notebook.md`, snapshotUrl: `/api/benchmarks/${id}/notebook.md`},
-      pointLosses: [],
-      winRateLosses: [],
-      createdAt: now,
-      updatedAt: now,
+    if (
+      this.reservedProfiles.has(config.profileId) ||
+      this.list().some((run) =>
+        run.config.profileId === config.profileId &&
+        ['queued', 'running', 'paused'].includes(run.status))
+    ) throw new BenchmarkConflictError()
+    this.reservedProfiles.add(config.profileId)
+    try {
+      const profile = this.store.getProfile(config.profileId)
+      if (!profile) throw new Error('Player profile not found')
+      const connection = this.store.getConnection(profile.connectionId)
+      if (!connection) throw new Error('Provider connection not found')
+      const health = this.engine.healthCheck
+        ? await this.engine.healthCheck()
+        : await healthFromAnalysis(this.engine)
+      if (!health.ok) throw new Error(`KataGo is unavailable: ${health.message}`)
+      const now = new Date().toISOString()
+      const id = randomUUID()
+      if (config.notebookMode === 'reset') await this.notebooks.deleteCurrent(profile.id)
+      const run: InternalRun = {
+        id,
+        status: 'queued',
+        phase: 'training',
+        config,
+        profileSnapshot: {...profile},
+        modelFingerprint: createHash('sha256').update(JSON.stringify({profile, connection})).digest('hex'),
+        currentGame: 0,
+        currentTurn: 0,
+        gameIds: [],
+        usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+        notebook: {profileId: profile.id, currentUrl: `/api/profiles/${profile.id}/notebook.md`, snapshotUrl: `/api/benchmarks/${id}/notebook.md`},
+        pointLosses: [],
+        winRateLosses: [],
+        createdAt: now,
+        updatedAt: now,
+      }
+      try {
+        this.save(run)
+      } catch (error) {
+        if (isUniqueConstraintError(error)) throw new BenchmarkConflictError()
+        throw error
+      }
+      this.schedule(id)
+      return run
+    } finally {
+      this.reservedProfiles.delete(config.profileId)
     }
-    this.save(run)
-    this.schedule(id)
-    return run
   }
 
   pause(id: string) {
@@ -546,6 +568,11 @@ function isRepairableMoveError(error: unknown) {
   return error instanceof IllegalMoveError ||
     error instanceof MalformedModelOutputError ||
     error instanceof NoOutputGeneratedError
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error &&
+    error.code === 'SQLITE_CONSTRAINT_UNIQUE'
 }
 
 export function pointLossQuality(loss: number) {

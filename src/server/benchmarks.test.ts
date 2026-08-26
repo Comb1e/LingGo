@@ -6,6 +6,7 @@ import type {KataGoAnalyzer} from './katago'
 import {Store} from './database'
 import {GameService, mergeInGameReflections} from './games'
 import {
+  BenchmarkConflictError,
   BenchmarkService,
   calculateMetrics,
   pointLossQuality,
@@ -313,6 +314,110 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
+  it('runs different profiles concurrently and isolates their lifecycle', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-concurrent-'))
+    store.saveProfile({
+      id: 'second-profile',
+      name: 'Second learner',
+      connectionId: 'builtin-fake',
+      modelId: 'deterministic-v2',
+      temperature: 0,
+    })
+    const games = new GameService(store)
+    const gates = new Map([
+      ['builtin-fake-profile', deferred()],
+      ['second-profile', deferred()],
+    ])
+    const entered = new Set<string>()
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      (_connection, profile) => ({
+        async requestAction(_snapshot, signal) {
+          entered.add(profile.id)
+          await gates.get(profile.id)!.promise
+          signal.throwIfAborted()
+          return {
+            action: {action: 'pass' as const, comment: 'Finish.'},
+            latencyMs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: profile.modelId,
+            retries: 0,
+          }
+        },
+        async requestText(_prompt, signal) {
+          signal.throwIfAborted()
+          return {
+            text: `# ${profile.name} techniques`,
+            latencyMs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: profile.modelId,
+          }
+        },
+      }),
+    )
+    const first = await service.create(benchmarkConfig('builtin-fake-profile'))
+    const second = await service.create(benchmarkConfig('second-profile'))
+
+    expect(await waitFor(() => entered.size === 2, 2_000)).toBe(true)
+    expect(service.get(first.id)?.status).toBe('running')
+    expect(service.get(second.id)?.status).toBe('running')
+
+    service.pause(first.id)
+    gates.get('builtin-fake-profile')!.resolve()
+    service.cancel(first.id)
+    expect(service.get(first.id)?.status).toBe('cancelled')
+    expect(service.get(second.id)?.status).toBe('running')
+
+    gates.get('second-profile')!.resolve()
+    expect(await waitFor(() => service.get(second.id)?.status === 'completed', 2_000)).toBe(true)
+    expect(service.get(first.id)?.status).toBe('cancelled')
+
+    const replacement = await service.create(benchmarkConfig('builtin-fake-profile'))
+    expect(await waitFor(() => service.get(replacement.id)?.status === 'completed', 2_000)).toBe(true)
+    await service.close()
+  })
+
+  it('reserves a profile before asynchronous benchmark setup', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-reservation-'))
+    const notebooks = new NotebookStore(directory)
+    await notebooks.write('builtin-fake-profile', 'seed-run', '# Existing techniques')
+    const healthGate = deferred()
+    const healthEntered = deferred()
+    const engine: KataGoAnalyzer = {
+      ...fakeKataGo,
+      async healthCheck() {
+        healthEntered.resolve()
+        await healthGate.promise
+        return {ok: true, message: 'ready'}
+      },
+    }
+    const service = new BenchmarkService(store, new GameService(store), engine, notebooks)
+    const winner = service.create({
+      ...benchmarkConfig('builtin-fake-profile'),
+      notebookMode: 'continue',
+    })
+    await healthEntered.promise
+
+    await expect(service.create({
+      ...benchmarkConfig('builtin-fake-profile'),
+      notebookMode: 'reset',
+    })).rejects.toBeInstanceOf(BenchmarkConflictError)
+    expect(await notebooks.readCurrent('builtin-fake-profile')).toBe('# Existing techniques')
+
+    healthGate.resolve()
+    const created = await winner
+    expect(created.status).toBe('queued')
+    service.cancel(created.id)
+    await service.close()
+  })
+
   it('retries an occupied benchmark move on the unchanged position', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
@@ -568,4 +673,22 @@ async function waitFor(predicate: () => boolean, timeout: number) {
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   return false
+}
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return {promise, resolve}
+}
+
+function benchmarkConfig(profileId: string) {
+  return {
+    profileId,
+    finalColor: 'B' as const,
+    visits: 25,
+    includeTrainingWinRates: false,
+    notebookMode: 'reset' as const,
+  }
 }

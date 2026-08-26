@@ -51,7 +51,7 @@ Enable **Share with LLM** per game to include the complete turn-aligned KataGo w
 
 ## LLM benchmark
 
-Benchmark trains one saved profile through ten sequential 19x19 games against KataGo, alternating colors, then scores one final game in the selected color. All games use Chinese area scoring, komi 7.5, a 722-move cap, and the configured 25–10,000 KataGo visits. Only one benchmark may be active or paused.
+Benchmark trains one saved profile through ten sequential 19x19 games against KataGo, alternating colors, then scores one final game in the selected color. All games use Chinese area scoring, komi 7.5, a 722-move cap, and the configured 25–10,000 KataGo visits. Different player profiles can run benchmarks concurrently, but each profile may have only one queued, running, or paused benchmark so its technique notebook remains deterministic. LingGo does not impose a global concurrency or resource limit; operators are responsible for provider rate limits, KataGo capacity, GPU memory, and system load.
 
 Training can expose turn-aligned win rates to the LLM. During each benchmark game, the model can maintain numbered in-game reflections, revise them by number, and receive the current list with every later move in that game. After each training game, those reflections are folded into the model's consolidated Markdown technique notebook, then cleared before the next game. The final prompt contains only rules, that notebook, the one-move instruction, JSON schema, and current position. Human style prompts and KataGo data are omitted. Current notebooks are stored under `data/techniques/`; each run keeps a downloadable snapshot.
 

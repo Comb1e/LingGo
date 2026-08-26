@@ -14,7 +14,7 @@ import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
 import {AnalysisService} from './analysis'
 import {DeterministicKataGo, KataGoEngine, type KataGoAnalyzer} from './katago'
-import {BenchmarkService} from './benchmarks'
+import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
 import {createPlayerAdapter} from './providers'
@@ -433,7 +433,7 @@ export function createApp(
   })
 
   app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof StaleVersionError)
+    if (error instanceof StaleVersionError || error instanceof BenchmarkConflictError)
       return reply.code(409).send({error: error.message})
     if (error instanceof ZodError)
       return reply

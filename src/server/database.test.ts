@@ -20,8 +20,25 @@ describe('database migrations', () => {
       {version: 4},
       {version: 5},
       {version: 6},
+      {version: 7},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
+  })
+
+  it('allows one live benchmark per profile', () => {
+    store = new Store(':memory:')
+    const insert = store.db.prepare(
+      `INSERT INTO benchmark_runs
+       (id, status, phase, profile_id, run_json, created_at, updated_at)
+       VALUES (?, ?, 'training', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    )
+
+    insert.run('run-a', 'running', 'profile-a')
+    expect(() => insert.run('run-b', 'paused', 'profile-b')).not.toThrow()
+    expect(() => insert.run('run-c', 'queued', 'profile-a')).toThrow(/UNIQUE constraint failed/)
+
+    store.db.prepare("UPDATE benchmark_runs SET status = 'completed' WHERE id = 'run-a'").run()
+    expect(() => insert.run('run-d', 'queued', 'profile-a')).not.toThrow()
   })
 
   it('round-trips custom profile request options', () => {
