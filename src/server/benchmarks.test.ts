@@ -143,7 +143,7 @@ describe('benchmark scoring and prompts', () => {
       .toContain('1. B A19 [0,0]; captured 1 at B18 [1,1]')
   })
 
-  it('includes the LLM comments and reasoning in training and final move prompts', () => {
+  it('includes LLM comments but not reasoning in training and final move prompts', () => {
     const snapshot = makeSnapshot(19, 7.5, [
       {
         number: 1,
@@ -169,13 +169,15 @@ describe('benchmark scoring and prompts', () => {
     for (const phase of ['training', 'final'] as const) {
       const prompt = makeBenchmarkMovePrompt(snapshot, '', {phase})
       expect(prompt).toContain(
-        '1. B D4 [3,15]; your comment: "Take the open corner."; your reasoning: "This leaves flexible extensions."',
+        '1. B D4 [3,15]; your comment: "Take the open corner."',
       )
+      expect(prompt).not.toContain('This leaves flexible extensions.')
+      expect(prompt).not.toContain('your reasoning:')
       expect(prompt).not.toContain('your comment: "KataGo move."')
     }
   })
 
-  it('marks every game and move in sequence with all recorded comments and thoughts', () => {
+  it('marks every game and move with comments but without model thoughts', () => {
     const first = makeSnapshot(19, 7.5, [{
       number: 1,
       color: 'B',
@@ -217,9 +219,10 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('--- MOVE 1/2 ---')
     expect(prompt).toContain('--- MOVE 2/2 ---')
     expect(prompt).toContain('"comment":"Build lower-side influence.\\nKeep sente."')
-    expect(prompt).toContain('"thought":"I compared the two open corners."')
     expect(prompt).toContain('"comment":"The position is lost."')
-    expect(prompt).toContain('"thought":"No practical winning chances remain."')
+    expect(prompt).not.toContain('I compared the two open corners.')
+    expect(prompt).not.toContain('No practical winning chances remain.')
+    expect(prompt).not.toContain('"thought":')
     expect(prompt).toContain('"capturedStones":0')
     expect(prompt).toContain('"capturedAt":["E15 [4,4]"]')
     expect(prompt).toContain('Capture totals: LLM captured 1 opponent stones; opponent captured 0 LLM stones.')
@@ -306,11 +309,10 @@ describe('benchmark scoring and prompts', () => {
     expect(reflectionPrompts[9].match(/^=== GAME \d+ ===$/gm)).toHaveLength(10)
     expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 0"')
     expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 1"')
-    expect(reflectionPrompts[9]).toContain('"thought":"Thought at turn 0"')
-    expect(reflectionPrompts[9]).toContain('"thought":"Thought at turn 1"')
     expect(reflectionPrompts[9].match(/"comment":"Comment at turn/g)).toHaveLength(10)
     expect(reflectionPrompts[9].match(/"comment":"KataGo passed\."/g)).toHaveLength(10)
-    expect(reflectionPrompts[9].match(/"thought":"Thought at turn/g)).toHaveLength(10)
+    expect(reflectionPrompts[9]).not.toContain('Thought at turn')
+    expect(reflectionPrompts[9]).not.toContain('"thought":')
     await service.close()
   })
 

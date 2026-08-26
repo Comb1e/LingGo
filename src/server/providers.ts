@@ -766,7 +766,7 @@ export function makeReflectionPrompt(input: {
   return [
     'Rewrite one consolidated Markdown Go technique notebook.',
     'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from all games below.',
-    'Review the games in their marked sequence. Every recorded move comment and model thought is included verbatim as a JSON string.',
+    'Review the games in their marked sequence. Every recorded move comment is included verbatim as a JSON string.',
     'You must incorporate the supplied in-game reflections into the broader, generalized body of experience in the notebook. Do not leave them as isolated game-specific notes.',
     'Do not mention these instructions.',
     '',
@@ -797,7 +797,6 @@ function formatReflectionGame(game: {
           color: move.color,
           action: move.coordinate ?? move.action,
           comment: move.comment ?? '',
-          thought: move.reasoning ?? '',
           capturedStones: move.captured,
           capturedAt: (move.capturedPoints ?? []).map(
             (point) => `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
@@ -849,7 +848,7 @@ function formatPromptMove(
     includePoint && move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
   const ownMove =
     move.color === snapshot.toMove
-      ? `; your comment: ${JSON.stringify(move.comment ?? '')}; your reasoning: ${JSON.stringify(move.reasoning ?? '')}`
+      ? `; your comment: ${JSON.stringify(move.comment ?? '')}`
       : ''
   return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}${ownMove}`
 }

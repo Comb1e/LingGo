@@ -131,7 +131,7 @@ describe('provider normalization', () => {
     )
   })
 
-  it('includes comments and reasoning for every previous move by this player', () => {
+  it('includes comments but not reasoning for previous moves by this player', () => {
     const snapshot = emptySnapshot()
     snapshot.moves = [
       {
@@ -164,11 +164,13 @@ describe('provider normalization', () => {
 
     const prompt = makePrompt(snapshot)
     expect(prompt).toContain(
-      '1. B C7; your comment: "Build outward.\\nKeep sente."; your reasoning: "I compared both corners."',
+      '1. B C7; your comment: "Build outward.\\nKeep sente."',
     )
     expect(prompt).toContain(
-      '3. B pass; your comment: ""; your reasoning: ""',
+      '3. B pass; your comment: ""',
     )
+    expect(prompt).not.toContain('I compared both corners.')
+    expect(prompt).not.toContain('your reasoning:')
     expect(prompt).not.toContain('Opponent comment')
     expect(prompt).not.toContain('Opponent private reasoning')
   })
