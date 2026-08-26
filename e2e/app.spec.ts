@@ -85,6 +85,64 @@ test('creates a default 19x19 human game and plays a move', async ({
   await page.screenshot({path: testInfo.outputPath('game.png'), fullPage: true})
 })
 
+test('retains the displayed board while another historical turn loads', async ({
+  page,
+  request,
+}) => {
+  const created = await request.post('/api/games', {
+    data: {
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'Black'},
+      white: {type: 'human', name: 'White'},
+      commentsVisible: true,
+    },
+  })
+  let game = await created.json()
+  for (const coordinate of ['A9', 'B9', 'C9']) {
+    const response = await request.post(`/api/games/${game.id}/commands`, {
+      data: {expectedVersion: game.version, type: 'play', coordinate},
+    })
+    game = await response.json()
+  }
+
+  let releasePosition: (() => void) | undefined
+  let positionRequestStarted = false
+  const positionReleased = new Promise<void>((resolve) => {
+    releasePosition = resolve
+  })
+  await page.route(`**/api/games/${game.id}/positions/1`, async (route) => {
+    positionRequestStarted = true
+    await positionReleased
+    await route.continue()
+  })
+  await page.goto(`/games/${game.id}`)
+  const board = page.getByLabel('9 by 9 Go board')
+  const previous = page.getByRole('button', {
+    name: 'Previous board position',
+  })
+
+  await previous.click()
+  await expect(page.getByText('Move 2 / 3')).toBeVisible()
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_-1/)
+  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(/shudan-sign_0/)
+
+  await previous.click()
+  await expect.poll(() => positionRequestStarted).toBe(true)
+  await expect(previous).toBeDisabled()
+  await expect(page.getByText('Move 2 / 3')).toBeVisible()
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_-1/)
+  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(/shudan-sign_0/)
+
+  releasePosition?.()
+  await expect(page.getByText('Move 1 / 3')).toBeVisible()
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_0/)
+  await request.delete(`/api/games/${game.id}`)
+})
+
 test('tests KataGo settings and completes a benchmark with a notebook', async ({
   page,
 }, testInfo) => {

@@ -60,6 +60,8 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).not.toContain('scoreLead')
     expect(prompt).not.toContain('candidate')
     expect(prompt).not.toContain('variation')
+    expect(prompt).toContain('This is the final game. Your performance will be scored.')
+    expect(prompt).not.toContain('This is a training game.')
     expect(prompt).toContain('you have captured 4 opponent stones; the opponent has captured 2 of your stones')
   })
 
@@ -121,7 +123,13 @@ describe('benchmark scoring and prompts', () => {
       games: [{sequence: 1, snapshot, result: 'W+2.5', llmColor: 'B', winRateHistory: history}],
     })
     expect(movePrompt).toContain(`6. TRAINING WIN-RATE HISTORY\n${history}`)
+    expect(movePrompt).toContain(
+      "This is a training game. The game result does not matter; use it to learn from both your play and your opponent's play.",
+    )
+    expect(movePrompt).not.toContain('This is the final game.')
     expect(reflection).toContain(`TURN-ALIGNED WIN-RATE HISTORY - GAME 1\n${history}`)
+    expect(reflection).not.toContain('This is a training game.')
+    expect(reflection).not.toContain('This is the final game.')
     expect(movePrompt).not.toContain('PLAYING STYLE')
     expect(reflection).not.toContain('PLAYING STYLE')
   })
@@ -143,7 +151,7 @@ describe('benchmark scoring and prompts', () => {
       .toContain('1. B A19 [0,0]; captured 1 at B18 [1,1]')
   })
 
-  it('includes LLM comments but not reasoning in training and final move prompts', () => {
+  it('omits comments and reasoning from training and final move prompts', () => {
     const snapshot = makeSnapshot(19, 7.5, [
       {
         number: 1,
@@ -168,16 +176,17 @@ describe('benchmark scoring and prompts', () => {
 
     for (const phase of ['training', 'final'] as const) {
       const prompt = makeBenchmarkMovePrompt(snapshot, '', {phase})
-      expect(prompt).toContain(
-        '1. B D4 [3,15]; your comment: "Take the open corner."',
-      )
+      expect(prompt).toContain('1. B D4 [3,15]')
+      expect(prompt).toContain('2. W Q16 [15,3]')
+      expect(prompt).not.toContain('Take the open corner.')
+      expect(prompt).not.toContain('KataGo move.')
       expect(prompt).not.toContain('This leaves flexible extensions.')
       expect(prompt).not.toContain('your reasoning:')
-      expect(prompt).not.toContain('your comment: "KataGo move."')
+      expect(prompt).toContain('"reason":"brief reason"')
     }
   })
 
-  it('marks every game and move with comments but without model thoughts', () => {
+  it('marks every reflection game and move without comments or model thoughts', () => {
     const first = makeSnapshot(19, 7.5, [{
       number: 1,
       color: 'B',
@@ -218,8 +227,10 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('--- MOVE 1/1 ---')
     expect(prompt).toContain('--- MOVE 1/2 ---')
     expect(prompt).toContain('--- MOVE 2/2 ---')
-    expect(prompt).toContain('"comment":"Build lower-side influence.\\nKeep sente."')
-    expect(prompt).toContain('"comment":"The position is lost."')
+    expect(prompt).not.toContain('Build lower-side influence.')
+    expect(prompt).not.toContain('KataGo passed.')
+    expect(prompt).not.toContain('The position is lost.')
+    expect(prompt).not.toContain('"comment":')
     expect(prompt).not.toContain('I compared the two open corners.')
     expect(prompt).not.toContain('No practical winning chances remain.')
     expect(prompt).not.toContain('"thought":')
@@ -307,10 +318,9 @@ describe('benchmark scoring and prompts', () => {
     expect(reflectionPrompts).toHaveLength(10)
     expect(reflectionPrompts[0].match(/^=== GAME \d+ ===$/gm)).toHaveLength(1)
     expect(reflectionPrompts[9].match(/^=== GAME \d+ ===$/gm)).toHaveLength(10)
-    expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 0"')
-    expect(reflectionPrompts[9]).toContain('"comment":"Comment at turn 1"')
-    expect(reflectionPrompts[9].match(/"comment":"Comment at turn/g)).toHaveLength(10)
-    expect(reflectionPrompts[9].match(/"comment":"KataGo passed\."/g)).toHaveLength(10)
+    expect(reflectionPrompts[9]).not.toContain('Comment at turn')
+    expect(reflectionPrompts[9]).not.toContain('KataGo passed.')
+    expect(reflectionPrompts[9]).not.toContain('"comment":')
     expect(reflectionPrompts[9]).not.toContain('Thought at turn')
     expect(reflectionPrompts[9]).not.toContain('"thought":')
     await service.close()

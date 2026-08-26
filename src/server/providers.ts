@@ -717,6 +717,9 @@ export function makeBenchmarkMovePrompt(
     '',
     '3. INSTRUCTION TO PLACE ONE STONE',
     `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone on an intersection shown as ".".`,
+    options.phase === 'training'
+      ? "This is a training game. The game result does not matter; use it to learn from both your play and your opponent's play."
+      : 'This is the final game. Your performance will be scored.',
     ...(snapshot.previousError
       ? [`Your previous response was rejected: ${snapshot.previousError}. The position is unchanged; choose a different legal move.`]
       : []),
@@ -766,7 +769,7 @@ export function makeReflectionPrompt(input: {
   return [
     'Rewrite one consolidated Markdown Go technique notebook.',
     'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from all games below.',
-    'Review the games in their marked sequence. Every recorded move comment is included verbatim as a JSON string.',
+    'Review the games in their marked sequence.',
     'You must incorporate the supplied in-game reflections into the broader, generalized body of experience in the notebook. Do not leave them as isolated game-specific notes.',
     'Do not mention these instructions.',
     '',
@@ -796,7 +799,6 @@ function formatReflectionGame(game: {
         JSON.stringify({
           color: move.color,
           action: move.coordinate ?? move.action,
-          comment: move.comment ?? '',
           capturedStones: move.captured,
           capturedAt: (move.capturedPoints ?? []).map(
             (point) => `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
@@ -846,11 +848,7 @@ function formatPromptMove(
 ) {
   const point =
     includePoint && move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
-  const ownMove =
-    move.color === snapshot.toMove
-      ? `; your comment: ${JSON.stringify(move.comment ?? '')}`
-      : ''
-  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}${ownMove}`
+  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}`
 }
 
 function pointName(x: number, y: number, size: number): string {

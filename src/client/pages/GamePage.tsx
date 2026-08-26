@@ -47,13 +47,44 @@ import {
   StatusBadge,
 } from '../components'
 
+type BoardReviewState =
+  | {status: 'latest'}
+  | {status: 'loading'; position: GamePosition; requestedTurn: number}
+  | {status: 'historical'; position: GamePosition}
+  | {status: 'error'; position: GamePosition; error: unknown}
+
+function latestGamePosition(game: Game): GamePosition {
+  return {
+    gameId: game.id,
+    turn: game.moves.length,
+    board: game.board,
+    toMove: game.toMove,
+    captures: game.captures,
+  }
+}
+
+function resetInvalidReview(
+  state: BoardReviewState,
+  latestTurn: number,
+): BoardReviewState {
+  if (state.status === 'latest') return state
+  if (
+    state.position.turn > latestTurn ||
+    (state.status === 'loading' && state.requestedTurn > latestTurn)
+  )
+    return {status: 'latest'}
+  return state
+}
+
 export function GamePage() {
   const {id = ''} = useParams()
   const navigate = useNavigate()
   const {t} = useTranslation()
   const queryClient = useQueryClient()
   const [commandError, setCommandError] = useState<unknown>()
-  const [reviewTurn, setReviewTurn] = useState<number | null>(null)
+  const [reviewState, setReviewState] = useState<BoardReviewState>({
+    status: 'latest',
+  })
   const previousMoveCount = useRef<number | undefined>(undefined)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState({
@@ -107,8 +138,8 @@ export function GamePage() {
     mutationFn: (command: Record<string, unknown>) => api.command(id, command),
     onSuccess: (game) => {
       queryClient.setQueryData(['game', id], game)
-      setReviewTurn((current) =>
-        current !== null && current > game.moves.length ? null : current,
+      setReviewState((current) =>
+        resetInvalidReview(current, game.moves.length),
       )
       setCommandError(undefined)
     },
@@ -139,17 +170,6 @@ export function GamePage() {
     },
   })
   const game = gameQuery.data
-  const activeReviewTurn =
-    reviewTurn !== null && game && reviewTurn <= game.moves.length
-      ? reviewTurn
-      : null
-  const positionQuery = useQuery({
-    queryKey: ['game-position', id, activeReviewTurn],
-    queryFn: () => api.gamePosition(id, activeReviewTurn!),
-    enabled: Boolean(id) && activeReviewTurn !== null,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  })
 
   useEffect(() => {
     if (!game) return
@@ -179,8 +199,8 @@ export function GamePage() {
         return
       }
       queryClient.setQueryData(['game', id], next)
-      setReviewTurn((current) =>
-        current !== null && current > next.moves.length ? null : current,
+      setReviewState((current) =>
+        resetInvalidReview(current, next.moves.length),
       )
       void queryClient.invalidateQueries({queryKey: ['games']})
     }
@@ -206,9 +226,46 @@ export function GamePage() {
     [game, mutation],
   )
 
+  const loadReviewTurn = useCallback(
+    (turn: number) => {
+      if (!game || reviewState.status === 'loading') return
+      if (turn >= game.moves.length) {
+        setReviewState({status: 'latest'})
+        return
+      }
+      const position =
+        reviewState.status === 'latest'
+          ? latestGamePosition(game)
+          : reviewState.position
+      setReviewState({status: 'loading', position, requestedTurn: turn})
+      void queryClient
+        .fetchQuery({
+          queryKey: ['game-position', id, turn],
+          queryFn: () => api.gamePosition(id, turn),
+          staleTime: Infinity,
+          gcTime: Infinity,
+        })
+        .then((loadedPosition) => {
+          setReviewState((current) =>
+            current.status === 'loading' && current.requestedTurn === turn
+              ? {status: 'historical', position: loadedPosition}
+              : current,
+          )
+        })
+        .catch((error: unknown) => {
+          setReviewState((current) =>
+            current.status === 'loading' && current.requestedTurn === turn
+              ? {status: 'error', position: current.position, error}
+              : current,
+          )
+        })
+    },
+    [game, id, queryClient, reviewState],
+  )
+
   const onPoint = useCallback(
     (point: Point) => {
-      if (!game || activeReviewTurn !== null) return
+      if (!game || reviewState.status !== 'latest') return
       const coordinate = pointToCoordinate(point, game.size)
       if (game.status === 'scoring') send('toggle-dead', {coordinate})
       else if (
@@ -217,7 +274,7 @@ export function GamePage() {
       )
         send('play', {coordinate})
     },
-    [activeReviewTurn, game, send],
+    [game, reviewState.status, send],
   )
 
   if (gameQuery.isLoading || !game)
@@ -227,18 +284,12 @@ export function GamePage() {
         <ErrorBanner error={gameQuery.error} />
       </div>
     )
-  const historicalPosition =
-    activeReviewTurn !== null && positionQuery.data?.turn === activeReviewTurn
-      ? positionQuery.data
-      : undefined
-  const displayPosition: GamePosition = historicalPosition ?? {
-    gameId: game.id,
-    turn: game.moves.length,
-    board: game.board,
-    toMove: game.toMove,
-    captures: game.captures,
-  }
-  const reviewing = activeReviewTurn !== null
+  const displayPosition =
+    reviewState.status === 'latest'
+      ? latestGamePosition(game)
+      : reviewState.position
+  const reviewing = reviewState.status !== 'latest'
+  const reviewLoading = reviewState.status === 'loading'
   const current = displayPosition.toMove === 'B' ? game.black : game.white
   const usage = game.moves.reduce(
     (total, move) => ({
@@ -410,11 +461,7 @@ export function GamePage() {
             game={game}
             onPoint={onPoint}
             board={displayPosition.board}
-            lastMove={
-              activeReviewTurn === null
-                ? game.moves.at(-1)
-                : game.moves[activeReviewTurn - 1]
-            }
+            lastMove={game.moves[displayPosition.turn - 1]}
             dead={reviewing ? [] : game.dead}
             busy={reviewing ? false : game.pending}
             disabled={reviewing}
@@ -424,18 +471,14 @@ export function GamePage() {
               className="icon-button"
               title={t('previousBoardPosition')}
               aria-label={t('previousBoardPosition')}
-              disabled={(activeReviewTurn ?? game.moves.length) === 0}
-              onClick={() =>
-                setReviewTurn(
-                  Math.max(0, (activeReviewTurn ?? game.moves.length) - 1),
-                )
-              }
+              disabled={reviewLoading || displayPosition.turn === 0}
+              onClick={() => loadReviewTurn(displayPosition.turn - 1)}
             >
               <ChevronLeft />
             </Button>
             <strong>
               {t('boardPositionCount', {
-                move: activeReviewTurn ?? game.moves.length,
+                move: displayPosition.turn,
                 latest: game.moves.length,
               })}
             </strong>
@@ -443,14 +486,10 @@ export function GamePage() {
               className="icon-button"
               title={t('nextBoardPosition')}
               aria-label={t('nextBoardPosition')}
-              disabled={activeReviewTurn === null}
+              disabled={reviewLoading || reviewState.status === 'latest'}
               onClick={() => {
-                if (activeReviewTurn === null) return
-                setReviewTurn(
-                  activeReviewTurn + 1 >= game.moves.length
-                    ? null
-                    : activeReviewTurn + 1,
-                )
+                if (reviewState.status === 'latest') return
+                loadReviewTurn(displayPosition.turn + 1)
               }}
             >
               <ChevronRight />
@@ -458,19 +497,21 @@ export function GamePage() {
             <Button
               title={t('latestBoardPosition')}
               aria-label={t('latestBoardPosition')}
-              disabled={activeReviewTurn === null}
-              onClick={() => setReviewTurn(null)}
+              disabled={reviewLoading || reviewState.status === 'latest'}
+              onClick={() => setReviewState({status: 'latest'})}
             >
               <SkipForward />
               {t('latestPosition')}
             </Button>
           </div>
-          {reviewing && positionQuery.isLoading && (
+          {reviewLoading && (
             <span className="position-loading" role="status">
               {t('loadingBoardPosition')}
             </span>
           )}
-          <ErrorBanner error={positionQuery.error} />
+          <ErrorBanner
+            error={reviewState.status === 'error' ? reviewState.error : undefined}
+          />
           <div className="player-strip black-player">
             <i className="stone black-stone" />
             <span>

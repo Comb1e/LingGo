@@ -131,7 +131,7 @@ describe('provider normalization', () => {
     )
   })
 
-  it('includes comments but not reasoning for previous moves by this player', () => {
+  it('omits stored comments and reasoning from ordinary move history', () => {
     const snapshot = emptySnapshot()
     snapshot.moves = [
       {
@@ -163,16 +163,17 @@ describe('provider normalization', () => {
     ]
 
     const prompt = makePrompt(snapshot)
-    expect(prompt).toContain(
-      '1. B C7; your comment: "Build outward.\\nKeep sente."',
-    )
-    expect(prompt).toContain(
-      '3. B pass; your comment: ""',
-    )
+    expect(prompt).toContain('1. B C7')
+    expect(prompt).toContain('2. W D6')
+    expect(prompt).toContain('3. B pass')
+    expect(prompt).not.toContain('Build outward.')
+    expect(prompt).not.toContain('Opponent comment')
     expect(prompt).not.toContain('I compared both corners.')
     expect(prompt).not.toContain('your reasoning:')
-    expect(prompt).not.toContain('Opponent comment')
     expect(prompt).not.toContain('Opponent private reasoning')
+    expect(prompt).toContain(
+      '{"move":[column,row],"reason":"brief reason for this move"}',
+    )
   })
 
   it('states when no playing style is configured', () => {
