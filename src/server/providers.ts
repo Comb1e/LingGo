@@ -4,9 +4,10 @@ import {createOpenAI} from '@ai-sdk/openai'
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
 import {
   createProviderRegistry,
-  generateText,
   streamText,
   type LanguageModel,
+  type TextStreamPart,
+  type ToolSet,
 } from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
@@ -39,7 +40,8 @@ const modelMoveSchema = z
   })
   .strict()
 
-const DEFAULT_PROVIDER_TIMEOUT_MS = 5 * 60_000
+const DEFAULT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS = 60_000
+const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60_000
 
 export interface PlayerAdapter {
   requestAction(
@@ -171,6 +173,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     private profile: PlayerProfile,
     private key: string,
     private timeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS,
+    private firstTokenTimeoutMs = DEFAULT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS,
   ) {}
 
   async requestAction(
@@ -179,8 +182,6 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     promptOverride?: string,
   ): Promise<LlmActionResult> {
     const started = Date.now()
-    const timeout = AbortSignal.timeout(this.timeoutMs)
-    const combined = AbortSignal.any([signal, timeout])
     const prompt = promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
     const model = this.createModel()
     const requestsReasoning = this.connection.kind !== 'compatible'
@@ -194,12 +195,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           ? {google: {thinkingConfig: {includeThoughts: true}}}
           : undefined,
       maxRetries: 0,
-      abortSignal: combined,
+      abortSignal: signal,
+      timeout: {
+        totalMs: this.timeoutMs,
+      },
     }
-    const result =
-      this.connection.kind === 'openai'
-        ? await streamedTextResult(request)
-        : await generatedTextResult(request)
+    const result = await streamedTextResult(request, this.firstTokenTimeoutMs)
     const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
       ...parsed,
@@ -221,12 +222,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       prompt,
       temperature: this.temperature(),
       maxRetries: 0,
-      abortSignal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
+      abortSignal: signal,
+      timeout: {
+        totalMs: this.timeoutMs,
+      },
     }
-    const result =
-      this.connection.kind === 'openai'
-        ? await streamedTextResult(request)
-        : await generatedTextResult(request)
+    const result = await streamedTextResult(request, this.firstTokenTimeoutMs)
     return {
       text: result.text,
       latencyMs: Date.now() - started,
@@ -309,25 +310,59 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   }
 }
 
-async function generatedTextResult(
-  request: Parameters<typeof generateText>[0],
+async function streamedTextResult(
+  request: Parameters<typeof streamText>[0],
+  firstTokenTimeoutMs: number,
 ) {
-  const result = await generateText(request)
-  return {
-    text: result.text,
-    reasoningText: result.finalStep.reasoningText,
-    usage: result.usage,
+  const firstTokenController = new AbortController()
+  const firstTokenTimer = setTimeout(
+    () =>
+      firstTokenController.abort(
+        new DOMException(
+          `First token timeout of ${firstTokenTimeoutMs}ms exceeded`,
+          'TimeoutError',
+        ),
+      ),
+    firstTokenTimeoutMs,
+  )
+  const abortSignal = request.abortSignal
+    ? AbortSignal.any([request.abortSignal, firstTokenController.signal])
+    : firstTokenController.signal
+  const result = streamText({
+    ...request,
+    abortSignal,
+    onChunk({chunk}) {
+      if (isProviderContentChunk(chunk)) clearTimeout(firstTokenTimer)
+    },
+  })
+  try {
+    const [text, finalStep, usage] = await Promise.all([
+      result.text,
+      result.finalStep,
+      result.usage,
+    ])
+    return {text, reasoningText: finalStep.reasoningText, usage}
+  } finally {
+    clearTimeout(firstTokenTimer)
   }
 }
 
-async function streamedTextResult(request: Parameters<typeof streamText>[0]) {
-  const result = streamText(request)
-  const [text, finalStep, usage] = await Promise.all([
-    result.text,
-    result.finalStep,
-    result.usage,
-  ])
-  return {text, reasoningText: finalStep.reasoningText, usage}
+function isProviderContentChunk<TOOLS extends ToolSet>(
+  chunk: TextStreamPart<TOOLS>,
+) {
+  switch (chunk.type) {
+    case 'text-delta':
+    case 'reasoning-delta':
+      return chunk.text.length > 0
+    case 'tool-input-delta':
+      return chunk.delta.length > 0
+    case 'file':
+    case 'reasoning-file':
+    case 'tool-call':
+      return true
+    default:
+      return false
+  }
 }
 
 export function isOpenAiReasoningModel(modelId: string) {

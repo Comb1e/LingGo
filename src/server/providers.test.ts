@@ -193,7 +193,7 @@ describe('provider normalization', () => {
   it.each([
     ['openai', '/proxy/openai/v1/responses'],
     ['anthropic', '/proxy/anthropic/v1/messages'],
-    ['google', '/proxy/google/v1beta/models/test-model:generateContent'],
+    ['google', '/proxy/google/v1beta/models/test-model:streamGenerateContent'],
   ] satisfies Array<[ProviderKind, string]>)(
     'sends %s requests to its custom base URL',
     async (kind, expectedPath) => {
@@ -248,6 +248,7 @@ describe('provider normalization', () => {
         expect(body.reasoning).toEqual({effort: 'high', summary: 'detailed'})
         expect(body).not.toHaveProperty('temperature')
       } else if (kind === 'anthropic') {
+        expect(body.stream).toBe(true)
         expect(body.thinking).toBeTruthy()
       } else {
         expect(body.generationConfig.thinkingConfig).toMatchObject({
@@ -256,6 +257,42 @@ describe('provider normalization', () => {
       }
     },
   )
+
+  it('aborts a provider request that does not produce a first token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal
+          const rejectWithAbort = () => reject(signal?.reason)
+          if (signal?.aborted) rejectWithAbort()
+          else signal?.addEventListener('abort', rejectWithAbort, {once: true})
+        }),
+      ),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'timeout-openai',
+        name: 'Timeout OpenAI',
+        kind: 'openai',
+        supportsStructuredOutput: true,
+      },
+      {
+        id: 'timeout-profile',
+        name: 'Timeout profile',
+        connectionId: 'timeout-openai',
+        modelId: 'gpt-5.6-sol',
+        temperature: 0,
+      },
+      'test-key',
+      1_000,
+      25,
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow(/first token timeout/i)
+  })
 })
 
 function emptySnapshot(): GameSnapshot {
