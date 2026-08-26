@@ -566,12 +566,20 @@ function WinRatePanel({
     const position = positions[index]
     if (position) setSelectedTurn(position.turn)
   }
-  const selectNearestPosition = (clientX: number, svg: SVGSVGElement) => {
+  const selectNearestPosition = (
+    clientX: number,
+    clientY: number,
+    svg: SVGSVGElement,
+  ) => {
     const bounds = svg.getBoundingClientRect()
-    const chartX = Math.min(
-      width - inset,
-      Math.max(inset, ((clientX - bounds.left) / bounds.width) * width),
-    )
+    const screenPoint = svg.createSVGPoint()
+    screenPoint.x = clientX
+    screenPoint.y = clientY
+    const screenTransform = svg.getScreenCTM()
+    const pointerX = screenTransform
+      ? screenPoint.matrixTransform(screenTransform.inverse()).x
+      : ((clientX - bounds.left) / bounds.width) * width
+    const chartX = Math.min(width - inset, Math.max(inset, pointerX))
     setDragCursorX(chartX)
     const nearestIndex = positions.reduce((bestIndex, value, index) => {
       const best = positions[bestIndex]
@@ -590,7 +598,7 @@ function WinRatePanel({
     if (!svg) return
     dragState.current = {status: 'cursor', pointerId: event.pointerId}
     svg.setPointerCapture(event.pointerId)
-    selectNearestPosition(event.clientX, svg)
+    selectNearestPosition(event.clientX, event.clientY, svg)
   }
   const moveCursor = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (
@@ -604,7 +612,7 @@ function WinRatePanel({
       if (event.clientX < bounds.left + 24) viewport.scrollLeft -= 12
       if (event.clientX > bounds.right - 24) viewport.scrollLeft += 12
     }
-    selectNearestPosition(event.clientX, event.currentTarget)
+    selectNearestPosition(event.clientX, event.clientY, event.currentTarget)
   }
   const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return

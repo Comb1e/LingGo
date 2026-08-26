@@ -3,6 +3,8 @@ import {expect, test} from '@playwright/test'
 test('creates a default 19x19 human game and plays a move', async ({
   page,
 }, testInfo) => {
+  if (testInfo.project.name === 'desktop')
+    await page.setViewportSize({width: 1600, height: 1100})
   await page.goto('/new')
   await expect(page.getByRole('radio', {name: '19×19'})).toHaveAttribute(
     'aria-checked',
@@ -34,15 +36,20 @@ test('creates a default 19x19 human game and plays a move', async ({
     cursorLine.y + cursorLine.height / 2,
   )
   await page.mouse.down()
-  const middleX = (cursorLine.x + firstTurnDot.x) / 2
-  await page.mouse.move(middleX, cursorLine.y + cursorLine.height / 2, {
+  const cursorCenterX = cursorLine.x + cursorLine.width / 2
+  const firstTurnCenterX = firstTurnDot.x + firstTurnDot.width / 2
+  const dragTargetX = cursorCenterX + (firstTurnCenterX - cursorCenterX) * 0.25
+  await page.mouse.move(dragTargetX, cursorLine.y + cursorLine.height / 2, {
     steps: 3,
   })
   await expect
-    .poll(
-      async () => (await page.locator('.chart-cursor-line').boundingBox())?.x,
-    )
-    .toBeLessThan(cursorLine.x - 50)
+    .poll(async () => {
+      const marker = await page.locator('.chart-cursor-line').boundingBox()
+      return marker
+        ? Math.abs(marker.x + marker.width / 2 - dragTargetX)
+        : Infinity
+    })
+    .toBeLessThan(2)
   await page.mouse.move(
     firstTurnDot.x + firstTurnDot.width / 2,
     firstTurnDot.y + firstTurnDot.height / 2,
