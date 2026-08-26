@@ -61,6 +61,7 @@ export interface Move {
   coordinate?: string
   comment?: string
   reasoning?: string
+  inGameReflections?: InGameReflection[]
   captured: number
   capturedPoints?: Point[]
   latencyMs?: number

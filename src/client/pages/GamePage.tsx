@@ -501,6 +501,9 @@ export function GamePage() {
                     {game.commentsVisible && move.reasoning && (
                       <MoveReasoning text={move.reasoning} />
                     )}
+                    {move.inGameReflections?.length && (
+                      <MoveReflections reflections={move.inGameReflections} />
+                    )}
                   </div>
                 ))
               ) : (
@@ -510,6 +513,28 @@ export function GamePage() {
           </section>
         </aside>
       </div>
+    </div>
+  )
+}
+
+function MoveReflections({
+  reflections,
+}: {
+  reflections: NonNullable<Game['inGameReflections']>
+}) {
+  const {t} = useTranslation()
+  return (
+    <div className="move-reflections">
+      <span>
+        <Brain /> {t('inGameReflections')}
+      </span>
+      <ol>
+        {reflections.map((reflection) => (
+          <li key={reflection.number} value={reflection.number}>
+            {reflection.reflection}
+          </li>
+        ))}
+      </ol>
     </div>
   )
 }
@@ -561,15 +586,16 @@ function WinRatePanel({
   const [dragCursorX, setDragCursorX] = useState<number>()
   const dragState = useRef<ChartDragState>({status: 'idle'})
   const viewportRef = useRef<HTMLDivElement>(null)
-  const positions = analysis?.positions ?? []
+  const positions = analysis?.positions.filter((position) => position.turn >= 1) ?? []
   const baseWidth = 600
   const minimumTurnSpacing = 14
   const width = Math.max(baseWidth, moveCount * minimumTurnSpacing + 44)
   const height = 180
   const inset = 22
   const maxTurn = Math.max(moveCount, 1)
+  const turnSpan = Math.max(maxTurn - 1, 1)
   const point = (turn: number, rate: number): [number, number] => [
-    inset + (turn / maxTurn) * (width - inset * 2),
+    inset + ((turn - 1) / turnSpan) * (width - inset * 2),
     inset + (1 - rate) * (height - inset * 2),
   ]
   const blackPoints = positions.map((value) =>
@@ -703,7 +729,7 @@ function WinRatePanel({
           <Activity /> <strong>{t('winRate')}</strong>
         </span>
         <div>
-          {positions.length < moveCount + 1 && (
+          {positions.length < moveCount && (
             <Button disabled={busy} onClick={onAnalyze}>
               {t('analyze')}
             </Button>

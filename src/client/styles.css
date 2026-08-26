@@ -1258,6 +1258,44 @@ svg {
   grid-column: 2 / -1;
   min-width: 0;
 }
+.move-reflections {
+  grid-column: 2 / -1;
+  min-width: 0;
+  margin-top: 3px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--green);
+  border-radius: 0 5px 5px 0;
+  background: var(--green-soft);
+}
+.move-reflections > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 750;
+}
+.move-reflections > span svg {
+  width: 14px;
+  height: 14px;
+}
+.move-reflections ol {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+.move-reflections li {
+  padding-left: 2px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.move-reflections li + li {
+  margin-top: 5px;
+}
+.move-reflections li::marker {
+  color: var(--green);
+  font-weight: 700;
+}
 .reasoning-toggle {
   min-height: 30px;
   border: 0;

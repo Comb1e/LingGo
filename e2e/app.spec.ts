@@ -17,13 +17,18 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect(board).toBeVisible()
   await expect(board.locator('.shudan-vertex')).toHaveCount(361)
   await board.locator('.shudan-vertex').nth(180).click()
-  await expect(page.getByText('1', {exact: true}).first()).toBeVisible()
+  await expect(page.locator('.move-row')).toHaveCount(1)
+  await board.locator('.shudan-vertex').nth(181).click()
+  await expect(page.locator('.move-row')).toHaveCount(2)
   await expect(page.locator('.winrate-chart')).toBeVisible()
   await expect
     .poll(() => page.locator('.black-line').getAttribute('d'))
     .toContain(' C ')
   const turnCursor = page.getByRole('slider', {name: 'Selected turn'})
+  await expect(turnCursor).toHaveAttribute('aria-valuemin', '1')
   await expect(turnCursor).toHaveAttribute('aria-valuenow', '1')
+  await page.getByRole('button', {name: 'Next turn'}).click()
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '2')
   await expect(page.getByText('Black score lead:')).toBeVisible()
   const cursorHandle = page.locator('.chart-cursor-hitbox')
   await cursorHandle.scrollIntoViewIfNeeded()
@@ -55,11 +60,11 @@ test('creates a default 19x19 human game and plays a move', async ({
     firstTurnDot.y + firstTurnDot.height / 2,
   )
   await page.mouse.up()
-  await expect(turnCursor).toHaveAttribute('aria-valuenow', '0')
-  await page.getByRole('button', {name: 'Next turn'}).click()
   await expect(turnCursor).toHaveAttribute('aria-valuenow', '1')
+  await page.getByRole('button', {name: 'Next turn'}).click()
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '2')
   await page.getByRole('button', {name: 'Previous turn'}).click()
-  await expect(turnCursor).toHaveAttribute('aria-valuenow', '0')
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '1')
   const shareToggle = page.getByLabel('Share with LLM')
   await expect(shareToggle).toBeVisible()
   const sharingSaved = page.waitForResponse(
@@ -103,10 +108,13 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByRole('heading', {name: 'In-game reflections'}),
   ).toBeVisible()
+  const reflectionText =
+    'Check liberties and forcing moves before choosing a passive continuation.'
   await expect(
-    page.getByText(
-      'Check liberties and forcing moves before choosing a passive continuation.',
-    ),
+    page.locator('.in-game-reflections-panel').getByText(reflectionText),
+  ).toBeVisible()
+  await expect(
+    page.locator('.move-reflections').getByText(reflectionText),
   ).toBeVisible()
   const chartPanel = await page.locator('.winrate-panel').boundingBox()
   const reflectionPanel = await page

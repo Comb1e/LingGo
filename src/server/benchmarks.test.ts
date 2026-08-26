@@ -450,6 +450,14 @@ describe('benchmark scoring and prompts', () => {
       {number: 1, reflection: 'Revised lesson for game 2.'},
       {number: 2, reflection: 'Second lesson for game 2.'},
     ])
+    const firstGame = games.get(service.get(run.id)!.gameIds[0])!
+    expect(firstGame.moves[0].inGameReflections).toEqual([
+      {number: 1, reflection: 'Initial lesson for game 1.'},
+    ])
+    expect(firstGame.moves[2].inGameReflections).toEqual([
+      {number: 1, reflection: 'Revised lesson for game 1.'},
+      {number: 2, reflection: 'Second lesson for game 1.'},
+    ])
     await service.close()
   })
 })

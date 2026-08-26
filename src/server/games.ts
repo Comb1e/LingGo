@@ -351,6 +351,9 @@ export class GameService {
       captured = result.captured
       capturedPoints = result.capturedPoints
     }
+    const inGameReflections = game.benchmarkRunId
+      ? mergeInGameReflections([], llm?.inGameReflections)
+      : []
     const move: Move = {
       number: game.moves.length + 1,
       color,
@@ -359,6 +362,9 @@ export class GameService {
       coordinate: point ? pointToCoordinate(point, game.size) : undefined,
       comment: action.comment,
       reasoning: llm?.reasoning,
+      inGameReflections: inGameReflections.length
+        ? inGameReflections
+        : undefined,
       captured,
       capturedPoints,
       latencyMs: llm?.latencyMs,
@@ -368,10 +374,10 @@ export class GameService {
       retries: llm?.retries,
     }
     game.moves.push(move)
-    if (game.benchmarkRunId && llm?.inGameReflections)
+    if (inGameReflections.length)
       game.inGameReflections = mergeInGameReflections(
         game.inGameReflections,
-        llm.inGameReflections,
+        inGameReflections,
       )
     this.refreshPosition(game)
 
