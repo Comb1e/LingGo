@@ -63,6 +63,21 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('you have captured 4 opponent stones; the opponent has captured 2 of your stones')
   })
 
+  it('explains benchmark move legality, captures, and scoring', () => {
+    const prompt = makeBenchmarkMovePrompt(makeSnapshot(13, 6.5, []), '', {
+      phase: 'training',
+    })
+    expect(prompt).toContain('played on a 13x13 grid. Black moves first')
+    expect(prompt).toContain('Orthogonally adjacent stones of one color form a chain and share liberties')
+    expect(prompt).toContain('remove every adjacent opposing chain with no liberties')
+    expect(prompt).toContain('leaves its own chain with no liberties after those captures is suicide')
+    expect(prompt).toContain('may not recreate any earlier complete board position')
+    expect(prompt).toContain('Two consecutive passes end play for scoring')
+    expect(prompt).toContain('living stones on the board plus empty intersections surrounded only by that color')
+    expect(prompt).toContain('Captured stones do not add points directly; their removal can create territory')
+    expect(prompt).toContain('Neutral intersections score for neither side. White adds 6.5 komi')
+  })
+
   it('adds and rewrites numbered in-game reflections', () => {
     expect(mergeInGameReflections(
       [

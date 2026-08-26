@@ -390,7 +390,13 @@ export function makeBenchmarkMovePrompt(
     : '(none)'
   const sections = [
     '1. GO RULES',
-    `Board: ${snapshot.size}x${snapshot.size}; Chinese area scoring; White komi ${snapshot.komi}; positional whole-board repetition; no suicide; two passes end play; resignation is allowed.`,
+    `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
+    '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
+    '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
+    '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
+    '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
+    '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
+    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${snapshot.komi} komi; the higher total wins.`,
     '',
     '2. SELF-WRITTEN SKILLS',
     notebook.trim() || '(none)',
