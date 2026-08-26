@@ -861,9 +861,15 @@ svg {
   width: 100%;
   overflow-x: auto;
   margin-top: 10px;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+.chart-viewport.is-panning {
+  cursor: grabbing;
 }
 .chart-footer,
-.chart-scale {
+.chart-turn-controls {
   display: flex;
   align-items: center;
 }
@@ -872,16 +878,16 @@ svg {
   gap: 12px;
   padding-top: 5px;
 }
-.chart-scale {
+.chart-turn-controls {
   gap: 7px;
 }
-.chart-scale .button {
+.chart-turn-controls .button {
   min-height: 30px;
   width: 30px;
   padding: 5px;
 }
-.chart-scale output {
-  width: 34px;
+.chart-turn-controls output {
+  min-width: 52px;
   color: var(--muted);
   font-size: 12px;
   text-align: center;
@@ -912,6 +918,39 @@ svg {
 }
 .white-dot {
   fill: #8b9690;
+}
+.chart-cursor {
+  cursor: ew-resize;
+  outline: none;
+}
+.chart-cursor-hitbox {
+  fill: transparent;
+  pointer-events: all;
+}
+.chart-cursor-line {
+  stroke: var(--blue);
+  stroke-width: 2;
+}
+.chart-cursor:focus .chart-cursor-line {
+  stroke-width: 3;
+}
+.chart-turn-detail {
+  pointer-events: none;
+}
+.chart-turn-detail div {
+  display: grid;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid #cbd2cd;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 94%);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.25;
+}
+.chart-turn-detail strong {
+  color: var(--blue);
+  font-size: 12px;
 }
 .chart-legend {
   justify-content: flex-end;

@@ -20,17 +20,30 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect
     .poll(() => page.locator('.black-line').getAttribute('d'))
     .toContain(' C ')
-  const chart = page.locator('.winrate-chart')
-  const initialChartWidth = await chart.evaluate(
-    (element) => element.getBoundingClientRect().width,
+  const turnCursor = page.getByRole('slider', {name: 'Selected turn'})
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '1')
+  await expect(page.getByText('Black score lead:')).toBeVisible()
+  const cursorHandle = page.locator('.chart-cursor-hitbox')
+  await cursorHandle.scrollIntoViewIfNeeded()
+  const cursorLine = await cursorHandle.boundingBox()
+  const firstTurnDot = await page.locator('.black-dot').first().boundingBox()
+  if (!cursorLine || !firstTurnDot)
+    throw new Error('Chart cursor is not visible')
+  await page.mouse.move(
+    cursorLine.x + cursorLine.width / 2,
+    cursorLine.y + cursorLine.height / 2,
   )
-  await page.getByRole('button', {name: 'Zoom in'}).click()
-  await expect(page.getByText('1.5x')).toBeVisible()
-  await expect
-    .poll(() =>
-      chart.evaluate((element) => element.getBoundingClientRect().width),
-    )
-    .toBeGreaterThan(initialChartWidth)
+  await page.mouse.down()
+  await page.mouse.move(
+    firstTurnDot.x + firstTurnDot.width / 2,
+    firstTurnDot.y + firstTurnDot.height / 2,
+  )
+  await page.mouse.up()
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '0')
+  await page.getByRole('button', {name: 'Next turn'}).click()
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '1')
+  await page.getByRole('button', {name: 'Previous turn'}).click()
+  await expect(turnCursor).toHaveAttribute('aria-valuenow', '0')
   const shareToggle = page.getByLabel('Share with LLM')
   await expect(shareToggle).toBeVisible()
   const sharingSaved = page.waitForResponse(

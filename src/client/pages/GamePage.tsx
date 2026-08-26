@@ -3,6 +3,8 @@ import {
   Activity,
   Brain,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Eye,
   EyeOff,
@@ -16,10 +18,14 @@ import {
   Trash2,
   X,
   XCircle,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react'
-import {useCallback, useEffect, useState} from 'react'
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import {useTranslation} from 'react-i18next'
 import {useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
@@ -515,10 +521,13 @@ function WinRatePanel({
   onAnalyze: () => void
 }) {
   const {t} = useTranslation()
-  const [chartScale, setChartScale] = useState(1)
+  const [selectedTurn, setSelectedTurn] = useState(1)
+  const dragState = useRef<ChartDragState>({status: 'idle'})
+  const viewportRef = useRef<HTMLDivElement>(null)
   const positions = analysis?.positions ?? []
   const baseWidth = 600
-  const width = baseWidth * chartScale
+  const minimumTurnSpacing = 14
+  const width = Math.max(baseWidth, moveCount * minimumTurnSpacing + 44)
   const height = 180
   const inset = 22
   const maxTurn = Math.max(moveCount, 1)
@@ -532,6 +541,109 @@ function WinRatePanel({
   const whitePoints = positions.map((value) =>
     point(value.turn, value.whiteWinRate),
   )
+  const selectedIndex = positions.reduce((nearestIndex, value, index) => {
+    const nearest = positions[nearestIndex]
+    return !nearest ||
+      Math.abs(value.turn - selectedTurn) <
+        Math.abs(nearest.turn - selectedTurn)
+      ? index
+      : nearestIndex
+  }, 0)
+  const selectedPosition = positions[selectedIndex]
+  const selectedX = selectedPosition
+    ? point(selectedPosition.turn, selectedPosition.blackWinRate)[0]
+    : inset
+  const detailWidth = 156
+  const detailX =
+    selectedX + detailWidth + 14 > width
+      ? selectedX - detailWidth - 10
+      : selectedX + 10
+
+  const selectPosition = (index: number) => {
+    const position = positions[index]
+    if (position) setSelectedTurn(position.turn)
+  }
+  const selectNearestPosition = (clientX: number, svg: SVGSVGElement) => {
+    const bounds = svg.getBoundingClientRect()
+    const chartX = ((clientX - bounds.left) / bounds.width) * width
+    const nearestIndex = positions.reduce((bestIndex, value, index) => {
+      const best = positions[bestIndex]
+      return !best ||
+        Math.abs(point(value.turn, value.blackWinRate)[0] - chartX) <
+          Math.abs(point(best.turn, best.blackWinRate)[0] - chartX)
+        ? index
+        : bestIndex
+    }, 0)
+    selectPosition(nearestIndex)
+  }
+  const startCursorDrag = (event: ReactPointerEvent<SVGGElement>) => {
+    event.stopPropagation()
+    event.preventDefault()
+    const svg = event.currentTarget.ownerSVGElement
+    if (!svg) return
+    dragState.current = {status: 'cursor', pointerId: event.pointerId}
+    svg.setPointerCapture(event.pointerId)
+    selectNearestPosition(event.clientX, svg)
+  }
+  const moveCursor = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (
+      dragState.current.status !== 'cursor' ||
+      dragState.current.pointerId !== event.pointerId
+    )
+      return
+    const viewport = viewportRef.current
+    if (viewport) {
+      const bounds = viewport.getBoundingClientRect()
+      if (event.clientX < bounds.left + 24) viewport.scrollLeft -= 12
+      if (event.clientX > bounds.right - 24) viewport.scrollLeft += 12
+    }
+    selectNearestPosition(event.clientX, event.currentTarget)
+  }
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    dragState.current = {
+      status: 'panning',
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: event.currentTarget.scrollLeft,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.classList.add('is-panning')
+  }
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragState.current
+    if (drag.status !== 'panning' || drag.pointerId !== event.pointerId) return
+    event.currentTarget.scrollLeft =
+      drag.scrollLeft + drag.startX - event.clientX
+  }
+  const finishDrag = (event: ReactPointerEvent<Element>) => {
+    if (
+      dragState.current.status === 'idle' ||
+      dragState.current.pointerId !== event.pointerId
+    )
+      return
+    dragState.current = {status: 'idle'}
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    event.currentTarget.classList.remove('is-panning')
+  }
+  const moveSelection = (offset: number) => {
+    const index = selectedIndex + offset
+    const position = positions[index]
+    if (!position) return
+    setSelectedTurn(position.turn)
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const positionX = point(position.turn, position.blackWinRate)[0]
+    const renderedX =
+      width === baseWidth
+        ? (positionX / width) * viewport.clientWidth
+        : positionX
+    viewport.scrollTo({
+      left: renderedX - viewport.clientWidth / 2,
+      behavior: 'smooth',
+    })
+  }
   return (
     <section className="winrate-panel">
       <header>
@@ -569,13 +681,23 @@ function WinRatePanel({
       {analysis?.error && <p className="analysis-error">{analysis.error}</p>}
       {positions.length ? (
         <>
-          <div className="chart-viewport">
+          <div
+            ref={viewportRef}
+            className="chart-viewport"
+            onPointerDown={startPan}
+            onPointerMove={movePan}
+            onPointerUp={finishDrag}
+            onPointerCancel={finishDrag}
+          >
             <svg
               className="winrate-chart"
-              style={{width: `${chartScale * 100}%`}}
+              style={{width: width === baseWidth ? '100%' : `${width}px`}}
               viewBox={`0 0 ${width} ${height}`}
               role="img"
               aria-label={t('winRateChart')}
+              onPointerMove={moveCursor}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
             >
               <line
                 x1={inset}
@@ -600,6 +722,7 @@ function WinRatePanel({
                     r="3.5"
                     className="chart-dot black-dot"
                     tabIndex={0}
+                    onClick={() => setSelectedTurn(value.turn)}
                   >
                     <title>{`${t('turn')} ${value.turn}: ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
                   </circle>
@@ -609,37 +732,101 @@ function WinRatePanel({
                     r="3.5"
                     className="chart-dot white-dot"
                     tabIndex={0}
+                    onClick={() => setSelectedTurn(value.turn)}
                   >
                     <title>{`${t('turn')} ${value.turn}: ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
                   </circle>
                 </g>
               ))}
+              {selectedPosition && (
+                <g
+                  className="chart-cursor"
+                  tabIndex={0}
+                  role="slider"
+                  aria-label={t('selectedTurn')}
+                  aria-valuemin={positions[0]?.turn}
+                  aria-valuemax={positions.at(-1)?.turn}
+                  aria-valuenow={selectedPosition.turn}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowLeft') {
+                      event.preventDefault()
+                      moveSelection(-1)
+                    }
+                    if (event.key === 'ArrowRight') {
+                      event.preventDefault()
+                      moveSelection(1)
+                    }
+                  }}
+                  onPointerDown={startCursorDrag}
+                >
+                  <rect
+                    x={selectedX - 9}
+                    y={inset}
+                    width="18"
+                    height={height - inset * 2}
+                    className="chart-cursor-hitbox"
+                  />
+                  <line
+                    x1={selectedX}
+                    y1={inset}
+                    x2={selectedX}
+                    y2={height - inset}
+                    className="chart-cursor-line"
+                  />
+                  <foreignObject
+                    x={detailX}
+                    y={inset + 4}
+                    width={detailWidth}
+                    height="116"
+                    className="chart-turn-detail"
+                  >
+                    <div>
+                      <strong>
+                        {t('turn')} {selectedPosition.turn}
+                      </strong>
+                      <span>
+                        {t('black')}:{' '}
+                        {(selectedPosition.blackWinRate * 100).toFixed(1)}%
+                      </span>
+                      <span>
+                        {t('white')}:{' '}
+                        {(selectedPosition.whiteWinRate * 100).toFixed(1)}%
+                      </span>
+                      <span>
+                        {t('blackScoreLead')}:{' '}
+                        {selectedPosition.blackScoreLead.toFixed(1)}
+                      </span>
+                      <span>
+                        {t('visits')}: {selectedPosition.visits}
+                      </span>
+                    </div>
+                  </foreignObject>
+                </g>
+              )}
             </svg>
           </div>
           <div className="chart-footer">
-            <div className="chart-scale" aria-label={t('chartScale')}>
+            <div className="chart-turn-controls">
               <Button
                 className="icon-button compact-icon"
-                title={t('zoomOut')}
-                aria-label={t('zoomOut')}
-                disabled={chartScale === 1}
-                onClick={() =>
-                  setChartScale((value) => Math.max(1, value - 0.5))
-                }
+                title={t('previousTurn')}
+                aria-label={t('previousTurn')}
+                disabled={selectedIndex === 0}
+                onClick={() => moveSelection(-1)}
               >
-                <ZoomOut />
+                <ChevronLeft />
               </Button>
-              <output aria-live="polite">{chartScale.toFixed(1)}x</output>
+              <output aria-live="polite">
+                {t('turn')} {selectedPosition?.turn ?? 1}
+              </output>
               <Button
                 className="icon-button compact-icon"
-                title={t('zoomIn')}
-                aria-label={t('zoomIn')}
-                disabled={chartScale === 4}
-                onClick={() =>
-                  setChartScale((value) => Math.min(4, value + 0.5))
-                }
+                title={t('nextTurn')}
+                aria-label={t('nextTurn')}
+                disabled={selectedIndex === positions.length - 1}
+                onClick={() => moveSelection(1)}
               >
-                <ZoomIn />
+                <ChevronRight />
               </Button>
             </div>
             <div className="chart-legend">
@@ -662,6 +849,16 @@ function WinRatePanel({
     </section>
   )
 }
+
+type ChartDragState =
+  | {status: 'idle'}
+  | {status: 'cursor'; pointerId: number}
+  | {
+      status: 'panning'
+      pointerId: number
+      startX: number
+      scrollLeft: number
+    }
 
 function smoothCurve(points: Array<[number, number]>) {
   if (!points.length) return ''
