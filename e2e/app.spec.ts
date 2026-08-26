@@ -20,6 +20,13 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect(page.locator('.move-row')).toHaveCount(1)
   await board.locator('.shudan-vertex').nth(181).click()
   await expect(page.locator('.move-row')).toHaveCount(2)
+  await expect(page.getByText('Move 2 / 2')).toBeVisible()
+  await page.getByRole('button', {name: 'Previous board position'}).click()
+  await expect(page.getByText('Move 1 / 2')).toBeVisible()
+  await board.locator('.shudan-vertex').nth(182).click()
+  await expect(page.locator('.move-row')).toHaveCount(2)
+  await page.getByRole('button', {name: 'Latest board position'}).click()
+  await expect(page.getByText('Move 2 / 2')).toBeVisible()
   await expect(page.locator('.winrate-chart')).toBeVisible()
   await expect
     .poll(() => page.locator('.black-line').getAttribute('d'))
@@ -116,6 +123,9 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.locator('.move-reflections').getByText(reflectionText),
   ).toBeVisible()
+  await page.getByRole('button', {name: 'Previous board position'}).click()
+  await expect(page.getByText(/Move \d+ \/ \d+/)).toBeVisible()
+  await page.getByRole('button', {name: 'Latest board position'}).click()
   const chartPanel = await page.locator('.winrate-panel').boundingBox()
   const reflectionPanel = await page
     .locator('.in-game-reflections-panel')

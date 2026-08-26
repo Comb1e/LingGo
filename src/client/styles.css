@@ -838,6 +838,24 @@ svg {
 .black-player {
   border-top: 1px solid var(--line);
 }
+.position-review {
+  width: min(100%, calc(100vh - 225px));
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 5px 0;
+}
+.position-review strong {
+  min-width: 116px;
+  text-align: center;
+  font-size: 13px;
+}
+.position-loading {
+  color: var(--muted);
+  font-size: 12px;
+}
 .game-panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1074,6 +1092,17 @@ svg {
   grid-template-columns: minmax(0, 1fr) auto;
   border-top: 1px solid var(--line);
   align-items: center;
+}
+.benchmark-row-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 7px;
+}
+.benchmark-row-error {
+  grid-column: 1 / -1;
+}
+.benchmark-row-error .banner {
+  margin: 0 7px 10px;
 }
 .benchmark-row:last-child {
   border-bottom: 1px solid var(--line);
@@ -1511,7 +1540,8 @@ svg {
     grid-template-columns: 1fr;
   }
   .board-host,
-  .player-strip {
+  .player-strip,
+  .position-review {
     width: min(100%, calc(100vh - 255px));
   }
   .game-panel {
@@ -1659,6 +1689,10 @@ svg {
   .player-strip {
     width: 100%;
     padding-inline: 7px;
+  }
+  .position-review {
+    width: 100%;
+    flex-wrap: wrap;
   }
   .approval-grid {
     grid-template-columns: 1fr;

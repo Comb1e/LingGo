@@ -3,6 +3,7 @@ import type {
   BenchmarkRun,
   Game,
   GameAnalysis,
+  GamePosition,
   KataGoHealth,
   KataGoSettings,
   NewGameInput,
@@ -72,6 +73,8 @@ async function connectionsWithRestoredKeys(): Promise<ProviderConnection[]> {
 export const api = {
   games: () => request<Game[]>('/api/games'),
   game: (id: string) => request<Game>(`/api/games/${id}`),
+  gamePosition: (id: string, turn: number) =>
+    request<GamePosition>(`/api/games/${id}/positions/${turn}`),
   createGame: (input: NewGameInput) =>
     request<Game>('/api/games', {method: 'POST', body: JSON.stringify(input)}),
   updateGame: (id: string, input: Record<string, unknown>) =>

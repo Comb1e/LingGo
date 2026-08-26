@@ -103,6 +103,180 @@ describe('game orchestration', () => {
     expect(updated.toMove).toBe('W')
   })
 
+  it('runs one model action from paused and pauses again', async () => {
+    setup()
+    const game = pausedModelGame(store, service)
+
+    await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'step',
+    })
+
+    await waitFor(() => service.get(game.id)?.moves.length === 1)
+    expect(service.get(game.id)).toMatchObject({
+      status: 'paused',
+      autoplay: false,
+      pauseAfterMove: false,
+    })
+  })
+
+  it('arms an in-flight model request without aborting it', async () => {
+    store = new Store(':memory:')
+    let resolveAction!: (
+      value: Awaited<ReturnType<PlayerAdapter['requestAction']>>,
+    ) => void
+    let requestSignal: AbortSignal | undefined
+    const result = new Promise<
+      Awaited<ReturnType<PlayerAdapter['requestAction']>>
+    >((resolve) => {
+      resolveAction = resolve
+    })
+    const adapter = {
+      requestAction(_snapshot, signal) {
+        requestSignal = signal
+        return result
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+    const game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: 'builtin-fake-profile'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+    await waitFor(() => service.get(game.id)?.pending === true)
+
+    await service.command(game.id, {
+      expectedVersion: service.get(game.id)!.version,
+      type: 'step',
+    })
+    expect(requestSignal?.aborted).toBe(false)
+    resolveAction(modelAction('pass'))
+
+    await waitFor(() => service.get(game.id)?.moves.length === 1)
+    expect(service.get(game.id)).toMatchObject({
+      status: 'paused',
+      autoplay: false,
+    })
+  })
+
+  it('commits exactly one action when both seats are models', async () => {
+    setup()
+    const game = pausedModelGame(store, service, true)
+
+    await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'step',
+    })
+
+    await waitFor(() => service.get(game.id)?.status === 'paused')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(service.get(game.id)?.moves).toHaveLength(1)
+  })
+
+  it('preserves terminal and scoring states after a stepped action', async () => {
+    store = new Store(':memory:')
+    let action: 'resign' | 'pass' = 'resign'
+    const adapter = {
+      async requestAction() {
+        return modelAction(action)
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+    const resigning = pausedModelGame(store, service)
+    await service.command(resigning.id, {
+      expectedVersion: resigning.version,
+      type: 'step',
+    })
+    await waitFor(() => service.get(resigning.id)?.status === 'finished')
+    expect(service.get(resigning.id)?.pauseAfterMove).toBe(false)
+
+    action = 'pass'
+    let scoring = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'B'},
+      white: {type: 'human', name: 'W'},
+      commentsVisible: true,
+    })
+    scoring = await service.command(scoring.id, {
+      expectedVersion: scoring.version,
+      type: 'pass',
+    })
+    const persisted = store.getGame(scoring.id)!
+    persisted.white = {
+      type: 'llm',
+      name: 'Bot',
+      profileId: 'builtin-fake-profile',
+    }
+    persisted.status = 'paused'
+    persisted.autoplay = false
+    store.saveGame(persisted)
+    await service.command(persisted.id, {
+      expectedVersion: persisted.version,
+      type: 'step',
+    })
+    await waitFor(() => service.get(persisted.id)?.status === 'scoring')
+    expect(service.get(persisted.id)?.pauseAfterMove).toBe(false)
+  })
+
+  it('rejects stepping human, errored, and benchmark-controlled turns', async () => {
+    setup()
+    const human = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'B'},
+      white: {type: 'human', name: 'W'},
+      commentsVisible: true,
+    })
+    await expect(
+      service.command(human.id, {
+        expectedVersion: human.version,
+        type: 'step',
+      }),
+    ).rejects.toThrow('not controlled by a model')
+
+    const errored = pausedModelGame(store, service)
+    errored.error = 'provider failed'
+    store.saveGame(errored)
+    await expect(
+      service.command(errored.id, {
+        expectedVersion: errored.version,
+        type: 'step',
+      }),
+    ).rejects.toThrow('without an error')
+
+    const benchmark = pausedModelGame(store, service)
+    benchmark.benchmarkRunId = 'benchmark'
+    store.saveGame(benchmark)
+    await expect(
+      service.command(benchmark.id, {
+        expectedVersion: benchmark.version,
+        type: 'step',
+      }),
+    ).rejects.toThrow('controlled by their benchmark')
+  })
+
+  it('restores a persisted step latch after restart', async () => {
+    setup()
+    const game = pausedModelGame(store, service)
+    game.status = 'active'
+    game.autoplay = true
+    game.pauseAfterMove = true
+    store.saveGame(game)
+
+    service = new GameService(store)
+    service.restoreAutoplay()
+
+    await waitFor(() => service.get(game.id)?.moves.length === 1)
+    expect(service.get(game.id)).toMatchObject({
+      status: 'paused',
+      autoplay: false,
+      pauseAfterMove: false,
+    })
+  })
+
   it('waits for a session key when restoring LLM autoplay', async () => {
     setup()
     store.saveConnection({
@@ -233,9 +407,7 @@ describe('game orchestration', () => {
     })
     await waitFor(() => service.get(game.id)?.moves.length === 1)
     expect(service.get(game.id)?.moves[0].retries).toBe(1)
-    expect(service.get(game.id)?.moves[0].retryErrors).toEqual([
-      'rate limited',
-    ])
+    expect(service.get(game.id)?.moves[0].retryErrors).toEqual(['rate limited'])
   })
 
   it('keeps provider failures through resume and records them on recovery', async () => {
@@ -255,7 +427,11 @@ describe('game orchestration', () => {
         }
       },
     } satisfies PlayerAdapter
-    service = new GameService(store, () => adapter, async () => {})
+    service = new GameService(
+      store,
+      () => adapter,
+      async () => {},
+    )
 
     const created = service.create({
       size: 9,
@@ -336,6 +512,42 @@ describe('game orchestration', () => {
     expect(game.status).toBe('active')
   })
 })
+
+function pausedModelGame(store: Store, service: GameService, both = false) {
+  const game = service.create({
+    size: 9,
+    komi: 7.5,
+    black: {type: 'human', name: 'Temporary'},
+    white: {type: 'human', name: 'Human'},
+    commentsVisible: true,
+  })
+  game.black = {
+    type: 'llm',
+    name: 'Bot',
+    profileId: 'builtin-fake-profile',
+  }
+  if (both)
+    game.white = {
+      type: 'llm',
+      name: 'Bot 2',
+      profileId: 'builtin-fake-profile',
+    }
+  game.status = 'paused'
+  game.autoplay = false
+  store.saveGame(game)
+  return game
+}
+
+function modelAction(action: 'pass' | 'resign') {
+  return {
+    action: {action, comment: 'Test action'},
+    latencyMs: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    model: 'test-model',
+    retries: 0,
+  }
+}
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000) {
   const started = Date.now()

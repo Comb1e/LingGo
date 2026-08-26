@@ -106,6 +106,7 @@ export interface Game {
   captures: {B: number; W: number}
   commentsVisible: boolean
   autoplay: boolean
+  pauseAfterMove?: boolean
   moveCap: number
   dead: Point[]
   approvals: Color[]
@@ -157,6 +158,7 @@ export const commandSchema = z.object({
     'resign',
     'undo',
     'pause',
+    'step',
     'resume',
     'retry',
     'force-pass',
@@ -171,6 +173,14 @@ export const commandSchema = z.object({
   profileId: z.string().optional(),
   visible: z.boolean().optional(),
 })
+
+export interface GamePosition {
+  gameId: string
+  turn: number
+  board: number[][]
+  toMove: Color
+  captures: {B: number; W: number}
+}
 
 export interface Score {
   black: number

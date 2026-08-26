@@ -129,6 +129,10 @@ export function createApp(
     async (request) =>
       games.get((request.params as {id: string}).id) ?? notFound(),
   )
+  app.get('/api/games/:id/positions/:turn', async (request) => {
+    const {id, turn} = request.params as {id: string; turn: string}
+    return games.position(id, Number(turn))
+  })
   app.delete('/api/games/:id', async (request, reply) => {
     const {id} = request.params as {id: string}
     if (!games.delete(id))
@@ -389,6 +393,19 @@ export function createApp(
   })
 
   app.get('/api/benchmarks', async () => benchmarks.list())
+  app.get('/api/benchmarks/events', async (request, reply) => {
+    reply.hijack()
+    const response = reply.raw
+    response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive'})
+    const send = () => response.write(`data: ${JSON.stringify(benchmarks.list())}\n\n`)
+    send()
+    const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 15_000)
+    benchmarks.events.on('changed', send)
+    request.raw.on('close', () => {
+      clearInterval(keepAlive)
+      benchmarks.events.off('changed', send)
+    })
+  })
   app.post('/api/benchmarks', async (request, reply) =>
     reply.code(201).send(await benchmarks.create(benchmarkSchema.parse(request.body))),
   )

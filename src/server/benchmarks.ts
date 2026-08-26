@@ -188,6 +188,7 @@ export class BenchmarkService {
     const deleted = this.store.deleteBenchmark(id)
     await this.notebooks.deleteSnapshot(id)
     this.events.emit(id, null)
+    this.events.emit('changed', id)
     return deleted
   }
 

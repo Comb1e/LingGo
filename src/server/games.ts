@@ -5,6 +5,7 @@ import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import type {
   Color,
   Game,
+  GamePosition,
   InGameReflection,
   LlmActionResult,
   Move,
@@ -83,6 +84,20 @@ export class GameService {
     return game ? this.withPending(game) : undefined
   }
 
+  position(id: string, turn: number): GamePosition {
+    const game = this.requireGame(id)
+    if (!Number.isInteger(turn) || turn < 0 || turn > game.moves.length)
+      throw new Error(`Turn must be between 0 and ${game.moves.length}`)
+    const state = replay(game.size, game.moves.slice(0, turn))
+    return {
+      gameId: id,
+      turn,
+      board: state.board,
+      toMove: state.toMove,
+      captures: state.captures,
+    }
+  }
+
   delete(id: string) {
     if (!this.store.getGame(id)) return false
     this.cancel(id)
@@ -132,8 +147,7 @@ export class GameService {
       moveCap: values.moveCap ?? values.size * values.size * 2,
       dead: [],
       approvals: [],
-      analysisEnabled:
-        values.shareAnalysisWithLlm || values.analysisEnabled,
+      analysisEnabled: values.shareAnalysisWithLlm || values.analysisEnabled,
       shareAnalysisWithLlm: values.shareAnalysisWithLlm,
       createdAt: now,
       updatedAt: now,
@@ -177,7 +191,11 @@ export class GameService {
       moveCap: 722,
       analysisEnabled: false,
     })
-    const llm = {type: 'llm' as const, name: input.profileName, profileId: input.profileId}
+    const llm = {
+      type: 'llm' as const,
+      name: input.profileName,
+      profileId: input.profileId,
+    }
     const kata = {type: 'katago' as const, name: 'KataGo'}
     game.black = input.llmColor === 'B' ? llm : kata
     game.white = input.llmColor === 'W' ? llm : kata
@@ -188,7 +206,12 @@ export class GameService {
     return this.commit(game)
   }
 
-  acceptAutomated(id: string, action: PlayerAction, llm?: LlmActionResult, forced = false) {
+  acceptAutomated(
+    id: string,
+    action: PlayerAction,
+    llm?: LlmActionResult,
+    forced = false,
+  ) {
     const saved = this.accept(this.requireGame(id), action, llm)
     if (forced) {
       const game = this.requireGame(id)
@@ -203,6 +226,7 @@ export class GameService {
     game.result = result
     game.status = 'finished'
     game.autoplay = false
+    game.pauseAfterMove = false
     game.error = undefined
     return this.commit(game)
   }
@@ -224,6 +248,7 @@ export class GameService {
     game.error = error
     game.providerErrors = [error]
     game.autoplay = false
+    game.pauseAfterMove = false
     return this.commit(game)
   }
 
@@ -231,6 +256,7 @@ export class GameService {
     const game = this.requireGame(id)
     if (!game.error) return this.withPending(game)
     game.error = undefined
+    game.pauseAfterMove = false
     if (game.status === 'paused') game.status = 'active'
     return this.commit(game)
   }
@@ -244,12 +270,30 @@ export class GameService {
       this.cancel(id)
       game.status = 'paused'
       game.autoplay = false
+      game.pauseAfterMove = false
       return this.commit(game)
+    }
+    if (command.type === 'step') {
+      if (game.benchmarkRunId)
+        throw new Error('Benchmark games are controlled by their benchmark run')
+      if (!['active', 'paused'].includes(game.status) || game.error)
+        throw new Error(
+          'Next move is available only during active play without an error',
+        )
+      if (this.seat(game).type !== 'llm')
+        throw new Error('The current seat is not controlled by a model')
+      game.status = 'active'
+      game.autoplay = true
+      game.pauseAfterMove = true
+      const saved = this.commit(game)
+      this.schedule(id)
+      return saved
     }
     if (command.type === 'resume' || command.type === 'retry') {
       game.status = 'active'
       game.error = undefined
       game.autoplay = true
+      game.pauseAfterMove = false
       const saved = this.commit(game)
       this.schedule(id)
       return saved
@@ -263,6 +307,7 @@ export class GameService {
       game.status = 'active'
       game.error = undefined
       game.autoplay = false
+      game.pauseAfterMove = false
       this.refreshPosition(game)
       return this.commit(game)
     }
@@ -285,6 +330,7 @@ export class GameService {
       game.approvals = []
       game.operatorConfirmationRequired = false
       game.autoplay = false
+      game.pauseAfterMove = false
       return this.commit(game)
     }
     if (command.type === 'approve-score') {
@@ -319,6 +365,7 @@ export class GameService {
       }
       game.status = 'active'
       game.error = undefined
+      game.pauseAfterMove = false
       const saved = this.commit(game)
       this.schedule(id)
       return saved
@@ -334,6 +381,7 @@ export class GameService {
       game.status = 'active'
       game.error = undefined
       game.autoplay = false
+      game.pauseAfterMove = false
       return this.accept(game, {
         action: 'pass',
         comment: 'Operator forced a pass.',
@@ -347,6 +395,7 @@ export class GameService {
       game.status = 'active'
       game.error = undefined
       game.autoplay = false
+      game.pauseAfterMove = false
       return this.accept(game, {
         action: 'resign',
         comment: 'Operator resigned this seat.',
@@ -453,6 +502,12 @@ export class GameService {
       game.autoplay = false
     }
 
+    if (game.pauseAfterMove) {
+      game.pauseAfterMove = false
+      game.autoplay = false
+      if (game.status === 'active') game.status = 'paused'
+    }
+
     const saved = this.commit(game)
     this.schedule(game.id)
     return saved
@@ -536,11 +591,13 @@ export class GameService {
               !shouldRetryProviderError(error) ||
               apiFailures >= MAX_PROVIDER_API_ATTEMPTS
             ) {
-              game.status = 'paused'
-              game.error = `LLM API request failed after ${apiFailures} ${apiFailures === 1 ? 'attempt' : 'attempts'}. The game has been paused. Last error: ${message}`
-              game.providerErrors = retryErrors
-              game.autoplay = false
-              this.commit(game)
+              const latest = this.requireGame(id)
+              latest.status = 'paused'
+              latest.error = `LLM API request failed after ${apiFailures} ${apiFailures === 1 ? 'attempt' : 'attempts'}. The game has been paused. Last error: ${message}`
+              latest.providerErrors = retryErrors
+              latest.autoplay = false
+              latest.pauseAfterMove = false
+              this.commit(latest)
               return
             }
             this.modelTurns.set(id, {
@@ -556,10 +613,12 @@ export class GameService {
           outputFailures += 1
           feedback = error instanceof Error ? error.message : 'Invalid action'
           if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS) {
-            game.status = 'error'
-            game.error = `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`
-            game.autoplay = false
-            this.commit(game)
+            const latest = this.requireGame(id)
+            latest.status = 'error'
+            latest.error = `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`
+            latest.autoplay = false
+            latest.pauseAfterMove = false
+            this.commit(latest)
             return
           }
         }
@@ -571,6 +630,7 @@ export class GameService {
           game.status = 'error'
           game.error = publicProviderError(error)
           game.autoplay = false
+          game.pauseAfterMove = false
           this.commit(game)
         }
       }

@@ -68,6 +68,99 @@ describe('game API', () => {
     expect(sgf.body).toContain('SZ[19]')
   })
 
+  it('replays immutable board positions and validates the turn', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/games',
+      payload: {
+        size: 9,
+        black: {type: 'human', name: 'Black'},
+        white: {type: 'human', name: 'White'},
+      },
+    })
+    let game = created.json()
+    for (const command of [
+      {type: 'play', coordinate: 'A1'},
+      {type: 'play', coordinate: 'B1'},
+      {type: 'play', coordinate: 'B2'},
+      {type: 'pass'},
+      {type: 'play', coordinate: 'C1'},
+    ]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/games/${game.id}/commands`,
+        payload: {expectedVersion: game.version, ...command},
+      })
+      expect(response.statusCode).toBe(200)
+      game = response.json()
+    }
+
+    const empty = await app.inject({
+      method: 'GET',
+      url: `/api/games/${game.id}/positions/0`,
+    })
+    expect(empty.json()).toMatchObject({
+      gameId: game.id,
+      turn: 0,
+      toMove: 'B',
+      captures: {B: 0, W: 0},
+    })
+    expect(
+      empty
+        .json()
+        .board.flat()
+        .every((stone: number) => stone === 0),
+    ).toBe(true)
+
+    const afterPass = await app.inject({
+      method: 'GET',
+      url: `/api/games/${game.id}/positions/4`,
+    })
+    expect(afterPass.json()).toMatchObject({turn: 4, toMove: 'B'})
+    const current = await app.inject({
+      method: 'GET',
+      url: `/api/games/${game.id}/positions/5`,
+    })
+    expect(current.json()).toMatchObject({
+      turn: 5,
+      toMove: 'W',
+      captures: {B: 1, W: 0},
+    })
+
+    for (const turn of ['-1', '6', '1.5', 'not-a-turn'])
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/games/${game.id}/positions/${turn}`,
+          })
+        ).statusCode,
+      ).toBe(400)
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/games/missing/positions/0',
+        })
+      ).statusCode,
+    ).toBe(404)
+
+    const undone = await app.inject({
+      method: 'POST',
+      url: `/api/games/${game.id}/commands`,
+      payload: {expectedVersion: game.version, type: 'undo'},
+    })
+    expect(undone.statusCode).toBe(200)
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/games/${game.id}/positions/5`,
+        })
+      ).statusCode,
+    ).toBe(400)
+  })
+
   it('changes LLM analysis sharing without changing the game version', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -88,7 +181,10 @@ describe('game API', () => {
       enabled: true,
       shareWithLlm: true,
     })
-    expect((await app.inject({method: 'GET', url: `/api/games/${game.id}`})).json().version).toBe(game.version)
+    expect(
+      (await app.inject({method: 'GET', url: `/api/games/${game.id}`})).json()
+        .version,
+    ).toBe(game.version)
   })
 
   it('enables analysis when a new game shares it with LLM players', async () => {
@@ -286,9 +382,7 @@ describe('game API', () => {
         connectionId,
         modelId: 'gpt-5.6-sol',
         temperature: 0.2,
-        requestOptions: [
-          {name: 'reasoning', content: '{"effort":"high"}'},
-        ],
+        requestOptions: [{name: 'reasoning', content: '{"effort":"high"}'}],
         stylePrompt: 'Prefer influence.',
       },
     })
@@ -298,9 +392,7 @@ describe('game API', () => {
       name: 'Edited player',
       modelId: 'gpt-5.6-sol',
       temperature: 0.2,
-      requestOptions: [
-        {name: 'reasoning', content: '{"effort":"high"}'},
-      ],
+      requestOptions: [{name: 'reasoning', content: '{"effort":"high"}'}],
       stylePrompt: 'Prefer influence.',
     })
   })
@@ -454,7 +546,8 @@ describe('game API', () => {
 
     expect(response.statusCode).toBe(409)
     expect(response.json()).toEqual({
-      error: 'This player profile already has a queued, running, or paused benchmark',
+      error:
+        'This player profile already has a queued, running, or paused benchmark',
     })
   })
 })

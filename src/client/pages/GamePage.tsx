@@ -30,7 +30,13 @@ import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
 import {isDeepSeekMove, normalizeReasoning} from '../../shared/reasoning'
-import type {Color, Game, GameAnalysis, Point} from '../../shared/types'
+import type {
+  Color,
+  Game,
+  GameAnalysis,
+  GamePosition,
+  Point,
+} from '../../shared/types'
 import {api} from '../api'
 import {Board} from '../Board'
 import {
@@ -47,6 +53,8 @@ export function GamePage() {
   const {t} = useTranslation()
   const queryClient = useQueryClient()
   const [commandError, setCommandError] = useState<unknown>()
+  const [reviewTurn, setReviewTurn] = useState<number | null>(null)
+  const previousMoveCount = useRef<number | undefined>(undefined)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState({
     blackName: '',
@@ -99,6 +107,9 @@ export function GamePage() {
     mutationFn: (command: Record<string, unknown>) => api.command(id, command),
     onSuccess: (game) => {
       queryClient.setQueryData(['game', id], game)
+      setReviewTurn((current) =>
+        current !== null && current > game.moves.length ? null : current,
+      )
       setCommandError(undefined)
     },
     onError: async (error) => {
@@ -128,6 +139,34 @@ export function GamePage() {
     },
   })
   const game = gameQuery.data
+  const activeReviewTurn =
+    reviewTurn !== null && game && reviewTurn <= game.moves.length
+      ? reviewTurn
+      : null
+  const positionQuery = useQuery({
+    queryKey: ['game-position', id, activeReviewTurn],
+    queryFn: () => api.gamePosition(id, activeReviewTurn!),
+    enabled: Boolean(id) && activeReviewTurn !== null,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+
+  useEffect(() => {
+    if (!game) return
+    if (
+      previousMoveCount.current !== undefined &&
+      game.moves.length < previousMoveCount.current
+    ) {
+      queryClient.removeQueries({
+        predicate: (query) =>
+          query.queryKey[0] === 'game-position' &&
+          query.queryKey[1] === id &&
+          typeof query.queryKey[2] === 'number' &&
+          query.queryKey[2] > game.moves.length,
+      })
+    }
+    previousMoveCount.current = game.moves.length
+  }, [game, id, queryClient])
 
   useEffect(() => {
     if (!id) return
@@ -140,6 +179,9 @@ export function GamePage() {
         return
       }
       queryClient.setQueryData(['game', id], next)
+      setReviewTurn((current) =>
+        current !== null && current > next.moves.length ? null : current,
+      )
       void queryClient.invalidateQueries({queryKey: ['games']})
     }
     return () => events.close()
@@ -166,7 +208,7 @@ export function GamePage() {
 
   const onPoint = useCallback(
     (point: Point) => {
-      if (!game) return
+      if (!game || activeReviewTurn !== null) return
       const coordinate = pointToCoordinate(point, game.size)
       if (game.status === 'scoring') send('toggle-dead', {coordinate})
       else if (
@@ -175,7 +217,7 @@ export function GamePage() {
       )
         send('play', {coordinate})
     },
-    [game, send],
+    [activeReviewTurn, game, send],
   )
 
   if (gameQuery.isLoading || !game)
@@ -185,7 +227,19 @@ export function GamePage() {
         <ErrorBanner error={gameQuery.error} />
       </div>
     )
-  const current = game.toMove === 'B' ? game.black : game.white
+  const historicalPosition =
+    activeReviewTurn !== null && positionQuery.data?.turn === activeReviewTurn
+      ? positionQuery.data
+      : undefined
+  const displayPosition: GamePosition = historicalPosition ?? {
+    gameId: game.id,
+    turn: game.moves.length,
+    board: game.board,
+    toMove: game.toMove,
+    captures: game.captures,
+  }
+  const reviewing = activeReviewTurn !== null
+  const current = displayPosition.toMove === 'B' ? game.black : game.white
   const usage = game.moves.reduce(
     (total, move) => ({
       calls: total.calls + (move.model ? 1 : 0),
@@ -193,7 +247,8 @@ export function GamePage() {
     }),
     {calls: 0, tokens: 0},
   )
-  const humanTurn = game.status === 'active' && current.type === 'human'
+  const humanTurn =
+    !reviewing && game.status === 'active' && current.type === 'human'
   const startEditing = () => {
     setEditDraft({
       blackName: game.black.name,
@@ -348,10 +403,74 @@ export function GamePage() {
               </small>
             </span>
             <b>
-              {game.captures.W} {t('captures')}
+              {displayPosition.captures.W} {t('captures')}
             </b>
           </div>
-          <Board game={game} onPoint={onPoint} />
+          <Board
+            game={game}
+            onPoint={onPoint}
+            board={displayPosition.board}
+            lastMove={
+              activeReviewTurn === null
+                ? game.moves.at(-1)
+                : game.moves[activeReviewTurn - 1]
+            }
+            dead={reviewing ? [] : game.dead}
+            busy={reviewing ? false : game.pending}
+            disabled={reviewing}
+          />
+          <div className="position-review" aria-label={t('boardReview')}>
+            <Button
+              className="icon-button"
+              title={t('previousBoardPosition')}
+              aria-label={t('previousBoardPosition')}
+              disabled={(activeReviewTurn ?? game.moves.length) === 0}
+              onClick={() =>
+                setReviewTurn(
+                  Math.max(0, (activeReviewTurn ?? game.moves.length) - 1),
+                )
+              }
+            >
+              <ChevronLeft />
+            </Button>
+            <strong>
+              {t('boardPositionCount', {
+                move: activeReviewTurn ?? game.moves.length,
+                latest: game.moves.length,
+              })}
+            </strong>
+            <Button
+              className="icon-button"
+              title={t('nextBoardPosition')}
+              aria-label={t('nextBoardPosition')}
+              disabled={activeReviewTurn === null}
+              onClick={() => {
+                if (activeReviewTurn === null) return
+                setReviewTurn(
+                  activeReviewTurn + 1 >= game.moves.length
+                    ? null
+                    : activeReviewTurn + 1,
+                )
+              }}
+            >
+              <ChevronRight />
+            </Button>
+            <Button
+              title={t('latestBoardPosition')}
+              aria-label={t('latestBoardPosition')}
+              disabled={activeReviewTurn === null}
+              onClick={() => setReviewTurn(null)}
+            >
+              <SkipForward />
+              {t('latestPosition')}
+            </Button>
+          </div>
+          {reviewing && positionQuery.isLoading && (
+            <span className="position-loading" role="status">
+              {t('loadingBoardPosition')}
+            </span>
+          )}
+          <ErrorBanner error={positionQuery.error} />
           <div className="player-strip black-player">
             <i className="stone black-stone" />
             <span>
@@ -365,7 +484,7 @@ export function GamePage() {
               </small>
             </span>
             <b>
-              {game.captures.B} {t('captures')}
+              {displayPosition.captures.B} {t('captures')}
             </b>
           </div>
           <div
@@ -376,7 +495,9 @@ export function GamePage() {
               moveCount={game.moves.length}
               busy={analysisMutation.isPending || backfillMutation.isPending}
               onToggle={(enabled) => analysisMutation.mutate(enabled)}
-              onShare={(shareWithLlm) => analysisMutation.mutate({shareWithLlm})}
+              onShare={(shareWithLlm) =>
+                analysisMutation.mutate({shareWithLlm})
+              }
               onAnalyze={() => backfillMutation.mutate()}
             />
             {game.benchmarkRunId && (
@@ -388,7 +509,15 @@ export function GamePage() {
         </section>
         <aside className="game-panel">
           <section className="turn-panel">
-            {game.pending ? (
+            {reviewing ? (
+              <>
+                <span className="eyebrow">{t('reviewingPosition')}</span>
+                <strong>
+                  {`${displayPosition.toMove === 'B' ? t('black') : t('white')} ${t('toMove')}`}
+                </strong>
+                <span>{current.name}</span>
+              </>
+            ) : game.pending ? (
               <>
                 <span className="eyebrow">
                   {game.benchmarkRunId
@@ -431,7 +560,7 @@ export function GamePage() {
               </>
             )}
           </section>
-          {game.status === 'scoring' && (
+          {!reviewing && game.status === 'scoring' && (
             <ScoringPanel game={game} send={send} />
           )}
           {game.error &&
@@ -441,6 +570,7 @@ export function GamePage() {
                 game={game}
                 profiles={profiles.data ?? []}
                 send={send}
+                disabled={reviewing}
               />
             )}
           <div className="game-controls">
@@ -464,18 +594,41 @@ export function GamePage() {
               </>
             )}
             {game.status === 'active' && game.autoplay && (
-              <Button onClick={() => send('pause')}>
+              <Button
+                onClick={() => send('pause')}
+                disabled={mutation.isPending}
+              >
                 <Pause />
                 {t('pause')}
               </Button>
             )}
             {game.status === 'paused' && !game.error && (
-              <Button className="primary" onClick={() => send('resume')}>
+              <Button
+                className="primary"
+                onClick={() => send('resume')}
+                disabled={mutation.isPending}
+              >
                 <Play />
                 {t('resume')}
               </Button>
             )}
+            {!game.benchmarkRunId &&
+              !game.error &&
+              ['active', 'paused'].includes(game.status) &&
+              (game.toMove === 'B' ? game.black : game.white).type ===
+                'llm' && (
+                <Button
+                  onClick={() => send('step')}
+                  disabled={
+                    reviewing || mutation.isPending || game.pauseAfterMove
+                  }
+                >
+                  <SkipForward />
+                  {t('nextMoveAndPause')}
+                </Button>
+              )}
             {['active', 'paused', 'error'].includes(game.status) &&
+              !reviewing &&
               game.moves.length > 0 && (
                 <Button
                   className="icon-button"
@@ -631,7 +784,8 @@ function WinRatePanel({
   const [dragCursorX, setDragCursorX] = useState<number>()
   const dragState = useRef<ChartDragState>({status: 'idle'})
   const viewportRef = useRef<HTMLDivElement>(null)
-  const positions = analysis?.positions.filter((position) => position.turn >= 1) ?? []
+  const positions =
+    analysis?.positions.filter((position) => position.turn >= 1) ?? []
   const baseWidth = 600
   const minimumTurnSpacing = 14
   const width = Math.max(baseWidth, moveCount * minimumTurnSpacing + 44)
@@ -1085,10 +1239,12 @@ function RecoveryPanel({
   game,
   profiles,
   send,
+  disabled = false,
 }: {
   game: Game
   profiles: Array<{id: string; name: string}>
   send: (type: string, extra?: Record<string, unknown>) => void
+  disabled?: boolean
 }) {
   const {t} = useTranslation()
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? '')
@@ -1107,15 +1263,19 @@ function RecoveryPanel({
       ) : (
         <>
           <div className="recovery-actions">
-            <Button className="primary" onClick={() => send('retry')}>
+            <Button
+              className="primary"
+              disabled={disabled}
+              onClick={() => send('retry')}
+            >
               <Play />
               {t('retry')}
             </Button>
-            <Button onClick={() => send('force-pass')}>
+            <Button disabled={disabled} onClick={() => send('force-pass')}>
               <SkipForward />
               {t('forcePass')}
             </Button>
-            <Button onClick={() => send('resign')}>
+            <Button disabled={disabled} onClick={() => send('resign')}>
               <XCircle />
               {t('resign')}
             </Button>
@@ -1133,6 +1293,7 @@ function RecoveryPanel({
                 ))}
               </select>
               <Button
+                disabled={disabled}
                 onClick={() =>
                   send('change-profile', {color: currentColor, profileId})
                 }
