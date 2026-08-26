@@ -294,7 +294,7 @@ export class Store {
     return (
       this.db
         .prepare(
-          'SELECT id, name, connection_id, model_id, temperature, style_prompt FROM player_profiles ORDER BY created_at',
+          'SELECT id, name, connection_id, model_id, temperature, request_options_json, style_prompt FROM player_profiles ORDER BY created_at',
         )
         .all() as Array<any>
     ).map(mapProfile)
@@ -303,7 +303,7 @@ export class Store {
   getProfile(id: string): PlayerProfile | undefined {
     const row = this.db
       .prepare(
-        'SELECT id, name, connection_id, model_id, temperature, style_prompt FROM player_profiles WHERE id = ?',
+        'SELECT id, name, connection_id, model_id, temperature, request_options_json, style_prompt FROM player_profiles WHERE id = ?',
       )
       .get(id) as any
     return row ? mapProfile(row) : undefined
@@ -313,10 +313,11 @@ export class Store {
     const now = new Date().toISOString()
     this.db
       .prepare(
-        `INSERT INTO player_profiles (id, name, connection_id, model_id, temperature, style_prompt, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO player_profiles (id, name, connection_id, model_id, temperature, request_options_json, style_prompt, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, connection_id = excluded.connection_id,
-         model_id = excluded.model_id, temperature = excluded.temperature, style_prompt = excluded.style_prompt, updated_at = excluded.updated_at`,
+         model_id = excluded.model_id, temperature = excluded.temperature, request_options_json = excluded.request_options_json,
+         style_prompt = excluded.style_prompt, updated_at = excluded.updated_at`,
       )
       .run(
         profile.id,
@@ -324,6 +325,9 @@ export class Store {
         profile.connectionId,
         profile.modelId,
         profile.temperature,
+        profile.requestOptions?.length
+          ? JSON.stringify(profile.requestOptions)
+          : null,
         profile.stylePrompt ?? null,
         now,
         now,
@@ -368,6 +372,9 @@ function mapProfile(row: any): PlayerProfile {
     connectionId: row.connection_id,
     modelId: row.model_id,
     temperature: row.temperature,
+    requestOptions: row.request_options_json
+      ? JSON.parse(row.request_options_json)
+      : undefined,
     stylePrompt: row.style_prompt ?? undefined,
   }
 }

@@ -739,6 +739,26 @@ svg {
   margin: -5px 0 0;
   line-height: 1.5;
 }
+.request-options-field > .button {
+  align-self: flex-start;
+}
+.request-option-list {
+  display: grid;
+  gap: 8px;
+}
+.request-option-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1.3fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.request-option-row label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .game-page {
   width: min(1400px, 100%);
 }
@@ -1541,6 +1561,12 @@ svg {
     flex: 1;
     justify-content: center;
     padding: 7px;
+  }
+  .request-option-row {
+    grid-template-columns: 1fr auto;
+  }
+  .request-option-row label:first-child {
+    grid-column: 1 / -1;
   }
   .seat-grid {
     grid-template-columns: 1fr;

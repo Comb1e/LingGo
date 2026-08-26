@@ -19,8 +19,27 @@ describe('database migrations', () => {
       {version: 3},
       {version: 4},
       {version: 5},
+      {version: 6},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
+  })
+
+  it('round-trips custom profile request options', () => {
+    store = new Store(':memory:')
+    store.saveProfile({
+      id: 'custom-profile',
+      name: 'Custom profile',
+      connectionId: 'builtin-fake',
+      modelId: 'test-model',
+      temperature: 0.5,
+      requestOptions: [
+        {name: 'reasoning', content: '{"effort":"high"}'},
+      ],
+    })
+
+    expect(store.getProfile('custom-profile')?.requestOptions).toEqual([
+      {name: 'reasoning', content: '{"effort":"high"}'},
+    ])
   })
 
   it('repairs cached White-to-play analysis from the old perspective conversion', () => {

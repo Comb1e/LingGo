@@ -151,6 +151,16 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+  testProfile: (input: Record<string, unknown>) =>
+    request<{
+      ok: true
+      text: string
+      latencyMs: number
+      model: string
+    }>('/api/profiles/test', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   deleteProfile: (id: string) =>
     request<{ok: true}>(`/api/profiles/${id}`, {method: 'DELETE'}),
   profileNotebook: (id: string) => requestText(`/api/profiles/${id}/notebook.md`),

@@ -1,8 +1,20 @@
 import {useQuery, useQueryClient} from '@tanstack/react-query'
-import {Activity, BookOpen, Download, KeyRound, Pencil, Save, Trash2, X} from 'lucide-react'
+import {
+  Activity,
+  BookOpen,
+  Download,
+  FlaskConical,
+  KeyRound,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  X,
+} from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
+import type {RequestOption} from '../../shared/types'
 import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader} from '../components'
 import {Markdown} from '../Markdown'
@@ -27,8 +39,11 @@ export function SettingsPage() {
   const [connectionId, setConnectionId] = useState('builtin-fake')
   const [modelId, setModelId] = useState('')
   const [temperature, setTemperature] = useState(0.7)
+  const [requestOptions, setRequestOptions] = useState<RequestOption[]>([])
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
+  const [profileTestBusy, setProfileTestBusy] = useState(false)
+  const [profileTestResult, setProfileTestResult] = useState('')
   const [kataDraft, setKataDraft] = useState({
     executablePath: '',
     modelPath: '',
@@ -64,7 +79,9 @@ export function SettingsPage() {
     setProfileName('')
     setModelId('')
     setTemperature(0.7)
+    setRequestOptions([])
     setStylePrompt('')
+    setProfileTestResult('')
   }
 
   const saveConnection = async (event: FormEvent) => {
@@ -98,6 +115,7 @@ export function SettingsPage() {
         connectionId,
         modelId,
         temperature,
+        requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       }
       if (editingProfileId) await api.updateProfile(editingProfileId, input)
@@ -128,9 +146,49 @@ export function SettingsPage() {
     setConnectionId(item.connectionId)
     setModelId(item.modelId)
     setTemperature(item.temperature)
+    setRequestOptions(item.requestOptions?.map((option) => ({...option})) ?? [])
     setStylePrompt(item.stylePrompt ?? '')
     setError(undefined)
     setSaved('')
+  }
+  const updateRequestOption = (
+    index: number,
+    field: keyof RequestOption,
+    value: string,
+  ) => {
+    setRequestOptions((current) =>
+      current.map((option, optionIndex) =>
+        optionIndex === index ? {...option, [field]: value} : option,
+      ),
+    )
+    setProfileTestResult('')
+  }
+  const testProfile = async () => {
+    setError(undefined)
+    setSaved('')
+    setProfileTestResult('')
+    setProfileTestBusy(true)
+    try {
+      const result = await api.testProfile({
+        name: profileName.trim() || 'Profile test',
+        connectionId,
+        modelId,
+        temperature,
+        requestOptions: requestOptions.length ? requestOptions : undefined,
+        stylePrompt: stylePrompt || undefined,
+      })
+      setProfileTestResult(
+        t('profileTestSucceeded', {
+          model: result.model,
+          latency: result.latencyMs,
+          text: result.text.trim().slice(0, 160),
+        }),
+      )
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setProfileTestBusy(false)
+    }
   }
   const deleteConnection = async (id: string) => {
     if (!window.confirm(t('deleteConnectionConfirm'))) return
@@ -406,6 +464,70 @@ export function SettingsPage() {
                   onChange={(event) => setModelId(event.target.value)}
                 />
               </label>
+              <div className="field request-options-field">
+                <span>{t('requestOptions')}</span>
+                <small className="field-note">{t('requestOptionsNotice')}</small>
+                <div className="request-option-list">
+                  {requestOptions.map((option, index) => (
+                    <div className="request-option-row" key={index}>
+                      <label>
+                        <span>{t('requestOptionName')}</span>
+                        <input
+                          required
+                          placeholder="reasoning"
+                          value={option.name}
+                          onChange={(event) =>
+                            updateRequestOption(index, 'name', event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t('requestOptionContent')}</span>
+                        <input
+                          required
+                          placeholder={'{"effort":"high"}'}
+                          value={option.content}
+                          onChange={(event) =>
+                            updateRequestOption(
+                              index,
+                              'content',
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <Button
+                        type="button"
+                        className="icon-button danger-quiet compact-icon"
+                        title={t('removeRequestOption')}
+                        aria-label={`${t('removeRequestOption')} ${index + 1}`}
+                        onClick={() => {
+                          setRequestOptions((current) =>
+                            current.filter(
+                              (_option, optionIndex) => optionIndex !== index,
+                            ),
+                          )
+                          setProfileTestResult('')
+                        }}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    setRequestOptions((current) => [
+                      ...current,
+                      {name: '', content: ''},
+                    ])
+                  }
+                >
+                  <Plus />
+                  {t('addRequestOption')}
+                </Button>
+              </div>
               <label className="field">
                 <span>
                   {t('temperature')} · {temperature.toFixed(1)}
@@ -434,11 +556,22 @@ export function SettingsPage() {
                   <Save />
                   {t(editingProfileId ? 'updateProfile' : 'saveProfile')}
                 </Button>
+                <Button
+                  type="button"
+                  disabled={profileTestBusy || !modelId.trim()}
+                  onClick={() => void testProfile()}
+                >
+                  <FlaskConical />
+                  {t('testProfile')}
+                </Button>
                 {editingProfileId && (
                   <Button type="button" onClick={resetProfileForm}>
                     <X />
                     {t('cancel')}
                   </Button>
+                )}
+                {profileTestResult && (
+                  <span className="test-result">{profileTestResult}</span>
                 )}
               </div>
             </form>

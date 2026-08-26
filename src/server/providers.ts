@@ -6,6 +6,7 @@ import {createProviderRegistry, generateText, type LanguageModel} from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import {normalizeReasoning} from '../shared/reasoning'
+import {mergeRequestOptions} from '../shared/requestOptions'
 import {
   type BoardSize,
   type Color,
@@ -222,10 +223,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
 
   private createModel(): LanguageModel {
     const id = this.profile.modelId
+    const customFetch = this.customRequestFetch()
     if (this.connection.kind === 'openai') {
       const provider = createOpenAI({
         apiKey: this.key,
         baseURL: this.connection.baseUrl,
+        fetch: customFetch,
       })
       // OpenAIProvider.languageModel maps to the Responses API in the current provider.
       const registry = createProviderRegistry({openai: provider})
@@ -236,6 +239,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         anthropic: createAnthropic({
           apiKey: this.key,
           baseURL: this.connection.baseUrl,
+          fetch: customFetch,
         }),
       })
       return registry.languageModel(`anthropic:${id}`)
@@ -245,6 +249,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         google: createGoogle({
           apiKey: this.key,
           baseURL: this.connection.baseUrl,
+          fetch: customFetch,
         }),
       })
       return registry.languageModel(`google:${id}`)
@@ -256,6 +261,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         name: this.connection.id,
         apiKey: this.key,
         baseURL: this.connection.baseUrl,
+        fetch: customFetch,
       })
       const registry = createProviderRegistry({compatible})
       return registry.languageModel(`compatible:${id}`)
@@ -268,6 +274,23 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       isOpenAiReasoningModel(this.profile.modelId)
       ? undefined
       : this.profile.temperature
+  }
+
+  private customRequestFetch() {
+    if (!this.profile.requestOptions?.length) return undefined
+    const requestOptions = this.profile.requestOptions
+
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body !== 'string')
+        throw new Error('Provider request body is not JSON text')
+      const providerBody = JSON.parse(init.body)
+      if (!providerBody || Array.isArray(providerBody) || typeof providerBody !== 'object')
+        throw new Error('Provider request body is not a JSON object')
+      return globalThis.fetch(input, {
+        ...init,
+        body: JSON.stringify(mergeRequestOptions(providerBody, requestOptions)),
+      })
+    }
   }
 }
 

@@ -271,6 +271,9 @@ describe('game API', () => {
         connectionId,
         modelId: 'gpt-5.6-sol',
         temperature: 0.2,
+        requestOptions: [
+          {name: 'reasoning', content: '{"effort":"high"}'},
+        ],
         stylePrompt: 'Prefer influence.',
       },
     })
@@ -280,8 +283,44 @@ describe('game API', () => {
       name: 'Edited player',
       modelId: 'gpt-5.6-sol',
       temperature: 0.2,
+      requestOptions: [
+        {name: 'reasoning', content: '{"effort":"high"}'},
+      ],
       stylePrompt: 'Prefer influence.',
     })
+  })
+
+  it('tests an unsaved profile and validates request option content', async () => {
+    const tested = await app.inject({
+      method: 'POST',
+      url: '/api/profiles/test',
+      payload: {
+        name: 'Test profile',
+        connectionId: 'builtin-fake',
+        modelId: 'deterministic-v1',
+        temperature: 0,
+        requestOptions: [{name: 'reasoning', content: '{"effort":"high"}'}],
+      },
+    })
+    expect(tested.statusCode).toBe(200)
+    expect(tested.json()).toMatchObject({
+      ok: true,
+      model: 'deterministic-v1',
+    })
+
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/profiles/test',
+      payload: {
+        name: 'Invalid profile',
+        connectionId: 'builtin-fake',
+        modelId: 'deterministic-v1',
+        temperature: 0,
+        requestOptions: [{name: 'reasoning', content: '{invalid'}],
+      },
+    })
+    expect(invalid.statusCode).toBe(400)
+    expect(invalid.json().error).toContain('Invalid JSON value')
   })
 
   it('deletes profiles and cascades connection deletion safely', async () => {

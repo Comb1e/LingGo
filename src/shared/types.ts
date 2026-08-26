@@ -39,12 +39,18 @@ export interface ProviderConnection {
   hasSessionKey?: boolean
 }
 
+export interface RequestOption {
+  name: string
+  content: string
+}
+
 export interface PlayerProfile {
   id: string
   name: string
   connectionId: string
   modelId: string
   temperature: number
+  requestOptions?: RequestOption[]
   stylePrompt?: string
 }
 

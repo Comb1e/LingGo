@@ -199,6 +199,40 @@ test('restores a browser API key after server memory and session storage are cle
   await expect(connectionRow).toHaveCount(0)
 })
 
+test('adds, tests, and saves custom profile request options', async ({
+  page,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const profileName = `Request options ${suffix}`
+  await page.goto('/settings')
+  await page.getByLabel('Profile name').fill(profileName)
+  await page.getByLabel('Model ID').fill('deterministic-v1')
+  await page.getByRole('button', {name: 'Add request option'}).click()
+  await page.getByLabel('Field name').fill('reasoning')
+  await page.getByLabel('Content').fill('{"effort":"high"}')
+
+  await page.getByRole('button', {name: 'Test profile'}).click()
+  await expect(page.getByText(/deterministic-v1 replied in \d+ ms/)).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('request-options.png'),
+    fullPage: true,
+  })
+
+  await page.getByRole('button', {name: 'Save profile'}).click()
+  const profileRow = page
+    .locator('.existing-row')
+    .filter({hasText: profileName})
+  await expect(profileRow).toBeVisible()
+
+  await profileRow.getByRole('button', {name: `Edit ${profileName}`}).click()
+  await expect(page.getByLabel('Field name')).toHaveValue('reasoning')
+  await expect(page.getByLabel('Content')).toHaveValue('{"effort":"high"}')
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await profileRow.getByRole('button', {name: `Delete ${profileName}`}).click()
+  await expect(profileRow).toHaveCount(0)
+})
+
 test('expands saved model reasoning under LLM commentary', async ({
   page,
   request,

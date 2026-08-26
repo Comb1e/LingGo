@@ -224,6 +224,12 @@ describe('provider normalization', () => {
           connectionId: `custom-${kind}`,
           modelId: kind === 'openai' ? 'gpt-5.6-sol' : 'test-model',
           temperature: 0,
+          requestOptions: [
+            {name: 'linggo_test', content: '{"enabled":true}'},
+            ...(kind === 'openai'
+              ? [{name: 'reasoning', content: '{"effort":"high"}'}]
+              : []),
+          ],
         },
         'test-key',
       )
@@ -236,8 +242,9 @@ describe('provider normalization', () => {
       expect(requestBody).not.toContain('go_action')
       expect(requestBody).not.toContain('json_schema')
       const body = JSON.parse(requestBody)
+      expect(body.linggo_test).toEqual({enabled: true})
       if (kind === 'openai') {
-        expect(body.reasoning).toEqual({effort: 'medium', summary: 'detailed'})
+        expect(body.reasoning).toEqual({effort: 'high', summary: 'detailed'})
         expect(body).not.toHaveProperty('temperature')
       } else if (kind === 'anthropic') {
         expect(body.thinking).toBeTruthy()

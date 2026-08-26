@@ -4,6 +4,7 @@ import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {z, ZodError} from 'zod'
 import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
+import {requestOptionsBody} from '../shared/requestOptions'
 import {
   newGameSchema,
   playerActionSchema,
@@ -16,6 +17,7 @@ import {DeterministicKataGo, KataGoEngine, type KataGoAnalyzer} from './katago'
 import {BenchmarkService} from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
+import {createPlayerAdapter} from './providers'
 
 const connectionSchema = z
   .object({
@@ -36,14 +38,36 @@ const connectionSchema = z
     }
   })
 
-const profileSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().min(1),
-  connectionId: z.string().min(1),
-  modelId: z.string().min(1),
-  temperature: z.number().min(0).max(2).default(0.7),
-  stylePrompt: z.string().max(4000).optional(),
-})
+const profileSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z.string().min(1),
+    connectionId: z.string().min(1),
+    modelId: z.string().min(1),
+    temperature: z.number().min(0).max(2).default(0.7),
+    requestOptions: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1).max(100),
+          content: z.string().max(20_000),
+        }),
+      )
+      .max(20)
+      .optional(),
+    stylePrompt: z.string().max(4000).optional(),
+  })
+  .superRefine((profile, context) => {
+    try {
+      requestOptionsBody(profile.requestOptions)
+    } catch (error) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requestOptions'],
+        message:
+          error instanceof Error ? error.message : 'Invalid request options',
+      })
+    }
+  })
 
 const gameEditSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
@@ -298,6 +322,23 @@ export function createApp(
   })
 
   app.get('/api/profiles', async () => store.listProfiles())
+  app.post('/api/profiles/test', async (request) => {
+    const input = profileSchema.parse(request.body)
+    const connection = store.getConnection(input.connectionId)
+    if (!connection) throw new Error('Provider connection not found')
+    const adapter = createPlayerAdapter(
+      connection,
+      {...input, id: 'profile-test'},
+      games.vault,
+    )
+    if (!adapter.requestText)
+      throw new Error('This provider does not support profile tests')
+    const result = await adapter.requestText(
+      'Reply with exactly: OK',
+      AbortSignal.timeout(30_000),
+    )
+    return {ok: true, ...result}
+  })
   app.get('/api/profiles/:id/notebook.md', async (request, reply) => {
     const {id} = request.params as {id: string}
     if (!store.getProfile(id)) return reply.code(404).send({error: 'Player profile not found'})
