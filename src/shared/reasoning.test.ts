@@ -1,5 +1,9 @@
 import {describe, expect, it} from 'vitest'
-import {isDeepSeekMove, normalizeReasoning} from './reasoning'
+import {
+  isDeepSeekMove,
+  normalizeReasoning,
+  supportsDeepSeekReasoningControl,
+} from './reasoning'
 
 describe('reasoning formatting', () => {
   it('separates adjacent OpenAI bold reasoning summaries', () => {
@@ -30,5 +34,13 @@ describe('reasoning formatting', () => {
         providerKind: 'deepseek',
       }),
     ).toBe(true)
+  })
+
+  it('identifies DeepSeek models with a reasoning toggle', () => {
+    expect(supportsDeepSeekReasoningControl('deepseek-v4-flash')).toBe(true)
+    expect(supportsDeepSeekReasoningControl(' DEEPSEEK-V4-PRO ')).toBe(true)
+    expect(supportsDeepSeekReasoningControl('deepseek-chat')).toBe(false)
+    expect(supportsDeepSeekReasoningControl('deepseek-reasoner')).toBe(false)
+    expect(supportsDeepSeekReasoningControl('custom-model')).toBe(false)
   })
 })

@@ -226,7 +226,12 @@ describe('provider normalization', () => {
           id: `profile-${kind}`,
           name: 'Test profile',
           connectionId: `custom-${kind}`,
-          modelId: kind === 'openai' ? 'gpt-5.6-sol' : 'test-model',
+          modelId:
+            kind === 'openai'
+              ? 'gpt-5.6-sol'
+              : kind === 'deepseek'
+                ? 'deepseek-v4-pro'
+                : 'test-model',
           temperature: 0,
           requestOptions: [
             {name: 'linggo_test', content: '{"enabled":true}'},
@@ -355,7 +360,7 @@ describe('provider normalization', () => {
         id: 'deepseek-profile',
         name: 'DeepSeek player',
         connectionId: 'deepseek',
-        modelId: 'deepseek-chat',
+        modelId: 'deepseek-v4-pro',
         temperature: 0,
         reasoningEnabled: false,
         requestOptions: [
@@ -372,6 +377,42 @@ describe('provider normalization', () => {
 
     const body = JSON.parse(requestBody)
     expect(body.thinking).toEqual({type: 'disabled'})
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('omits reasoning controls for unsupported DeepSeek models', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {status: 500})
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        kind: 'deepseek',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'legacy-deepseek-profile',
+        name: 'Legacy DeepSeek player',
+        connectionId: 'deepseek',
+        modelId: 'deepseek-chat',
+        temperature: 0,
+        reasoningEnabled: false,
+      },
+      'test-key',
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow('test stop')
+
+    const body = JSON.parse(requestBody)
+    expect(body).not.toHaveProperty('thinking')
     expect(body).not.toHaveProperty('reasoning_effort')
   })
 

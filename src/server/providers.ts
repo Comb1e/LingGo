@@ -11,7 +11,10 @@ import {
 } from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
-import {normalizeReasoning} from '../shared/reasoning'
+import {
+  normalizeReasoning,
+  supportsDeepSeekReasoningControl,
+} from '../shared/reasoning'
 import {mergeRequestOptions} from '../shared/requestOptions'
 import {
   type BoardSize,
@@ -404,14 +407,16 @@ async function deepSeekStreamedTextResult(options: {
     {
       model: options.modelId,
       messages: [{role: 'user', content: options.prompt}],
-      reasoning_effort: 'high',
       stream: true,
       stream_options: {include_usage: true},
     },
     options.requestOptions,
   )
-  body.thinking = {type: options.reasoningEnabled ? 'enabled' : 'disabled'}
-  if (!options.reasoningEnabled) delete body.reasoning_effort
+  if (supportsDeepSeekReasoningControl(options.modelId)) {
+    body.thinking = {type: options.reasoningEnabled ? 'enabled' : 'disabled'}
+    if (options.reasoningEnabled) body.reasoning_effort ??= 'high'
+    else delete body.reasoning_effort
+  }
 
   try {
     const response = await globalThis.fetch(deepSeekChatCompletionsUrl(options.baseUrl), {

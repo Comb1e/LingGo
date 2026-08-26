@@ -330,6 +330,10 @@ test('saves disabled reasoning for a DeepSeek profile', async ({
     .nth(1)
     .selectOption(connection.id)
   await page.getByLabel('Model ID').fill('deepseek-chat')
+  await expect(
+    page.getByRole('checkbox', {name: 'DeepSeek reasoning', exact: true}),
+  ).toHaveCount(0)
+  await page.getByLabel('Model ID').fill('deepseek-v4-pro')
   const reasoning = page.getByRole('checkbox', {
     name: 'DeepSeek reasoning',
     exact: true,

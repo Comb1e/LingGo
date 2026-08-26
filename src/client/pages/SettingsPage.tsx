@@ -14,6 +14,7 @@ import {
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
+import {supportsDeepSeekReasoningControl} from '../../shared/reasoning'
 import type {RequestOption} from '../../shared/types'
 import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader} from '../components'
@@ -475,20 +476,21 @@ export function SettingsPage() {
                   onChange={(event) => setModelId(event.target.value)}
                 />
               </label>
-              {selectedConnection?.kind === 'deepseek' && (
-                <label className="switch-field">
-                  <input
-                    type="checkbox"
-                    checked={reasoningEnabled}
-                    onChange={(event) => {
-                      setReasoningEnabled(event.target.checked)
-                      setProfileTestResult('')
-                    }}
-                  />
-                  <span className="switch" />
-                  <span>{t('deepSeekReasoning')}</span>
-                </label>
-              )}
+              {selectedConnection?.kind === 'deepseek' &&
+                supportsDeepSeekReasoningControl(modelId) && (
+                  <label className="switch-field">
+                    <input
+                      type="checkbox"
+                      checked={reasoningEnabled}
+                      onChange={(event) => {
+                        setReasoningEnabled(event.target.checked)
+                        setProfileTestResult('')
+                      }}
+                    />
+                    <span className="switch" />
+                    <span>{t('deepSeekReasoning')}</span>
+                  </label>
+                )}
               <div className="field request-options-field">
                 <span>{t('requestOptions')}</span>
                 <small className="field-note">{t('requestOptionsNotice')}</small>

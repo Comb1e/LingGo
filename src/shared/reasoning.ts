@@ -1,5 +1,10 @@
 import type {Move} from './types'
 
+const deepSeekReasoningControlModels = new Set([
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+])
+
 const sentenceSegmenter = new Intl.Segmenter(undefined, {
   granularity: 'sentence',
 })
@@ -27,4 +32,8 @@ export function isDeepSeekMove(move: Move) {
     move.providerKind === 'deepseek' ||
     (!move.providerKind && move.model?.toLowerCase().startsWith('deepseek'))
   )
+}
+
+export function supportsDeepSeekReasoningControl(modelId: string) {
+  return deepSeekReasoningControlModels.has(modelId.trim().toLowerCase())
 }
