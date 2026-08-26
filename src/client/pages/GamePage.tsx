@@ -27,7 +27,7 @@ import {
   useState,
 } from 'react'
 import {useTranslation} from 'react-i18next'
-import {useNavigate, useParams} from 'react-router-dom'
+import {Link, useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
 import {normalizeReasoning} from '../../shared/reasoning'
 import type {Color, Game, GameAnalysis, Point} from '../../shared/types'
@@ -388,7 +388,36 @@ export function GamePage() {
         </section>
         <aside className="game-panel">
           <section className="turn-panel">
-            {game.result ? (
+            {game.pending ? (
+              <>
+                <span className="eyebrow">
+                  {game.benchmarkRunId
+                    ? t('benchmarkProcessing')
+                    : t('waiting')}
+                </span>
+                <strong>{current.name}</strong>
+                <span className="thinking-line">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                {game.modelTurn && (
+                  <span className="model-turn-progress" role="status">
+                    {t('modelRequestAttempt', {
+                      attempt: game.modelTurn.attempt,
+                      maxAttempts: game.modelTurn.maxAttempts,
+                    })}
+                    {game.modelTurn.phase === 'retrying' && (
+                      <small>
+                        {t('modelRequestRetrying', {
+                          error: game.modelTurn.lastError,
+                        })}
+                      </small>
+                    )}
+                  </span>
+                )}
+              </>
+            ) : game.result ? (
               <>
                 <span className="eyebrow">{t('result')}</span>
                 <strong className="result-text">{game.result}</strong>
@@ -396,48 +425,24 @@ export function GamePage() {
             ) : (
               <>
                 <span className="eyebrow">
-                  {game.pending
-                    ? t('waiting')
-                    : `${game.toMove === 'B' ? t('black') : t('white')} ${t('toMove')}`}
+                  {`${game.toMove === 'B' ? t('black') : t('white')} ${t('toMove')}`}
                 </span>
                 <strong>{current.name}</strong>
-                {game.pending && (
-                  <>
-                    <span className="thinking-line">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    {game.modelTurn && (
-                      <span className="model-turn-progress" role="status">
-                        {t('modelRequestAttempt', {
-                          attempt: game.modelTurn.attempt,
-                          maxAttempts: game.modelTurn.maxAttempts,
-                        })}
-                        {game.modelTurn.phase === 'retrying' && (
-                          <small>
-                            {t('modelRequestRetrying', {
-                              error: game.modelTurn.lastError,
-                            })}
-                          </small>
-                        )}
-                      </span>
-                    )}
-                  </>
-                )}
               </>
             )}
           </section>
           {game.status === 'scoring' && (
             <ScoringPanel game={game} send={send} />
           )}
-          {game.error && ['paused', 'error'].includes(game.status) && (
-            <RecoveryPanel
-              game={game}
-              profiles={profiles.data ?? []}
-              send={send}
-            />
-          )}
+          {game.error &&
+            (game.benchmarkRunId ||
+              ['paused', 'error'].includes(game.status)) && (
+              <RecoveryPanel
+                game={game}
+                profiles={profiles.data ?? []}
+                send={send}
+              />
+            )}
           <div className="game-controls">
             {humanTurn && (
               <>
@@ -1058,40 +1063,52 @@ function RecoveryPanel({
   return (
     <section className="recovery-panel">
       <p>{game.error}</p>
-      <div className="recovery-actions">
-        <Button className="primary" onClick={() => send('retry')}>
+      {game.benchmarkRunId ? (
+        <Link
+          className="button primary"
+          to={`/benchmarks/${game.benchmarkRunId}`}
+        >
           <Play />
-          {t('retry')}
-        </Button>
-        <Button onClick={() => send('force-pass')}>
-          <SkipForward />
-          {t('forcePass')}
-        </Button>
-        <Button onClick={() => send('resign')}>
-          <XCircle />
-          {t('resign')}
-        </Button>
-      </div>
-      {profiles.length > 0 && (
-        <div className="profile-switch">
-          <select
-            value={profileId}
-            onChange={(event) => setProfileId(event.target.value)}
-          >
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-          <Button
-            onClick={() =>
-              send('change-profile', {color: currentColor, profileId})
-            }
-          >
-            {t('profile')}
-          </Button>
-        </div>
+          {t('openBenchmark')}
+        </Link>
+      ) : (
+        <>
+          <div className="recovery-actions">
+            <Button className="primary" onClick={() => send('retry')}>
+              <Play />
+              {t('retry')}
+            </Button>
+            <Button onClick={() => send('force-pass')}>
+              <SkipForward />
+              {t('forcePass')}
+            </Button>
+            <Button onClick={() => send('resign')}>
+              <XCircle />
+              {t('resign')}
+            </Button>
+          </div>
+          {profiles.length > 0 && (
+            <div className="profile-switch">
+              <select
+                value={profileId}
+                onChange={(event) => setProfileId(event.target.value)}
+              >
+                {profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                onClick={() =>
+                  send('change-profile', {color: currentColor, profileId})
+                }
+              >
+                {t('profile')}
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </section>
   )

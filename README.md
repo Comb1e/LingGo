@@ -4,7 +4,7 @@ LingGo is a bilingual localhost Go workspace where either seat can be human-cont
 
 ## Requirements
 
-- Node.js 24 or newer
+- Node.js 24.14 or newer
 - pnpm 11
 
 ## Run locally
@@ -68,7 +68,18 @@ The built-in deterministic local profile requires no credentials and is useful f
 
 Each model prompt contains the Go rules, the profile's optional style prompt, a single-move instruction, the exact `{"move":[column,row],"reason":"..."}` response schema, and the current board and move list. Array coordinates are zero-based from the top-left; `[-1,-1]` means pass and `[-2,-2]` means resign.
 
-For a manual provider smoke test, create a connection, enter a session key, create a profile with an available model ID, then start a 9x9 human-vs-model game. Confirm that the model produces one legal move, its comment appears when enabled, and usage is added once. Repeat for each configured provider. Network/provider errors intentionally pause without paid retries.
+For a manual provider smoke test, create a connection, enter a session key, create a profile with an available model ID, then start a 9x9 human-vs-model game. Confirm that the model produces one legal move, its comment appears when enabled, and usage is added once. Repeat for each configured provider. Transient network/provider errors retry five times with exponential backoff. The game page shows retry progress and the latest failure; after the fifth failure, processing pauses for operator recovery.
+
+### WSL with Clash Verge
+
+Windows system-proxy settings are not automatically inherited by processes running inside WSL. In Clash Verge, enable **Allow LAN** and note the HTTP or mixed proxy port. Start LingGo with a proxy address reachable from WSL:
+
+```bash
+WINDOWS_HOST=$(ip route show | awk '/default/ {print $3; exit}')
+LINGGO_PROXY_URL="http://${WINDOWS_HOST}:7890" pnpm dev
+```
+
+Replace `7890` with the port shown by Clash Verge. `LINGGO_PROXY_URL` applies to both HTTP and HTTPS provider requests. LingGo also honors the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` variables. Keep `localhost,127.0.0.1` in `NO_PROXY` so local LingGo traffic stays direct.
 
 ## Rules and records
 

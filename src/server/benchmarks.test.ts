@@ -460,6 +460,105 @@ describe('benchmark scoring and prompts', () => {
     ])
     await service.close()
   })
+
+  it('retries API failures and reports the pause on the linked game', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-api-retry-'))
+    const games = new GameService(store)
+    let requests = 0
+    const adapter = {
+      async requestAction() {
+        requests += 1
+        throw new Error(
+          'Cannot connect to API: Client network socket disconnected before secure TLS connection was established',
+        )
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+      async () => {},
+    )
+
+    const created = await service.create({
+      profileId: 'builtin-fake-profile',
+      finalColor: 'B',
+      visits: 25,
+      includeTrainingWinRates: false,
+      notebookMode: 'reset',
+    })
+
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2_000),
+    ).toBe(true)
+    const run = service.get(created.id)!
+    const game = games.get(run.gameIds[0])!
+    expect(requests).toBe(5)
+    expect(game).toMatchObject({
+      status: 'paused',
+      autoplay: false,
+      benchmarkRunId: run.id,
+    })
+    expect(game.error).toContain('LLM API request failed after 5 attempts')
+    expect(game.error).toContain('LINGGO_PROXY_URL')
+    expect(game.modelTurn).toBeUndefined()
+    await service.close()
+  })
+
+  it('reports reflection API failures on the finished linked game', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(
+      join(tmpdir(), 'linggo-benchmark-reflection-retry-'),
+    )
+    const games = new GameService(store)
+    let reflections = 0
+    const adapter = {
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'End training game.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText() {
+        reflections += 1
+        throw new Error('reflection connection reset')
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+      async () => {},
+    )
+
+    const created = await service.create({
+      profileId: 'builtin-fake-profile',
+      finalColor: 'B',
+      visits: 25,
+      includeTrainingWinRates: false,
+      notebookMode: 'reset',
+    })
+
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2_000),
+    ).toBe(true)
+    const run = service.get(created.id)!
+    const game = games.get(run.gameIds[0])!
+    expect(reflections).toBe(5)
+    expect(game.status).toBe('finished')
+    expect(game.error).toContain('after 5 attempts during reflection')
+    expect(game.modelTurn).toBeUndefined()
+    await service.close()
+  })
 })
 
 async function waitFor(predicate: () => boolean, timeout: number) {

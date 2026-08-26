@@ -17,10 +17,17 @@ import {GameService} from './games'
 import {gamePosition, rootFromBlack, selectedMove, type KataGoAnalyzer} from './katago'
 import {NotebookStore} from './notebooks'
 import {
+  MAX_PROVIDER_API_ATTEMPTS,
+  publicProviderError,
+  type ProviderRetryWait,
+  waitForProviderRetry,
+} from './network'
+import {
   createPlayerAdapter,
   makeBenchmarkMovePrompt,
   makeReflectionPrompt,
   MalformedModelOutputError,
+  type PlayerAdapter,
 } from './providers'
 
 type InternalRun = BenchmarkRun & {
@@ -41,6 +48,7 @@ export class BenchmarkService {
     readonly engine: KataGoAnalyzer,
     readonly notebooks = new NotebookStore(),
     private readonly adapterFactory: typeof createPlayerAdapter = createPlayerAdapter,
+    private readonly retryWait: ProviderRetryWait = waitForProviderRetry,
   ) {
     for (const run of this.store.listBenchmarks())
       if (run.status === 'queued' || run.status === 'running') this.schedule(run.id)
@@ -106,7 +114,11 @@ export class BenchmarkService {
     run.status = 'running'
     run.error = undefined
     run.waitingFor = undefined
-    this.save(run)
+    const game = this.currentGame(run)
+    this.store.transaction(() => {
+      if (game?.error) this.games.clearAutomatedError(game.id)
+      this.save(run)
+    })
     this.schedule(id)
     return run
   }
@@ -130,6 +142,7 @@ export class BenchmarkService {
     if (run.status !== 'paused') throw new Error('Pause the benchmark before forcing a move')
     const game = this.currentGame(run)
     if (!game) throw new Error('Benchmark game not found')
+    if (game.error) this.games.clearAutomatedError(game.id)
     this.games.acceptAutomated(game.id, action, undefined, true)
     if (run.currentGame === 10) {
       run.status = 'invalid'
@@ -222,10 +235,15 @@ export class BenchmarkService {
           if (error instanceof KataGoUnavailableError) {
             run.waitingFor = 'katago'
             retry = true
+            this.save(run)
           } else {
             run.status = 'paused'
+            const game = this.currentGame(run)
+            this.store.transaction(() => {
+              if (game) this.games.reportAutomatedError(game.id, run.error!)
+              this.save(run)
+            })
           }
-          this.save(run)
         }
       }
     } finally {
@@ -255,7 +273,12 @@ export class BenchmarkService {
     return game
   }
 
-  private async playGame(run: InternalRun, original: Game, llmColor: Color, signal: AbortSignal) {
+  private async playGame(
+    run: InternalRun,
+    original: Game,
+    llmColor: Color,
+    signal: AbortSignal,
+  ) {
     let game = this.games.get(original.id)!
     while (run.status === 'running' && game.status !== 'finished') {
       signal.throwIfAborted()
@@ -270,33 +293,71 @@ export class BenchmarkService {
         }
         const notebook = await this.notebooks.readCurrent(run.config.profileId)
         let feedback = ''
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-          if (feedback) snapshot.previousError = feedback
-          const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
-            phase: run.currentGame < 10 ? 'training' : 'final',
-            winRateHistory: run.currentGame < 10 && run.config.includeTrainingWinRates
-              ? this.winRateHistory(game.id, llmColor)
-              : undefined,
-            inGameReflections: game.inGameReflections,
-          })
-          try {
-            const response = await adapter.requestAction(snapshot, signal, prompt)
-            addUsage(run, response)
-            response.retries = attempt
-            game = this.games.acceptAutomated(game.id, response.action, response)
-            run.currentTurn = game.moves.length
-            this.save(run)
-            break
-          } catch (error) {
-            if (!isRepairableMoveError(error)) throw error
-            feedback = publicError(error)
-            if (attempt === 2)
-              throw new Error(
-                `Model failed to produce a legal action after 3 attempts: ${feedback}`,
-                {cause: error},
+        let outputFailures = 0
+        let apiFailures = 0
+        this.games.setAutomatedTurnState(game.id, {
+          phase: 'requesting',
+          attempt: 1,
+          maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+        })
+        try {
+          while (outputFailures < 3) {
+            const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+            if (feedback) snapshot.previousError = feedback
+            const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
+              phase: run.currentGame < 10 ? 'training' : 'final',
+              winRateHistory:
+                run.currentGame < 10 && run.config.includeTrainingWinRates
+                  ? this.winRateHistory(game.id, llmColor)
+                  : undefined,
+              inGameReflections: game.inGameReflections,
+            })
+            try {
+              const response = await adapter.requestAction(
+                snapshot,
+                signal,
+                prompt,
               )
+              addUsage(run, response)
+              response.retries = outputFailures + apiFailures
+              game = this.games.acceptAutomated(
+                game.id,
+                response.action,
+                response,
+              )
+              run.currentTurn = game.moves.length
+              this.save(run)
+              break
+            } catch (error) {
+              if (signal.aborted) throw error
+              if (!isRepairableMoveError(error)) {
+                apiFailures += 1
+                const message = publicProviderError(error)
+                if (apiFailures >= MAX_PROVIDER_API_ATTEMPTS)
+                  throw new Error(
+                    `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts. The benchmark has been paused. Last error: ${message}`,
+                    {cause: error},
+                  )
+                this.games.setAutomatedTurnState(game.id, {
+                  phase: 'retrying',
+                  attempt: apiFailures + 1,
+                  maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                  lastError: message,
+                })
+                await this.retryWait(apiFailures, signal)
+                continue
+              }
+              outputFailures += 1
+              feedback = publicProviderError(error, 'Invalid action')
+              if (outputFailures >= 3)
+                throw new Error(
+                  `Model failed to produce a legal action after 3 attempts: ${feedback}`,
+                  {cause: error},
+                )
+            }
           }
+        } finally {
+          this.games.clearAutomatedTurnState(game.id)
         }
         const afterResult = await this.analyze(game, run.config.visits, signal)
         if (run.currentGame === 10) {
@@ -337,7 +398,9 @@ export class BenchmarkService {
       return false
     }
     const notebook = await this.notebooks.readCurrent(run.config.profileId)
-    const response = await adapter.requestText(makeReflectionPrompt({
+    const game = this.currentGame(run)
+    if (!game) throw new Error('Benchmark game not found')
+    const prompt = makeReflectionPrompt({
       notebook,
       games: run.gameIds.slice(0, run.currentGame + 1).map((gameId, index) => {
         const game = this.games.get(gameId)
@@ -356,7 +419,13 @@ export class BenchmarkService {
             : undefined,
         }
       }),
-    }), signal)
+    })
+    const response = await this.requestReflection(
+      game.id,
+      adapter.requestText.bind(adapter),
+      prompt,
+      signal,
+    )
     addUsage(run, response)
     await this.notebooks.write(run.config.profileId, run.id, response.text.trim())
     run.notebook.updatedAt = new Date().toISOString()
@@ -369,6 +438,49 @@ export class BenchmarkService {
     if (!connection) throw new Error('The benchmark provider connection no longer exists')
     if (connection.kind !== 'fake' && !this.games.vault.get(connection)) return undefined
     return this.adapterFactory(connection, run.profileSnapshot, this.games.vault)
+  }
+
+  private async requestReflection(
+    gameId: string,
+    request: NonNullable<PlayerAdapter['requestText']>,
+    prompt: string,
+    signal: AbortSignal,
+  ) {
+    let lastError = ''
+    try {
+      for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
+        this.games.setAutomatedTurnState(
+          gameId,
+          attempt === 1
+            ? {
+                phase: 'requesting',
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+              }
+            : {
+                phase: 'retrying',
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                lastError,
+              },
+        )
+        try {
+          return await request(prompt, signal)
+        } catch (error) {
+          if (signal.aborted) throw error
+          lastError = publicProviderError(error)
+          if (attempt >= MAX_PROVIDER_API_ATTEMPTS)
+            throw new Error(
+              `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts during reflection. The benchmark has been paused. Last error: ${lastError}`,
+              {cause: error},
+            )
+          await this.retryWait(attempt, signal)
+        }
+      }
+      throw new Error('Reflection request failed')
+    } finally {
+      this.games.clearAutomatedTurnState(gameId)
+    }
   }
 
   private async analyze(game: Game, visits: number, signal: AbortSignal) {

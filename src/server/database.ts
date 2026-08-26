@@ -82,6 +82,10 @@ export class Store {
     this.db.close()
   }
 
+  transaction<T>(operation: () => T): T {
+    return this.db.transaction(operation)()
+  }
+
   listGames(): Game[] {
     return (
       this.db

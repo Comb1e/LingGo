@@ -29,10 +29,15 @@ import {
   type PlayerAdapter,
   SecretVault,
 } from './providers'
+import {
+  MAX_PROVIDER_API_ATTEMPTS,
+  publicProviderError,
+  type ProviderRetryWait,
+  waitForProviderRetry,
+} from './network'
 import type {ImportedRecord} from './sgf'
 
 const MAX_MODEL_OUTPUT_ATTEMPTS = 3
-const MAX_API_ATTEMPTS = 5
 
 type PlayerAdapterFactory = (
   ...args: Parameters<typeof createPlayerAdapter>
@@ -59,6 +64,7 @@ export class GameService {
   constructor(
     readonly store: Store,
     private readonly playerAdapterFactory: PlayerAdapterFactory = createPlayerAdapter,
+    private readonly retryWait: ProviderRetryWait = waitForProviderRetry,
   ) {}
 
   setLlmAnalysisProvider(
@@ -197,6 +203,33 @@ export class GameService {
     game.status = 'finished'
     game.autoplay = false
     game.error = undefined
+    return this.commit(game)
+  }
+
+  setAutomatedTurnState(id: string, state: NonNullable<Game['modelTurn']>) {
+    this.modelTurns.set(id, state)
+    this.emit(id)
+  }
+
+  clearAutomatedTurnState(id: string) {
+    if (!this.modelTurns.delete(id)) return
+    this.emit(id)
+  }
+
+  reportAutomatedError(id: string, error: string) {
+    const game = this.requireGame(id)
+    this.modelTurns.delete(id)
+    if (game.status === 'active') game.status = 'paused'
+    game.error = error
+    game.autoplay = false
+    return this.commit(game)
+  }
+
+  clearAutomatedError(id: string) {
+    const game = this.requireGame(id)
+    if (!game.error) return this.withPending(game)
+    game.error = undefined
+    if (game.status === 'paused') game.status = 'active'
     return this.commit(game)
   }
 
@@ -440,7 +473,7 @@ export class GameService {
     this.modelTurns.set(id, {
       phase: 'requesting',
       attempt: 1,
-      maxAttempts: MAX_API_ATTEMPTS,
+      maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
     })
     this.emit(id)
     try {
@@ -490,10 +523,10 @@ export class GameService {
             error instanceof NoOutputGeneratedError
           if (!repairable) {
             apiFailures += 1
-            const message = publicError(error)
-            if (apiFailures >= MAX_API_ATTEMPTS) {
+            const message = publicProviderError(error)
+            if (apiFailures >= MAX_PROVIDER_API_ATTEMPTS) {
               game.status = 'paused'
-              game.error = `LLM API request failed after ${MAX_API_ATTEMPTS} attempts. The game has been paused. Last error: ${message}`
+              game.error = `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts. The game has been paused. Last error: ${message}`
               game.autoplay = false
               this.commit(game)
               return
@@ -501,10 +534,11 @@ export class GameService {
             this.modelTurns.set(id, {
               phase: 'retrying',
               attempt: apiFailures + 1,
-              maxAttempts: MAX_API_ATTEMPTS,
+              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
               lastError: message,
             })
             this.emit(id)
+            await this.retryWait(apiFailures, controller.signal)
             continue
           }
           outputFailures += 1
@@ -523,7 +557,7 @@ export class GameService {
         const game = this.store.getGame(id)
         if (game) {
           game.status = 'error'
-          game.error = publicError(error)
+          game.error = publicProviderError(error)
           game.autoplay = false
           this.commit(game)
         }
@@ -613,7 +647,7 @@ export class GameService {
   private withPending(game: Game): Game {
     return {
       ...game,
-      pending: this.controllers.has(game.id),
+      pending: this.controllers.has(game.id) || this.modelTurns.has(game.id),
       modelTurn: this.modelTurns.get(game.id),
       score:
         game.status === 'scoring'
@@ -633,10 +667,4 @@ export function mergeInGameReflections(
   for (const reflection of updates ?? [])
     reflections.set(reflection.number, reflection)
   return [...reflections.values()].sort((a, b) => a.number - b.number)
-}
-
-function publicError(error: unknown): string {
-  if (error instanceof Error)
-    return error.message.replace(/(?:sk-|AIza)[A-Za-z0-9_-]+/g, '[redacted]')
-  return 'Provider request failed'
 }

@@ -145,13 +145,20 @@ describe('game orchestration', () => {
   it('retries API failures five times and pauses with a useful error', async () => {
     store = new Store(':memory:')
     let requests = 0
+    let waits = 0
     const adapter = {
       async requestAction() {
         requests += 1
         throw new Error('provider temporarily unavailable')
       },
     } satisfies PlayerAdapter
-    service = new GameService(store, () => adapter)
+    service = new GameService(
+      store,
+      () => adapter,
+      async () => {
+        waits += 1
+      },
+    )
 
     const game = service.create({
       size: 9,
@@ -163,6 +170,7 @@ describe('game orchestration', () => {
 
     await waitFor(() => service.get(game.id)?.status === 'paused')
     expect(requests).toBe(5)
+    expect(waits).toBe(4)
     expect(service.get(game.id)).toMatchObject({
       status: 'paused',
       autoplay: false,
@@ -189,7 +197,11 @@ describe('game orchestration', () => {
         return retryResult
       },
     } satisfies PlayerAdapter
-    service = new GameService(store, () => adapter)
+    service = new GameService(
+      store,
+      () => adapter,
+      async () => {},
+    )
 
     const game = service.create({
       size: 9,

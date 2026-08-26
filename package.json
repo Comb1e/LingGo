@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.14"
   },
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"tsx watch src/server/index.ts\" \"vite\"",
