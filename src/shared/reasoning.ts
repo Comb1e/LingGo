@@ -1,3 +1,5 @@
+import type {Move} from './types'
+
 const sentenceSegmenter = new Intl.Segmenter(undefined, {
   granularity: 'sentence',
 })
@@ -18,4 +20,11 @@ export function normalizeReasoning(value: string): string {
         .filter(Boolean),
     )
     .join('\n\n')
+}
+
+export function isDeepSeekMove(move: Move) {
+  return (
+    move.providerKind === 'deepseek' ||
+    (!move.providerKind && move.model?.toLowerCase().startsWith('deepseek'))
+  )
 }

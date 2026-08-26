@@ -144,6 +144,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
         inputTokens: 0,
         outputTokens: 0,
         model: 'deterministic-v1',
+        providerKind: 'fake',
         retries: 0,
       }
     }
@@ -164,6 +165,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
             inputTokens: 0,
             outputTokens: 0,
             model: 'deterministic-v1',
+            providerKind: 'fake',
             retries: 0,
           }
         } catch {
@@ -180,6 +182,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
       inputTokens: 0,
       outputTokens: 0,
       model: 'deterministic-v1',
+      providerKind: 'fake',
       retries: 0,
     }
   }
@@ -226,6 +229,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       inputTokens: result.usage.inputTokens ?? 0,
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
+      providerKind: this.connection.kind,
       retries: 0,
     }
   }

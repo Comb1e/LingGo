@@ -29,7 +29,7 @@ import {
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
 import {pointToCoordinate} from '../../shared/coordinates'
-import {normalizeReasoning} from '../../shared/reasoning'
+import {isDeepSeekMove, normalizeReasoning} from '../../shared/reasoning'
 import type {Color, Game, GameAnalysis, Point} from '../../shared/types'
 import {api} from '../api'
 import {Board} from '../Board'
@@ -524,7 +524,10 @@ export function GamePage() {
                       <p>{move.comment}</p>
                     )}
                     {game.commentsVisible && move.reasoning && (
-                      <MoveReasoning text={move.reasoning} />
+                      <MoveReasoning
+                        text={move.reasoning}
+                        preserveText={isDeepSeekMove(move)}
+                      />
                     )}
                     {move.inGameReflections?.length && (
                       <MoveReflections reflections={move.inGameReflections} />
@@ -989,7 +992,13 @@ function smoothCurve(points: Array<[number, number]>) {
   }, `M ${points[0][0]} ${points[0][1]}`)
 }
 
-function MoveReasoning({text}: {text: string}) {
+function MoveReasoning({
+  text,
+  preserveText = false,
+}: {
+  text: string
+  preserveText?: boolean
+}) {
   const {t} = useTranslation()
   const [expanded, setExpanded] = useState(false)
 
@@ -1005,7 +1014,11 @@ function MoveReasoning({text}: {text: string}) {
         <span>{t('modelReasoning')}</span>
         <ChevronDown className={expanded ? 'expanded' : ''} />
       </button>
-      {expanded && <p className="reasoning-text">{normalizeReasoning(text)}</p>}
+      {expanded && (
+        <p className="reasoning-text">
+          {preserveText ? text.trim() : normalizeReasoning(text)}
+        </p>
+      )}
     </div>
   )
 }

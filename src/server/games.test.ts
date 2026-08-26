@@ -99,6 +99,7 @@ describe('game orchestration', () => {
     expect(updated.moves).toHaveLength(1)
     expect(updated.moves[0].comment).toBeTruthy()
     expect(updated.moves[0].reasoning).toContain('first legal intersection')
+    expect(updated.moves[0].providerKind).toBe('fake')
     expect(updated.toMove).toBe('W')
   })
 

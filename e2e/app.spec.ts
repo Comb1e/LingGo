@@ -273,6 +273,63 @@ test('expands saved model reasoning under LLM commentary', async ({
   })
 })
 
+test('keeps DeepSeek reasoning together under its move-history control', async ({
+  page,
+  request,
+}, testInfo) => {
+  const response = await request.post('/api/games', {
+    data: {
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'Black'},
+      white: {type: 'human', name: 'White'},
+      commentsVisible: true,
+    },
+  })
+  const game = await response.json()
+  game.status = 'paused'
+  game.board[3][3] = 1
+  game.toMove = 'W'
+  game.moves = [
+    {
+      number: 1,
+      color: 'B',
+      action: 'play',
+      point: [3, 3],
+      coordinate: 'D6',
+      comment: 'Take the open corner.',
+      reasoning: 'Compare both sides. Keep sente.',
+      captured: 0,
+      model: 'deepseek-v4-pro',
+      providerKind: 'deepseek',
+    },
+  ]
+  await page.route(`/api/games/${game.id}`, (route) =>
+    route.fulfill({json: game}),
+  )
+  await page.route(`/api/games/${game.id}/events`, (route) =>
+    route.fulfill({
+      contentType: 'text/event-stream',
+      body: `data: ${JSON.stringify(game)}\n\n`,
+    }),
+  )
+
+  await page.goto(`/games/${game.id}`)
+  await expect(page.locator('.move-row').getByText('Take the open corner.')).toBeVisible()
+  const toggle = page.getByRole('button', {name: 'Model reasoning'})
+  await expect(toggle).toBeVisible()
+  await toggle.click()
+  await expect(page.locator('.reasoning-text')).toHaveText(
+    'Compare both sides. Keep sente.',
+  )
+  await page.screenshot({
+    path: testInfo.outputPath('deepseek-reasoning.png'),
+    fullPage: true,
+  })
+
+  await request.delete(`/api/games/${game.id}`)
+})
+
 test('chooses directly from multiple saved LLM players', async ({
   page,
   request,

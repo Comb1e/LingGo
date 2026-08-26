@@ -422,6 +422,7 @@ export class GameService {
       inputTokens: llm?.inputTokens,
       outputTokens: llm?.outputTokens,
       model: llm?.model,
+      providerKind: llm?.providerKind,
       retries: llm?.retries,
       retryErrors: llm?.retryErrors,
     }

@@ -319,6 +319,7 @@ describe('provider normalization', () => {
       comment: 'Take the corner.',
     })
     expect(result.reasoning).toBe('Compare the open corners.')
+    expect(result.providerKind).toBe('deepseek')
     expect(result.inputTokens).toBe(12)
     expect(result.outputTokens).toBe(8)
     expect(requestedUrl).toBe('https://api.deepseek.com/chat/completions')

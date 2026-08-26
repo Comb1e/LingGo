@@ -75,6 +75,7 @@ export interface Move {
   inputTokens?: number
   outputTokens?: number
   model?: string
+  providerKind?: ProviderKind
   retries?: number
   retryErrors?: string[]
   forced?: boolean
@@ -203,6 +204,7 @@ export interface LlmActionResult {
   inputTokens: number
   outputTokens: number
   model: string
+  providerKind?: ProviderKind
   retries: number
   retryErrors?: string[]
 }

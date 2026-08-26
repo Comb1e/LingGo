@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {normalizeReasoning} from './reasoning'
+import {isDeepSeekMove, normalizeReasoning} from './reasoning'
 
 describe('reasoning formatting', () => {
   it('separates adjacent OpenAI bold reasoning summaries', () => {
@@ -16,5 +16,19 @@ describe('reasoning formatting', () => {
     expect(
       normalizeReasoning('First inspect the corner. Then defend the cut.'),
     ).toBe('First inspect the corner.\n\nThen defend the cut.')
+  })
+
+  it('identifies DeepSeek moves for provider-specific formatting', () => {
+    expect(
+      isDeepSeekMove({
+        number: 1,
+        color: 'B',
+        action: 'play',
+        coordinate: 'D4',
+        captured: 0,
+        model: 'deepseek-v4-pro',
+        providerKind: 'deepseek',
+      }),
+    ).toBe(true)
   })
 })
