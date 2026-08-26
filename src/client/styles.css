@@ -1384,6 +1384,21 @@ svg {
 .recovery-panel {
   background: #fff2ef;
 }
+.model-turn-progress {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: center;
+}
+.model-turn-progress small {
+  max-width: 32ch;
+  color: var(--coral);
+  font-size: 11px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
 .recovery-actions {
   display: flex;
   flex-wrap: wrap;

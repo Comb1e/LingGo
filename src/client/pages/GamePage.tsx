@@ -402,11 +402,28 @@ export function GamePage() {
                 </span>
                 <strong>{current.name}</strong>
                 {game.pending && (
-                  <span className="thinking-line">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
+                  <>
+                    <span className="thinking-line">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    {game.modelTurn && (
+                      <span className="model-turn-progress" role="status">
+                        {t('modelRequestAttempt', {
+                          attempt: game.modelTurn.attempt,
+                          maxAttempts: game.modelTurn.maxAttempts,
+                        })}
+                        {game.modelTurn.phase === 'retrying' && (
+                          <small>
+                            {t('modelRequestRetrying', {
+                              error: game.modelTurn.lastError,
+                            })}
+                          </small>
+                        )}
+                      </span>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -414,7 +431,7 @@ export function GamePage() {
           {game.status === 'scoring' && (
             <ScoringPanel game={game} send={send} />
           )}
-          {game.status === 'error' && (
+          {game.error && ['paused', 'error'].includes(game.status) && (
             <RecoveryPanel
               game={game}
               profiles={profiles.data ?? []}
@@ -447,7 +464,7 @@ export function GamePage() {
                 {t('pause')}
               </Button>
             )}
-            {game.status === 'paused' && (
+            {game.status === 'paused' && !game.error && (
               <Button className="primary" onClick={() => send('resume')}>
                 <Play />
                 {t('resume')}

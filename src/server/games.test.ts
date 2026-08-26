@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, it} from 'vitest'
 import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
+import type {PlayerAdapter} from './providers'
 
 let store: Store
 let service: GameService
@@ -141,6 +142,86 @@ describe('game orchestration', () => {
     })
   })
 
+  it('retries API failures five times and pauses with a useful error', async () => {
+    store = new Store(':memory:')
+    let requests = 0
+    const adapter = {
+      async requestAction() {
+        requests += 1
+        throw new Error('provider temporarily unavailable')
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+
+    const game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: 'builtin-fake-profile'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+
+    await waitFor(() => service.get(game.id)?.status === 'paused')
+    expect(requests).toBe(5)
+    expect(service.get(game.id)).toMatchObject({
+      status: 'paused',
+      autoplay: false,
+      error:
+        'LLM API request failed after 5 attempts. The game has been paused. Last error: provider temporarily unavailable',
+    })
+  })
+
+  it('reports API retry progress while the next request is pending', async () => {
+    store = new Store(':memory:')
+    let requests = 0
+    let completeRetry!: (
+      result: Awaited<ReturnType<PlayerAdapter['requestAction']>>,
+    ) => void
+    const retryResult = new Promise<
+      Awaited<ReturnType<PlayerAdapter['requestAction']>>
+    >((resolve) => {
+      completeRetry = resolve
+    })
+    const adapter = {
+      async requestAction() {
+        requests += 1
+        if (requests === 1) throw new Error('rate limited')
+        return retryResult
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+
+    const game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: 'builtin-fake-profile'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+
+    await waitFor(() => service.get(game.id)?.modelTurn?.phase === 'retrying')
+    expect(service.get(game.id)).toMatchObject({
+      pending: true,
+      modelTurn: {
+        phase: 'retrying',
+        attempt: 2,
+        maxAttempts: 5,
+        lastError: 'rate limited',
+      },
+    })
+
+    completeRetry({
+      action: {action: 'pass', comment: 'Recovered.'},
+      latencyMs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      model: 'test-model',
+      retries: 0,
+    })
+    await waitFor(() => service.get(game.id)?.moves.length === 1)
+    expect(service.get(game.id)?.moves[0].retries).toBe(1)
+  })
+
   it('allows operator recovery actions after a model error', async () => {
     setup()
     let game = service.create({
@@ -163,3 +244,12 @@ describe('game orchestration', () => {
     expect(game.status).toBe('active')
   })
 })
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000) {
+  const started = Date.now()
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs)
+      throw new Error('Timed out waiting for game state')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}

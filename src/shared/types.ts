@@ -74,6 +74,15 @@ export interface Move {
 
 export type GameStatus = 'active' | 'paused' | 'scoring' | 'finished' | 'error'
 
+export type ModelTurnState =
+  | {phase: 'requesting'; attempt: number; maxAttempts: number}
+  | {
+      phase: 'retrying'
+      attempt: number
+      maxAttempts: number
+      lastError: string
+    }
+
 export interface Game {
   id: string
   version: number
@@ -95,6 +104,7 @@ export interface Game {
   result?: string
   error?: string
   pending?: boolean
+  modelTurn?: ModelTurnState
   score?: Score
   analysisEnabled?: boolean
   shareAnalysisWithLlm?: boolean

@@ -26,9 +26,17 @@ import {
 import {
   createPlayerAdapter,
   MalformedModelOutputError,
+  type PlayerAdapter,
   SecretVault,
 } from './providers'
 import type {ImportedRecord} from './sgf'
+
+const MAX_MODEL_OUTPUT_ATTEMPTS = 3
+const MAX_API_ATTEMPTS = 5
+
+type PlayerAdapterFactory = (
+  ...args: Parameters<typeof createPlayerAdapter>
+) => PlayerAdapter
 
 export class StaleVersionError extends Error {
   constructor() {
@@ -42,12 +50,16 @@ export class GameService {
   readonly vault = new SecretVault()
   private controllers = new Map<string, AbortController>()
   private scheduled = new Set<string>()
+  private modelTurns = new Map<string, NonNullable<Game['modelTurn']>>()
   private llmAnalysisProvider?: (
     game: Game,
     signal: AbortSignal,
   ) => Promise<string | undefined>
 
-  constructor(readonly store: Store) {}
+  constructor(
+    readonly store: Store,
+    private readonly playerAdapterFactory: PlayerAdapterFactory = createPlayerAdapter,
+  ) {}
 
   setLlmAnalysisProvider(
     provider: (game: Game, signal: AbortSignal) => Promise<string | undefined>,
@@ -292,7 +304,11 @@ export class GameService {
         comment: 'Operator forced a pass.',
       })
     }
-    if (command.type === 'resign' && game.status === 'error') {
+    if (
+      command.type === 'resign' &&
+      ['paused', 'error'].includes(game.status) &&
+      Boolean(game.error)
+    ) {
       game.status = 'active'
       game.error = undefined
       game.autoplay = false
@@ -421,10 +437,17 @@ export class GameService {
   private async runModelTurn(id: string) {
     const controller = new AbortController()
     this.controllers.set(id, controller)
+    this.modelTurns.set(id, {
+      phase: 'requesting',
+      attempt: 1,
+      maxAttempts: MAX_API_ATTEMPTS,
+    })
     this.emit(id)
     try {
       let feedback = ''
-      for (let attempt = 0; attempt < 3; attempt++) {
+      let outputFailures = 0
+      let apiFailures = 0
+      while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
         const game = this.requireGame(id)
         if (game.status !== 'active' || !game.autoplay) return
         const seat = this.seat(game)
@@ -437,7 +460,11 @@ export class GameService {
           throw new Error(
             `Provider connection not found: ${profile.connectionId}`,
           )
-        const adapter = createPlayerAdapter(connection, profile, this.vault)
+        const adapter = this.playerAdapterFactory(
+          connection,
+          profile,
+          this.vault,
+        )
         const snapshot = makeSnapshot(game.size, game.komi, game.moves)
         snapshot.kataGoAnalysis = await this.llmAnalysisProvider?.(
           game,
@@ -451,7 +478,7 @@ export class GameService {
             controller.signal,
           )
           if (controller.signal.aborted) return
-          result.retries = attempt
+          result.retries = outputFailures + apiFailures
           const latest = this.requireGame(id)
           this.accept(latest, result.action, result)
           return
@@ -461,11 +488,30 @@ export class GameService {
             error instanceof IllegalMoveError ||
             error instanceof MalformedModelOutputError ||
             error instanceof NoOutputGeneratedError
-          if (!repairable) throw error
+          if (!repairable) {
+            apiFailures += 1
+            const message = publicError(error)
+            if (apiFailures >= MAX_API_ATTEMPTS) {
+              game.status = 'paused'
+              game.error = `LLM API request failed after ${MAX_API_ATTEMPTS} attempts. The game has been paused. Last error: ${message}`
+              game.autoplay = false
+              this.commit(game)
+              return
+            }
+            this.modelTurns.set(id, {
+              phase: 'retrying',
+              attempt: apiFailures + 1,
+              maxAttempts: MAX_API_ATTEMPTS,
+              lastError: message,
+            })
+            this.emit(id)
+            continue
+          }
+          outputFailures += 1
           feedback = error instanceof Error ? error.message : 'Invalid action'
-          if (attempt === 2) {
+          if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS) {
             game.status = 'error'
-            game.error = `Model failed to produce a legal action after 3 attempts: ${feedback}`
+            game.error = `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`
             game.autoplay = false
             this.commit(game)
             return
@@ -485,6 +531,7 @@ export class GameService {
     } finally {
       this.controllers.delete(id)
       this.scheduled.delete(id)
+      this.modelTurns.delete(id)
       this.emit(id)
       this.schedule(id)
     }
@@ -567,6 +614,7 @@ export class GameService {
     return {
       ...game,
       pending: this.controllers.has(game.id),
+      modelTurn: this.modelTurns.get(game.id),
       score:
         game.status === 'scoring'
           ? scoreBoard(game.board as any, game.komi, game.dead)
