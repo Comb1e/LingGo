@@ -12,7 +12,7 @@ import {
   pointLossQuality,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
-import {makeBenchmarkMovePrompt, makeReflectionPrompt, type PlayerAdapter} from './providers'
+import {makeBenchmarkMovePrompt, makePrompt, makeReflectionPrompt, type PlayerAdapter} from './providers'
 import {makeSnapshot} from './go'
 
 let store: Store | undefined
@@ -64,7 +64,8 @@ describe('benchmark scoring and prompts', () => {
   })
 
   it('explains benchmark move legality, captures, and scoring', () => {
-    const prompt = makeBenchmarkMovePrompt(makeSnapshot(13, 6.5, []), '', {
+    const snapshot = makeSnapshot(13, 6.5, [])
+    const prompt = makeBenchmarkMovePrompt(snapshot, '', {
       phase: 'training',
     })
     expect(prompt).toContain('played on a 13x13 grid. Black moves first')
@@ -76,6 +77,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('living stones on the board plus empty intersections surrounded only by that color')
     expect(prompt).toContain('Captured stones do not add points directly; their removal can create territory')
     expect(prompt).toContain('Neutral intersections score for neither side. White adds 6.5 komi')
+    expect(prompt.split('\n\n2. ')[0]).toBe(makePrompt(snapshot).split('\n\n2. ')[0])
   })
 
   it('adds and rewrites numbered in-game reflections', () => {

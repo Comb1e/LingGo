@@ -326,14 +326,7 @@ export function makePrompt(
         .join('\n')
     : '(none)'
   return [
-    '1. GO RULES',
-    `- Board size: ${snapshot.size}x${snapshot.size}.`,
-    '- Black and White alternate placing one stone on an empty intersection.',
-    '- Connected stones share liberties. Remove an opposing chain when its last liberty is filled.',
-    '- Suicide is prohibited. A move may not repeat any earlier whole-board position.',
-    `- Use Chinese area scoring. White receives ${snapshot.komi} komi. Two consecutive passes end play for scoring.`,
-    '- A player may resign.',
-    `- Authoritative rules summary: ${snapshot.rules}`,
+    ...formatGoRules(snapshot),
     '',
     '2. PLAYING STYLE',
     stylePrompt?.trim() || '(none)',
@@ -389,14 +382,7 @@ export function makeBenchmarkMovePrompt(
         .join('\n')
     : '(none)'
   const sections = [
-    '1. GO RULES',
-    `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
-    '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
-    '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
-    '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
-    '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
-    '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
-    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${snapshot.komi} komi; the higher total wins.`,
+    ...formatGoRules(snapshot),
     '',
     '2. SELF-WRITTEN SKILLS',
     notebook.trim() || '(none)',
@@ -423,6 +409,19 @@ export function makeBenchmarkMovePrompt(
   if (options.phase === 'training' && options.winRateHistory !== undefined)
     sections.push('', '6. TRAINING WIN-RATE HISTORY', options.winRateHistory || '(none)')
   return sections.join('\n')
+}
+
+function formatGoRules(snapshot: GameSnapshot) {
+  return [
+    '1. GO RULES',
+    `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
+    '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
+    '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
+    '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
+    '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
+    '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
+    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${snapshot.komi} komi; the higher total wins.`,
+  ]
 }
 
 export function makeReflectionPrompt(input: {
