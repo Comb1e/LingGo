@@ -3,7 +3,12 @@ import fastifyStatic from '@fastify/static'
 import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {z, ZodError} from 'zod'
-import {newGameSchema, playerActionSchema, providerKindSchema} from '../shared/types'
+import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
+import {
+  newGameSchema,
+  playerActionSchema,
+  providerKindSchema,
+} from '../shared/types'
 import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
 import {AnalysisService} from './analysis'
@@ -58,7 +63,12 @@ const kataGoSettingsSchema = z.object({
 const benchmarkSchema = z.object({
   profileId: z.string().min(1),
   finalColor: z.enum(['B', 'W']),
-  visits: z.number().int().min(25).max(10_000).default(500),
+  visits: z
+    .number()
+    .int()
+    .min(25)
+    .max(10_000)
+    .default(DEFAULT_KATAGO_VISITS),
   includeTrainingWinRates: z.boolean().default(true),
   notebookMode: z.enum(['reset', 'continue']).default('reset'),
 })

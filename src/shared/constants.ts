@@ -1,0 +1,1 @@
+export const DEFAULT_KATAGO_VISITS = 2_000

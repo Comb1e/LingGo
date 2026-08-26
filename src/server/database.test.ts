@@ -18,7 +18,9 @@ describe('database migrations', () => {
       {version: 2},
       {version: 3},
       {version: 4},
+      {version: 5},
     ])
+    expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
   })
 
   it('repairs cached White-to-play analysis from the old perspective conversion', () => {
@@ -41,5 +43,24 @@ describe('database migrations', () => {
     expect(repaired.blackWinRate).toBeCloseTo(0.7)
     expect(repaired.whiteWinRate).toBeCloseTo(0.3)
     expect(repaired.blackScoreLead).toBe(2.5)
+  })
+
+  it('promotes the legacy KataGo visit default', () => {
+    store = new Store(':memory:')
+    store.db
+      .prepare('UPDATE katago_settings SET analysis_visits = 500')
+      .run()
+
+    store.db.exec(
+      readFileSync(
+        new URL(
+          './migrations/005_raise_default_katago_visits.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    )
+
+    expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
   })
 })

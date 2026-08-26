@@ -522,6 +522,7 @@ function WinRatePanel({
 }) {
   const {t} = useTranslation()
   const [selectedTurn, setSelectedTurn] = useState(1)
+  const [dragCursorX, setDragCursorX] = useState<number>()
   const dragState = useRef<ChartDragState>({status: 'idle'})
   const viewportRef = useRef<HTMLDivElement>(null)
   const positions = analysis?.positions ?? []
@@ -550,9 +551,11 @@ function WinRatePanel({
       : nearestIndex
   }, 0)
   const selectedPosition = positions[selectedIndex]
-  const selectedX = selectedPosition
-    ? point(selectedPosition.turn, selectedPosition.blackWinRate)[0]
-    : inset
+  const selectedX =
+    dragCursorX ??
+    (selectedPosition
+      ? point(selectedPosition.turn, selectedPosition.blackWinRate)[0]
+      : inset)
   const detailWidth = 156
   const detailX =
     selectedX + detailWidth + 14 > width
@@ -565,7 +568,11 @@ function WinRatePanel({
   }
   const selectNearestPosition = (clientX: number, svg: SVGSVGElement) => {
     const bounds = svg.getBoundingClientRect()
-    const chartX = ((clientX - bounds.left) / bounds.width) * width
+    const chartX = Math.min(
+      width - inset,
+      Math.max(inset, ((clientX - bounds.left) / bounds.width) * width),
+    )
+    setDragCursorX(chartX)
     const nearestIndex = positions.reduce((bestIndex, value, index) => {
       const best = positions[bestIndex]
       return !best ||
@@ -622,6 +629,7 @@ function WinRatePanel({
       dragState.current.pointerId !== event.pointerId
     )
       return
+    if (dragState.current.status === 'cursor') setDragCursorX(undefined)
     dragState.current = {status: 'idle'}
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId)

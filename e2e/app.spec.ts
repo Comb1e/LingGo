@@ -34,6 +34,15 @@ test('creates a default 19x19 human game and plays a move', async ({
     cursorLine.y + cursorLine.height / 2,
   )
   await page.mouse.down()
+  const middleX = (cursorLine.x + firstTurnDot.x) / 2
+  await page.mouse.move(middleX, cursorLine.y + cursorLine.height / 2, {
+    steps: 3,
+  })
+  await expect
+    .poll(
+      async () => (await page.locator('.chart-cursor-line').boundingBox())?.x,
+    )
+    .toBeLessThan(cursorLine.x - 50)
   await page.mouse.move(
     firstTurnDot.x + firstTurnDot.width / 2,
     firstTurnDot.y + firstTurnDot.height / 2,
@@ -61,6 +70,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   page,
 }, testInfo) => {
   await page.goto('/settings')
+  await expect(page.getByLabel('Ordinary-game visits')).toHaveValue('2000')
   await page.getByRole('button', {name: 'Test KataGo'}).click()
   await expect(page.getByText('Deterministic KataGo is ready.')).toBeVisible()
 
@@ -68,6 +78,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByRole('heading', {name: 'Benchmark', exact: true}),
   ).toBeVisible()
+  await expect(page.getByLabel('KataGo visits')).toHaveValue('2000')
   await page.getByRole('button', {name: 'Start benchmark'}).click()
   await expect(page).toHaveURL(/\/benchmarks\//)
   await expect(page.getByText('Completed')).toBeVisible()

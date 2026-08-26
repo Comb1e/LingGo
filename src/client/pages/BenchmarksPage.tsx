@@ -3,6 +3,7 @@ import {ArrowRight, Gauge, Play, Trash2} from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
+import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
 import type {Color} from '../../shared/types'
 import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader, StatusBadge} from '../components'
@@ -15,7 +16,7 @@ export function BenchmarksPage() {
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [finalColor, setFinalColor] = useState<Color>('B')
-  const [visits, setVisits] = useState(500)
+  const [visits, setVisits] = useState(DEFAULT_KATAGO_VISITS)
   const [feedback, setFeedback] = useState(true)
   const [notebookMode, setNotebookMode] = useState<'reset' | 'continue'>('reset')
   const create = useMutation({

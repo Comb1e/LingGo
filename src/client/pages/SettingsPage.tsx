@@ -2,6 +2,7 @@ import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {Activity, BookOpen, Download, KeyRound, Pencil, Save, Trash2, X} from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
+import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
 import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader} from '../components'
 import {Markdown} from '../Markdown'
@@ -29,7 +30,10 @@ export function SettingsPage() {
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
   const [kataDraft, setKataDraft] = useState({
-    executablePath: '', modelPath: '', configPath: '', analysisVisits: 500,
+    executablePath: '',
+    modelPath: '',
+    configPath: '',
+    analysisVisits: DEFAULT_KATAGO_VISITS,
   })
   const [kataEdited, setKataEdited] = useState(false)
   const [kataResult, setKataResult] = useState('')
