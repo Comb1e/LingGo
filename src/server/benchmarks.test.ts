@@ -89,6 +89,38 @@ describe('benchmark scoring and prompts', () => {
       .toContain('1. B A19 [0,0]; captured 1 at B18 [1,1]')
   })
 
+  it('includes the LLM comments and reasoning in training and final move prompts', () => {
+    const snapshot = makeSnapshot(19, 7.5, [
+      {
+        number: 1,
+        color: 'B',
+        action: 'play',
+        point: [3, 15],
+        coordinate: 'D4',
+        comment: 'Take the open corner.',
+        reasoning: 'This leaves flexible extensions.',
+        captured: 0,
+      },
+      {
+        number: 2,
+        color: 'W',
+        action: 'play',
+        point: [15, 3],
+        coordinate: 'Q16',
+        comment: 'KataGo move.',
+        captured: 0,
+      },
+    ])
+
+    for (const phase of ['training', 'final'] as const) {
+      const prompt = makeBenchmarkMovePrompt(snapshot, '', {phase})
+      expect(prompt).toContain(
+        '1. B D4 [3,15]; your comment: "Take the open corner."; your reasoning: "This leaves flexible extensions."',
+      )
+      expect(prompt).not.toContain('your comment: "KataGo move."')
+    }
+  })
+
   it('marks every game and move in sequence with all recorded comments and thoughts', () => {
     const first = makeSnapshot(19, 7.5, [{
       number: 1,

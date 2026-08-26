@@ -294,10 +294,7 @@ export function makePrompt(
   const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
     ? snapshot.moves
-        .map(
-          (move) =>
-            `${move.number}. ${move.color} ${move.action === 'play' ? move.coordinate : move.action}${formatCapturedLocations(move, snapshot.size)}`,
-        )
+        .map((move) => formatPromptMove(move, snapshot, false))
         .join('\n')
     : '(none)'
   return [
@@ -355,10 +352,9 @@ export function makeBenchmarkMovePrompt(
   const ownCaptures = snapshot.captures[snapshot.toMove]
   const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
-    ? snapshot.moves.map((move) => {
-        const point = move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
-        return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}`
-      }).join('\n')
+    ? snapshot.moves
+        .map((move) => formatPromptMove(move, snapshot, true))
+        .join('\n')
     : '(none)'
   const sections = [
     '1. GO RULES',
@@ -458,6 +454,20 @@ function formatCapturedLocations(move: GameSnapshot['moves'][number], size: Boar
   return `; captured ${move.capturedPoints.length} at ${move.capturedPoints
     .map((point) => `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`)
     .join(', ')}`
+}
+
+function formatPromptMove(
+  move: GameSnapshot['moves'][number],
+  snapshot: GameSnapshot,
+  includePoint: boolean,
+) {
+  const point =
+    includePoint && move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
+  const ownMove =
+    move.color === snapshot.toMove
+      ? `; your comment: ${JSON.stringify(move.comment ?? '')}; your reasoning: ${JSON.stringify(move.reasoning ?? '')}`
+      : ''
+  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}${ownMove}`
 }
 
 function pointName(x: number, y: number, size: number): string {

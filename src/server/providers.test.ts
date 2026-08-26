@@ -97,6 +97,48 @@ describe('provider normalization', () => {
     )
   })
 
+  it('includes comments and reasoning for every previous move by this player', () => {
+    const snapshot = emptySnapshot()
+    snapshot.moves = [
+      {
+        number: 1,
+        color: 'B',
+        action: 'play',
+        point: [2, 2],
+        coordinate: 'C7',
+        comment: 'Build outward.\nKeep sente.',
+        reasoning: 'I compared both corners.',
+        captured: 0,
+      },
+      {
+        number: 2,
+        color: 'W',
+        action: 'play',
+        point: [3, 3],
+        coordinate: 'D6',
+        comment: 'Opponent comment',
+        reasoning: 'Opponent private reasoning',
+        captured: 0,
+      },
+      {
+        number: 3,
+        color: 'B',
+        action: 'pass',
+        captured: 0,
+      },
+    ]
+
+    const prompt = makePrompt(snapshot)
+    expect(prompt).toContain(
+      '1. B C7; your comment: "Build outward.\\nKeep sente."; your reasoning: "I compared both corners."',
+    )
+    expect(prompt).toContain(
+      '3. B pass; your comment: ""; your reasoning: ""',
+    )
+    expect(prompt).not.toContain('Opponent comment')
+    expect(prompt).not.toContain('Opponent private reasoning')
+  })
+
   it('states when no playing style is configured', () => {
     expect(makePrompt(emptySnapshot())).toContain('2. PLAYING STYLE\n(none)')
   })
