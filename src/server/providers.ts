@@ -39,7 +39,7 @@ const modelMoveSchema = z
   })
   .strict()
 
-const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60_000
+const DEFAULT_PROVIDER_TIMEOUT_MS = 5 * 60_000
 
 export interface PlayerAdapter {
   requestAction(
