@@ -1,9 +1,18 @@
 import {afterEach, describe, expect, it} from 'vitest'
-import {readFileSync} from 'node:fs'
+import {mkdtempSync, readFileSync, rmSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import Database from 'better-sqlite3'
 import {Store} from './database'
 
 let store: Store | undefined
-afterEach(() => store?.close())
+let temporaryDirectory: string | undefined
+afterEach(() => {
+  store?.close()
+  store = undefined
+  if (temporaryDirectory) rmSync(temporaryDirectory, {recursive: true})
+  temporaryDirectory = undefined
+})
 
 describe('database migrations', () => {
   it('runs once and seeds a credential-free profile', () => {
@@ -22,6 +31,7 @@ describe('database migrations', () => {
       {version: 6},
       {version: 7},
       {version: 8},
+      {version: 9},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
   })
@@ -72,6 +82,45 @@ describe('database migrations', () => {
     })
 
     expect(store.getProfile('non-reasoning-profile')?.reasoningEnabled).toBe(false)
+  })
+
+  it('migrates databases that already used historical migration 8', () => {
+    temporaryDirectory = mkdtempSync(join(tmpdir(), 'linggo-migration-'))
+    const filename = join(temporaryDirectory, 'linggo.db')
+    const legacy = new Database(filename)
+    legacy.exec(
+      readFileSync(new URL('./migrations/001_initial.sql', import.meta.url), 'utf8'),
+    )
+    legacy.exec(
+      readFileSync(
+        new URL(
+          './migrations/008_add_reasoning_response_field.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    )
+    legacy.exec(
+      `CREATE TABLE schema_migrations (
+         version INTEGER PRIMARY KEY,
+         applied_at TEXT NOT NULL
+       );
+       INSERT INTO schema_migrations (version, applied_at)
+       VALUES (1, CURRENT_TIMESTAMP), (8, CURRENT_TIMESTAMP);`,
+    )
+    legacy.close()
+
+    store = new Store(filename)
+
+    const columns = store.db
+      .prepare('PRAGMA table_info(player_profiles)')
+      .all() as Array<{name: string}>
+    expect(columns.map(({name}) => name)).toContain('reasoning_enabled')
+    expect(
+      store.db
+        .prepare('SELECT version FROM schema_migrations WHERE version = 9')
+        .get(),
+    ).toEqual({version: 9})
   })
 
   it('lists player profiles alphabetically regardless of creation order or case', () => {
