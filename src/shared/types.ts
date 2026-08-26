@@ -75,6 +75,7 @@ export interface Move {
   outputTokens?: number
   model?: string
   retries?: number
+  retryErrors?: string[]
   forced?: boolean
 }
 
@@ -109,6 +110,7 @@ export interface Game {
   operatorConfirmationRequired?: boolean
   result?: string
   error?: string
+  providerErrors?: string[]
   pending?: boolean
   modelTurn?: ModelTurnState
   score?: Score
@@ -201,6 +203,7 @@ export interface LlmActionResult {
   outputTokens: number
   model: string
   retries: number
+  retryErrors?: string[]
 }
 
 export interface KataGoSettings {

@@ -32,6 +32,7 @@ import {
 import {
   MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
+  shouldRetryProviderError,
   type ProviderRetryWait,
   waitForProviderRetry,
 } from './network'
@@ -221,6 +222,7 @@ export class GameService {
     this.modelTurns.delete(id)
     if (game.status === 'active') game.status = 'paused'
     game.error = error
+    game.providerErrors = [error]
     game.autoplay = false
     return this.commit(game)
   }
@@ -421,8 +423,10 @@ export class GameService {
       outputTokens: llm?.outputTokens,
       model: llm?.model,
       retries: llm?.retries,
+      retryErrors: llm?.retryErrors,
     }
     game.moves.push(move)
+    if (llm) game.providerErrors = undefined
     if (inGameReflections.length)
       game.inGameReflections = mergeInGameReflections(
         game.inGameReflections,
@@ -480,6 +484,7 @@ export class GameService {
       let feedback = ''
       let outputFailures = 0
       let apiFailures = 0
+      const retryErrors = [...(this.requireGame(id).providerErrors ?? [])]
       while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
         const game = this.requireGame(id)
         if (game.status !== 'active' || !game.autoplay) return
@@ -512,6 +517,7 @@ export class GameService {
           )
           if (controller.signal.aborted) return
           result.retries = outputFailures + apiFailures
+          result.retryErrors = retryErrors.length ? retryErrors : undefined
           const latest = this.requireGame(id)
           this.accept(latest, result.action, result)
           return
@@ -524,9 +530,14 @@ export class GameService {
           if (!repairable) {
             apiFailures += 1
             const message = publicProviderError(error)
-            if (apiFailures >= MAX_PROVIDER_API_ATTEMPTS) {
+            retryErrors.push(message)
+            if (
+              !shouldRetryProviderError(error) ||
+              apiFailures >= MAX_PROVIDER_API_ATTEMPTS
+            ) {
               game.status = 'paused'
-              game.error = `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts. The game has been paused. Last error: ${message}`
+              game.error = `LLM API request failed after ${apiFailures} ${apiFailures === 1 ? 'attempt' : 'attempts'}. The game has been paused. Last error: ${message}`
+              game.providerErrors = retryErrors
               game.autoplay = false
               this.commit(game)
               return
@@ -538,7 +549,7 @@ export class GameService {
               lastError: message,
             })
             this.emit(id)
-            await this.retryWait(apiFailures, controller.signal)
+            await this.retryWait(apiFailures, controller.signal, error)
             continue
           }
           outputFailures += 1

@@ -232,6 +232,85 @@ describe('game orchestration', () => {
     })
     await waitFor(() => service.get(game.id)?.moves.length === 1)
     expect(service.get(game.id)?.moves[0].retries).toBe(1)
+    expect(service.get(game.id)?.moves[0].retryErrors).toEqual([
+      'rate limited',
+    ])
+  })
+
+  it('keeps provider failures through resume and records them on recovery', async () => {
+    store = new Store(':memory:')
+    let requests = 0
+    const adapter = {
+      async requestAction() {
+        requests += 1
+        if (requests <= 5) throw new Error(`TLS failure ${requests}`)
+        return {
+          action: {action: 'pass' as const, comment: 'Recovered.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter, async () => {})
+
+    const created = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: 'builtin-fake-profile'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+
+    await waitFor(() => service.get(created.id)?.status === 'paused')
+    const paused = service.get(created.id)!
+    expect(paused.providerErrors).toHaveLength(5)
+    await service.command(created.id, {
+      expectedVersion: paused.version,
+      type: 'resume',
+    })
+    await waitFor(() => service.get(created.id)?.moves.length === 1)
+
+    const recovered = service.get(created.id)!
+    expect(recovered.providerErrors).toBeUndefined()
+    expect(recovered.moves[0].retryErrors).toHaveLength(5)
+  })
+
+  it('pauses immediately for a permanent provider request error', async () => {
+    store = new Store(':memory:')
+    let requests = 0
+    let waits = 0
+    const adapter = {
+      async requestAction() {
+        requests += 1
+        throw Object.assign(new Error('Unsupported request field'), {
+          statusCode: 400,
+          isRetryable: false,
+        })
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(
+      store,
+      () => adapter,
+      async () => {
+        waits += 1
+      },
+    )
+
+    const game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: 'builtin-fake-profile'},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+
+    await waitFor(() => service.get(game.id)?.status === 'paused')
+    expect(requests).toBe(1)
+    expect(waits).toBe(0)
+    expect(service.get(game.id)?.error).toContain('after 1 attempt')
   })
 
   it('allows operator recovery actions after a model error', async () => {

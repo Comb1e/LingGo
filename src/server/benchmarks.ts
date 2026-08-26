@@ -19,6 +19,7 @@ import {NotebookStore} from './notebooks'
 import {
   MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
+  shouldRetryProviderError,
   type ProviderRetryWait,
   waitForProviderRetry,
 } from './network'
@@ -295,6 +296,7 @@ export class BenchmarkService {
         let feedback = ''
         let outputFailures = 0
         let apiFailures = 0
+        const retryErrors = [...(game.providerErrors ?? [])]
         this.games.setAutomatedTurnState(game.id, {
           phase: 'requesting',
           attempt: 1,
@@ -320,6 +322,9 @@ export class BenchmarkService {
               )
               addUsage(run, response)
               response.retries = outputFailures + apiFailures
+              response.retryErrors = retryErrors.length
+                ? retryErrors
+                : undefined
               game = this.games.acceptAutomated(
                 game.id,
                 response.action,
@@ -333,9 +338,13 @@ export class BenchmarkService {
               if (!isRepairableMoveError(error)) {
                 apiFailures += 1
                 const message = publicProviderError(error)
-                if (apiFailures >= MAX_PROVIDER_API_ATTEMPTS)
+                retryErrors.push(message)
+                if (
+                  !shouldRetryProviderError(error) ||
+                  apiFailures >= MAX_PROVIDER_API_ATTEMPTS
+                )
                   throw new Error(
-                    `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts. The benchmark has been paused. Last error: ${message}`,
+                    `LLM API request failed after ${apiFailures} ${apiFailures === 1 ? 'attempt' : 'attempts'}. The benchmark has been paused. Last error: ${message}`,
                     {cause: error},
                   )
                 this.games.setAutomatedTurnState(game.id, {
@@ -344,7 +353,7 @@ export class BenchmarkService {
                   maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
                   lastError: message,
                 })
-                await this.retryWait(apiFailures, signal)
+                await this.retryWait(apiFailures, signal, error)
                 continue
               }
               outputFailures += 1
@@ -469,12 +478,15 @@ export class BenchmarkService {
         } catch (error) {
           if (signal.aborted) throw error
           lastError = publicProviderError(error)
-          if (attempt >= MAX_PROVIDER_API_ATTEMPTS)
+          if (
+            !shouldRetryProviderError(error) ||
+            attempt >= MAX_PROVIDER_API_ATTEMPTS
+          )
             throw new Error(
-              `LLM API request failed after ${MAX_PROVIDER_API_ATTEMPTS} attempts during reflection. The benchmark has been paused. Last error: ${lastError}`,
+              `LLM API request failed after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'} during reflection. The benchmark has been paused. Last error: ${lastError}`,
               {cause: error},
             )
-          await this.retryWait(attempt, signal)
+          await this.retryWait(attempt, signal, error)
         }
       }
       throw new Error('Reflection request failed')

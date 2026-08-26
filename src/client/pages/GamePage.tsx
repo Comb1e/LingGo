@@ -508,6 +508,9 @@ export function GamePage() {
                 {game.commentsVisible ? <Eye /> : <EyeOff />}
               </button>
             </header>
+            {game.providerErrors?.length && (
+              <ProviderErrorHistory errors={game.providerErrors} />
+            )}
             <div className="move-list">
               {game.moves.length ? (
                 [...game.moves].reverse().map((move) => (
@@ -526,6 +529,9 @@ export function GamePage() {
                     {move.inGameReflections?.length && (
                       <MoveReflections reflections={move.inGameReflections} />
                     )}
+                    {move.retryErrors?.length && (
+                      <ProviderErrorHistory errors={move.retryErrors} />
+                    )}
                   </div>
                 ))
               ) : (
@@ -536,6 +542,20 @@ export function GamePage() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function ProviderErrorHistory({errors}: {errors: string[]}) {
+  const {t} = useTranslation()
+  return (
+    <details className="provider-error-history">
+      <summary>{t('apiRecoveryHistory', {count: errors.length})}</summary>
+      <ol>
+        {errors.map((error, index) => (
+          <li key={`${index}-${error}`}>{error}</li>
+        ))}
+      </ol>
+    </details>
   )
 }
 

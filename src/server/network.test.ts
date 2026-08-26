@@ -1,7 +1,9 @@
 import {describe, expect, it} from 'vitest'
 import {
   configureNetworkProxy,
+  providerFailure,
   publicProviderError,
+  shouldRetryProviderError,
   verifyDedicatedProxy,
 } from './network'
 
@@ -48,5 +50,47 @@ describe('provider network configuration', () => {
     )
     expect(message).toContain('enable Allow LAN in Clash')
     expect(message).toContain('LINGGO_PROXY_URL')
+  })
+
+  it('preserves nested transport causes and socket error codes', () => {
+    const socketError = Object.assign(
+      new Error(
+        'Client network socket disconnected before secure TLS connection was established',
+      ),
+      {code: 'ECONNRESET'},
+    )
+    const error = Object.assign(new Error('Cannot connect to API'), {
+      isRetryable: true,
+      cause: new TypeError('fetch failed', {cause: socketError}),
+    })
+
+    expect(providerFailure(error)).toMatchObject({
+      kind: 'network',
+      retryable: true,
+    })
+    expect(publicProviderError(error)).toContain('fetch failed')
+    expect(publicProviderError(error)).toContain('[ECONNRESET]')
+  })
+
+  it('does not retry permanent provider request errors', () => {
+    const error = Object.assign(new Error('Unsupported request field'), {
+      statusCode: 400,
+      isRetryable: false,
+    })
+    expect(shouldRetryProviderError(error)).toBe(false)
+    expect(providerFailure(error).kind).toBe('request')
+  })
+
+  it('reads retry-after headers case-insensitively', () => {
+    const error = Object.assign(new Error('Rate limited'), {
+      statusCode: 429,
+      isRetryable: true,
+      responseHeaders: {'Retry-After-Ms': '4250'},
+    })
+    expect(providerFailure(error)).toMatchObject({
+      kind: 'rate-limit',
+      retryable: true,
+      retryAfterMs: 4_250,
+    })
   })
 })

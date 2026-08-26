@@ -7,7 +7,23 @@ export const MAX_PROVIDER_API_ATTEMPTS = 5
 export type ProviderRetryWait = (
   failedAttempts: number,
   signal: AbortSignal,
+  error?: unknown,
 ) => Promise<void>
+
+export type ProviderFailureKind =
+  | 'network'
+  | 'rate-limit'
+  | 'timeout'
+  | 'server'
+  | 'request'
+  | 'unknown'
+
+export interface ProviderFailure {
+  kind: ProviderFailureKind
+  message: string
+  retryable: boolean
+  retryAfterMs?: number
+}
 
 type ProxyConnector = (proxy: URL, timeoutMs: number) => Promise<void>
 
@@ -56,8 +72,13 @@ export async function verifyDedicatedProxy(
 export async function waitForProviderRetry(
   failedAttempts: number,
   signal: AbortSignal,
+  error?: unknown,
 ) {
-  const delayMs = Math.min(4_000, 500 * 2 ** (failedAttempts - 1))
+  const failure = providerFailure(error)
+  if (failure.kind === 'network') configureNetworkProxy()
+  const delayMs =
+    failure.retryAfterMs ??
+    Math.min(30_000, 2_000 * 2 ** (failedAttempts - 1))
   await new Promise<void>((resolve, reject) => {
     const finish = () => {
       signal.removeEventListener('abort', abort)
@@ -78,8 +99,11 @@ export function publicProviderError(
   error: unknown,
   fallback = 'Provider request failed',
 ) {
-  const message = error instanceof Error ? error.message : fallback
-  const redacted = message.replace(/(?:sk-|AIza)[A-Za-z0-9_-]+/g, '[redacted]')
+  const failure = providerFailure(error, fallback)
+  const redacted = failure.message.replace(
+    /(?:sk-|AIza)[A-Za-z0-9_-]+/g,
+    '[redacted]',
+  )
   if (
     /Client network socket disconnected before secure TLS connection was established/i.test(
       redacted,
@@ -87,6 +111,64 @@ export function publicProviderError(
   )
     return `${redacted} If LingGo runs in WSL with Clash Verge on Windows, enable Allow LAN in Clash and set LINGGO_PROXY_URL to its reachable HTTP proxy.`
   return redacted
+}
+
+export function providerFailure(
+  error: unknown,
+  fallback = 'Provider request failed',
+): ProviderFailure {
+  const chain = errorChain(error)
+  const apiError = chain.find(
+    (value) =>
+      typeof value.statusCode === 'number' ||
+      typeof value.isRetryable === 'boolean',
+  )
+  const statusCode = apiError?.statusCode
+  const messages = chain
+    .map((value) => value.message)
+    .filter((message): message is string => Boolean(message?.trim()))
+  const codes = chain
+    .map((value) => value.code)
+    .filter((code): code is string => Boolean(code))
+  const details = [...new Set([...messages, ...codes.map((code) => `[${code}]`)])]
+  const message = details.length ? details.join(' Caused by: ') : fallback
+  const text = `${messages.join(' ')} ${codes.join(' ')}`
+  const network =
+    /network|socket|tls|fetch failed|failed to fetch|connection (?:reset|refused)|econnreset|econnrefused|epipe|enotfound|und_err/i.test(
+      text,
+    )
+  const timeout =
+    /timeout|timed out|abortsignal\.timeout|etimedout/i.test(text)
+  const rateLimit = statusCode === 429 || /rate.?limit|too many requests/i.test(text)
+  const server = statusCode !== undefined && statusCode >= 500
+  const retryable =
+    apiError?.isRetryable ??
+    (network ||
+      timeout ||
+      rateLimit ||
+      server ||
+      statusCode === undefined)
+
+  return {
+    kind: network
+      ? 'network'
+      : rateLimit
+        ? 'rate-limit'
+        : timeout
+          ? 'timeout'
+          : server
+            ? 'server'
+            : statusCode !== undefined
+              ? 'request'
+              : 'unknown',
+    message,
+    retryable,
+    retryAfterMs: retryDelayFromHeaders(apiError?.responseHeaders),
+  }
+}
+
+export function shouldRetryProviderError(error: unknown) {
+  return providerFailure(error).retryable
 }
 
 function validateProxyUrl(value: string) {
@@ -99,6 +181,52 @@ function validateProxyUrl(value: string) {
   if (!['http:', 'https:'].includes(url.protocol))
     throw new Error('LINGGO_PROXY_URL must use http:// or https://')
   return url
+}
+
+interface ErrorDetails {
+  message?: string
+  code?: string
+  statusCode?: number
+  isRetryable?: boolean
+  responseHeaders?: Record<string, string>
+  cause?: unknown
+}
+
+function errorChain(error: unknown) {
+  const values: ErrorDetails[] = []
+  const seen = new Set<unknown>()
+  let current = error
+  while (current && !seen.has(current) && values.length < 8) {
+    seen.add(current)
+    if (typeof current === 'object') {
+      const value = current as ErrorDetails
+      values.push(value)
+      current = value.cause
+    } else {
+      values.push({message: String(current)})
+      break
+    }
+  }
+  return values
+}
+
+function retryDelayFromHeaders(headers: Record<string, string> | undefined) {
+  if (!headers) return undefined
+  const normalized = Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+  )
+  const retryAfterMs = Number(normalized['retry-after-ms'])
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0)
+    return Math.min(60_000, retryAfterMs)
+  const retryAfter = normalized['retry-after']
+  if (!retryAfter) return undefined
+  const seconds = Number(retryAfter)
+  const value = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(retryAfter) - Date.now()
+  return Number.isFinite(value) && value >= 0
+    ? Math.min(60_000, value)
+    : undefined
 }
 
 function connectToProxy(proxy: URL, timeoutMs: number) {

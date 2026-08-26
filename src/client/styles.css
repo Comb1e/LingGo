@@ -1274,6 +1274,35 @@ svg {
   color: #58635c;
   line-height: 1.45;
 }
+.provider-error-history {
+  min-width: 0;
+  padding: 8px 14px;
+  color: #75500e;
+  background: #fff8e8;
+  border-bottom: 1px solid #ead39f;
+  font-size: 12px;
+}
+.move-row .provider-error-history {
+  grid-column: 2 / -1;
+  padding: 7px 9px;
+  border: 1px solid #ead39f;
+  border-radius: 5px;
+}
+.provider-error-history summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.provider-error-history ol {
+  margin: 7px 0 0;
+  padding-left: 20px;
+}
+.provider-error-history li {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.provider-error-history li + li {
+  margin-top: 5px;
+}
 .move-reasoning {
   grid-column: 2 / -1;
   min-width: 0;
