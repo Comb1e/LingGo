@@ -16,6 +16,8 @@ import {
   Trash2,
   X,
   XCircle,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import {useCallback, useEffect, useState} from 'react'
 import {useTranslation} from 'react-i18next'
@@ -365,9 +367,7 @@ export function GamePage() {
             moveCount={game.moves.length}
             busy={analysisMutation.isPending || backfillMutation.isPending}
             onToggle={(enabled) => analysisMutation.mutate(enabled)}
-            onShare={(shareWithLlm) =>
-              analysisMutation.mutate({shareWithLlm})
-            }
+            onShare={(shareWithLlm) => analysisMutation.mutate({shareWithLlm})}
             onAnalyze={() => backfillMutation.mutate()}
           />
         </section>
@@ -515,8 +515,10 @@ function WinRatePanel({
   onAnalyze: () => void
 }) {
   const {t} = useTranslation()
+  const [chartScale, setChartScale] = useState(1)
   const positions = analysis?.positions ?? []
-  const width = 600
+  const baseWidth = 600
+  const width = baseWidth * chartScale
   const height = 180
   const inset = 22
   const maxTurn = Math.max(moveCount, 1)
@@ -533,10 +535,14 @@ function WinRatePanel({
   return (
     <section className="winrate-panel">
       <header>
-        <span><Activity /> <strong>{t('winRate')}</strong></span>
+        <span>
+          <Activity /> <strong>{t('winRate')}</strong>
+        </span>
         <div>
           {positions.length < moveCount + 1 && (
-            <Button disabled={busy} onClick={onAnalyze}>{t('analyze')}</Button>
+            <Button disabled={busy} onClick={onAnalyze}>
+              {t('analyze')}
+            </Button>
           )}
           <label className="switch-field compact-switch">
             <input
@@ -563,25 +569,95 @@ function WinRatePanel({
       {analysis?.error && <p className="analysis-error">{analysis.error}</p>}
       {positions.length ? (
         <>
-          <svg className="winrate-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('winRateChart')}>
-            <line x1={inset} y1={height / 2} x2={width - inset} y2={height / 2} className="chart-midline" />
-            <path d={smoothCurve(blackPoints)} className="chart-line black-line" />
-            <path d={smoothCurve(whitePoints)} className="chart-line white-line" />
-            {positions.map((value) => (
-              <g key={value.turn}>
-                <circle cx={point(value.turn, value.blackWinRate)[0]} cy={point(value.turn, value.blackWinRate)[1]} r="3.5" className="chart-dot black-dot" tabIndex={0}>
-                  <title>{`${t('turn')} ${value.turn}: ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
-                </circle>
-                <circle cx={point(value.turn, value.whiteWinRate)[0]} cy={point(value.turn, value.whiteWinRate)[1]} r="3.5" className="chart-dot white-dot" tabIndex={0}>
-                  <title>{`${t('turn')} ${value.turn}: ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
-                </circle>
-              </g>
-            ))}
-          </svg>
-          <div className="chart-legend"><span><i className="legend-black" />{t('black')}</span><span><i className="legend-white" />{t('white')}</span></div>
+          <div className="chart-viewport">
+            <svg
+              className="winrate-chart"
+              style={{width: `${chartScale * 100}%`}}
+              viewBox={`0 0 ${width} ${height}`}
+              role="img"
+              aria-label={t('winRateChart')}
+            >
+              <line
+                x1={inset}
+                y1={height / 2}
+                x2={width - inset}
+                y2={height / 2}
+                className="chart-midline"
+              />
+              <path
+                d={smoothCurve(blackPoints)}
+                className="chart-line black-line"
+              />
+              <path
+                d={smoothCurve(whitePoints)}
+                className="chart-line white-line"
+              />
+              {positions.map((value) => (
+                <g key={value.turn}>
+                  <circle
+                    cx={point(value.turn, value.blackWinRate)[0]}
+                    cy={point(value.turn, value.blackWinRate)[1]}
+                    r="3.5"
+                    className="chart-dot black-dot"
+                    tabIndex={0}
+                  >
+                    <title>{`${t('turn')} ${value.turn}: ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
+                  </circle>
+                  <circle
+                    cx={point(value.turn, value.whiteWinRate)[0]}
+                    cy={point(value.turn, value.whiteWinRate)[1]}
+                    r="3.5"
+                    className="chart-dot white-dot"
+                    tabIndex={0}
+                  >
+                    <title>{`${t('turn')} ${value.turn}: ${t('white')} ${(value.whiteWinRate * 100).toFixed(1)}%, ${t('black')} ${(value.blackWinRate * 100).toFixed(1)}%, ${t('blackScoreLead')} ${value.blackScoreLead.toFixed(1)}`}</title>
+                  </circle>
+                </g>
+              ))}
+            </svg>
+          </div>
+          <div className="chart-footer">
+            <div className="chart-scale" aria-label={t('chartScale')}>
+              <Button
+                className="icon-button compact-icon"
+                title={t('zoomOut')}
+                aria-label={t('zoomOut')}
+                disabled={chartScale === 1}
+                onClick={() =>
+                  setChartScale((value) => Math.max(1, value - 0.5))
+                }
+              >
+                <ZoomOut />
+              </Button>
+              <output aria-live="polite">{chartScale.toFixed(1)}x</output>
+              <Button
+                className="icon-button compact-icon"
+                title={t('zoomIn')}
+                aria-label={t('zoomIn')}
+                disabled={chartScale === 4}
+                onClick={() =>
+                  setChartScale((value) => Math.min(4, value + 0.5))
+                }
+              >
+                <ZoomIn />
+              </Button>
+            </div>
+            <div className="chart-legend">
+              <span>
+                <i className="legend-black" />
+                {t('black')}
+              </span>
+              <span>
+                <i className="legend-white" />
+                {t('white')}
+              </span>
+            </div>
+          </div>
         </>
       ) : (
-        <p className="muted analysis-empty">{analysis?.status === 'running' ? t('analyzing') : t('noAnalysis')}</p>
+        <p className="muted analysis-empty">
+          {analysis?.status === 'running' ? t('analyzing') : t('noAnalysis')}
+        </p>
       )}
     </section>
   )

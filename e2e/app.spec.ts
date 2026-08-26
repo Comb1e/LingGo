@@ -20,6 +20,17 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect
     .poll(() => page.locator('.black-line').getAttribute('d'))
     .toContain(' C ')
+  const chart = page.locator('.winrate-chart')
+  const initialChartWidth = await chart.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  )
+  await page.getByRole('button', {name: 'Zoom in'}).click()
+  await expect(page.getByText('1.5x')).toBeVisible()
+  await expect
+    .poll(() =>
+      chart.evaluate((element) => element.getBoundingClientRect().width),
+    )
+    .toBeGreaterThan(initialChartWidth)
   const shareToggle = page.getByLabel('Share with LLM')
   await expect(shareToggle).toBeVisible()
   const sharingSaved = page.waitForResponse(
@@ -33,20 +44,29 @@ test('creates a default 19x19 human game and plays a move', async ({
   await page.screenshot({path: testInfo.outputPath('game.png'), fullPage: true})
 })
 
-test('tests KataGo settings and completes a benchmark with a notebook', async ({page}, testInfo) => {
+test('tests KataGo settings and completes a benchmark with a notebook', async ({
+  page,
+}, testInfo) => {
   await page.goto('/settings')
   await page.getByRole('button', {name: 'Test KataGo'}).click()
   await expect(page.getByText('Deterministic KataGo is ready.')).toBeVisible()
 
   await page.goto('/benchmarks')
-  await expect(page.getByRole('heading', {name: 'Benchmark', exact: true})).toBeVisible()
+  await expect(
+    page.getByRole('heading', {name: 'Benchmark', exact: true}),
+  ).toBeVisible()
   await page.getByRole('button', {name: 'Start benchmark'}).click()
   await expect(page).toHaveURL(/\/benchmarks\//)
   await expect(page.getByText('Completed')).toBeVisible()
   await expect(page.getByText('LingGo score')).toBeVisible()
   await expect(page.locator('.benchmark-games a')).toHaveCount(11)
-  await expect(page.getByText('Check liberties before every move.')).toBeVisible()
-  await page.screenshot({path: testInfo.outputPath('benchmark-complete.png'), fullPage: true})
+  await expect(
+    page.getByText('Check liberties before every move.'),
+  ).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('benchmark-complete.png'),
+    fullPage: true,
+  })
 
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByTitle('Delete').click()
