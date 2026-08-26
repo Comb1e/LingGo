@@ -1,4 +1,7 @@
 import {afterEach, beforeEach, describe, expect, it} from 'vitest'
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {createApp} from './app'
 import {Store} from './database'
 
@@ -12,6 +15,32 @@ beforeEach(() => {
 afterEach(() => app.close())
 
 describe('game API', () => {
+  it('serves client assets created after server startup', async () => {
+    const clientDir = mkdtempSync(join(tmpdir(), 'linggo-client-'))
+    writeFileSync(join(clientDir, 'index.html'), '<div id="root"></div>')
+    const production = createApp({
+      store: new Store(':memory:'),
+      clientDir,
+    }).app
+    await production.ready()
+    writeFileSync(join(clientDir, 'index-new.js'), 'window.lingGoLoaded = true')
+
+    try {
+      const response = await production.inject({
+        method: 'GET',
+        url: '/index-new.js',
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['content-type']).toContain(
+        'application/javascript',
+      )
+      expect(response.body).toBe('window.lingGoLoaded = true')
+    } finally {
+      await production.close()
+      rmSync(clientDir, {recursive: true, force: true})
+    }
+  })
+
   it('creates, mutates, and exports a game', async () => {
     const created = await app.inject({
       method: 'POST',

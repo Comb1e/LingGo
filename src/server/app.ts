@@ -73,7 +73,14 @@ const benchmarkSchema = z.object({
   notebookMode: z.enum(['reset', 'continue']).default('reset'),
 })
 
-export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; notebookStore?: NotebookStore} = {}) {
+export function createApp(
+  options: {
+    store?: Store
+    kataGo?: KataGoAnalyzer
+    notebookStore?: NotebookStore
+    clientDir?: string
+  } = {},
+) {
   const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
   const store = options.store ?? new Store()
   const games = new GameService(store)
@@ -397,9 +404,12 @@ export function createApp(options: {store?: Store; kataGo?: KataGoAnalyzer; note
     return reply.code(status).send({error: message})
   })
 
-  const clientDir = join(process.cwd(), 'dist', 'client')
-  if (process.env.NODE_ENV === 'production' && existsSync(clientDir)) {
-    void app.register(fastifyStatic, {root: clientDir, wildcard: false})
+  const clientDir = options.clientDir ?? join(process.cwd(), 'dist', 'client')
+  if (
+    (process.env.NODE_ENV === 'production' || options.clientDir) &&
+    existsSync(clientDir)
+  ) {
+    void app.register(fastifyStatic, {root: clientDir})
     app.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith('/api/'))
         return reply.code(404).send({error: 'Not found'})
