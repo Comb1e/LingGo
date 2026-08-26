@@ -51,7 +51,7 @@ Enable **Share with LLM** per game to include the complete turn-aligned KataGo w
 
 Benchmark trains one saved profile through ten sequential 19x19 games against KataGo, alternating colors, then scores one final game in the selected color. All games use Chinese area scoring, komi 7.5, a 722-move cap, and the configured 25–10,000 KataGo visits. Only one benchmark may be active or paused.
 
-Training can expose turn-aligned win rates to the LLM. After each training game, the model rewrites its own consolidated Markdown technique notebook. The final prompt contains only rules, that notebook, the one-move instruction, JSON schema, and current position. Human style prompts and KataGo data are omitted. Current notebooks are stored under `data/techniques/`; each run keeps a downloadable snapshot.
+Training can expose turn-aligned win rates to the LLM. During each benchmark game, the model can maintain numbered in-game reflections, revise them by number, and receive the current list with every later move in that game. After each training game, those reflections are folded into the model's consolidated Markdown technique notebook, then cleared before the next game. The final prompt contains only rules, that notebook, the one-move instruction, JSON schema, and current position. Human style prompts and KataGo data are omitted. Current notebooks are stored under `data/techniques/`; each run keeps a downloadable snapshot.
 
 The final 0–100 score equally weights game result and per-move quality derived from KataGo point loss. Set `LINGGO_FAKE_KATAGO=1` to use the deterministic pass-only engine for CI and browser tests; production uses the configured executable.
 

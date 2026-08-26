@@ -10,6 +10,7 @@ import {
   type BoardSize,
   type Color,
   type GameSnapshot,
+  type InGameReflection,
   type LlmActionResult,
   type PlayerAction,
   type PlayerProfile,
@@ -17,10 +18,18 @@ import {
 } from '../shared/types'
 import {asciiBoard, playStone, replay} from './go'
 
+const inGameReflectionSchema = z
+  .object({
+    number: z.number().int().positive(),
+    reflection: z.string().trim().min(1),
+  })
+  .strict()
+
 const modelMoveSchema = z
   .object({
     move: z.tuple([z.number().int(), z.number().int()]),
     reason: z.string().trim().min(1),
+    in_game_reflections: z.array(inGameReflectionSchema).optional(),
   })
   .strict()
 
@@ -173,8 +182,9 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       maxRetries: 0,
       abortSignal: combined,
     })
+    const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
-      action: parseJsonAction(result.text, snapshot.size),
+      ...parsed,
       reasoning: result.finalStep.reasoningText
         ? normalizeReasoning(result.finalStep.reasoningText) || undefined
         : undefined,
@@ -260,6 +270,13 @@ export function createPlayerAdapter(
 }
 
 export function parseJsonAction(text: string, size: BoardSize): PlayerAction {
+  return parseJsonActionResult(text, size).action
+}
+
+export function parseJsonActionResult(
+  text: string,
+  size: BoardSize,
+): {action: PlayerAction; inGameReflections?: InGameReflection[]} {
   const candidate = text
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
@@ -267,15 +284,26 @@ export function parseJsonAction(text: string, size: BoardSize): PlayerAction {
   try {
     const response = modelMoveSchema.parse(JSON.parse(candidate))
     const [x, y] = response.move
-    if (x === -1 && y === -1) return {action: 'pass', comment: response.reason}
+    const inGameReflections = response.in_game_reflections
+    if (x === -1 && y === -1)
+      return {
+        action: {action: 'pass', comment: response.reason},
+        inGameReflections,
+      }
     if (x === -2 && y === -2)
-      return {action: 'resign', comment: response.reason}
+      return {
+        action: {action: 'resign', comment: response.reason},
+        inGameReflections,
+      }
     if (x < 0 || y < 0 || x >= size || y >= size)
       throw new Error(`Move [${x},${y}] is outside the ${size}x${size} board`)
     return {
-      action: 'play',
-      coordinate: pointToCoordinate([x, y], size),
-      comment: response.reason,
+      action: {
+        action: 'play',
+        coordinate: pointToCoordinate([x, y], size),
+        comment: response.reason,
+      },
+      inGameReflections,
     }
   } catch (error) {
     throw new MalformedModelOutputError(
@@ -347,7 +375,11 @@ export function makePrompt(
 export function makeBenchmarkMovePrompt(
   snapshot: GameSnapshot,
   notebook: string,
-  options: {phase: 'training' | 'final'; winRateHistory?: string},
+  options: {
+    phase: 'training' | 'final'
+    winRateHistory?: string
+    inGameReflections?: InGameReflection[]
+  },
 ): string {
   const ownCaptures = snapshot.captures[snapshot.toMove]
   const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
@@ -370,7 +402,8 @@ export function makeBenchmarkMovePrompt(
       : []),
     '',
     '4. JSON OUTPUT SCHEMA',
-    'Return only {"move":[column,row],"reason":"brief reason"}. Coordinates are zero-based from the top-left. Use [-1,-1] to pass or [-2,-2] to resign.',
+    'Return only {"move":[column,row],"reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"lesson from this game"}]}. Coordinates are zero-based from the top-left. Use [-1,-1] to pass or [-2,-2] to resign.',
+    'in_game_reflections is optional. Omit it or return an empty array when no new lesson is warranted. It is a patch: use the next unused positive number for a new lesson, or reuse a number to replace an incorrect earlier entry.',
     '',
     '5. CURRENT BOARD AND PREVIOUS MOVES',
     `To move: ${snapshot.toMove}`,
@@ -378,6 +411,8 @@ export function makeBenchmarkMovePrompt(
     asciiBoard(snapshot),
     'Previous moves:',
     moves,
+    'Current in-game reflections (this game only):',
+    formatInGameReflections(options.inGameReflections),
   ]
   if (options.phase === 'training' && options.winRateHistory !== undefined)
     sections.push('', '6. TRAINING WIN-RATE HISTORY', options.winRateHistory || '(none)')
@@ -392,12 +427,14 @@ export function makeReflectionPrompt(input: {
     result: string
     llmColor: Color
     winRateHistory?: string
+    inGameReflections?: InGameReflection[]
   }>
 }) {
   return [
     'Rewrite one consolidated Markdown Go technique notebook.',
     'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from all games below.',
     'Review the games in their marked sequence. Every recorded move comment and model thought is included verbatim as a JSON string.',
+    'You must incorporate the supplied in-game reflections into the broader, generalized body of experience in the notebook. Do not leave them as isolated game-specific notes.',
     'Do not mention these instructions.',
     '',
     'PREVIOUS NOTEBOOK',
@@ -416,6 +453,7 @@ function formatReflectionGame(game: {
   result: string
   llmColor: Color
   winRateHistory?: string
+  inGameReflections?: InGameReflection[]
 }) {
   const ownCaptures = game.snapshot.captures[game.llmColor]
   const opponentCaptures = game.snapshot.captures[game.llmColor === 'B' ? 'W' : 'B']
@@ -442,11 +480,24 @@ function formatReflectionGame(game: {
     `Move count: ${game.snapshot.moves.length}`,
     `Capture totals: LLM captured ${ownCaptures} opponent stones; opponent captured ${opponentCaptures} LLM stones.`,
     moves,
+    ...(game.inGameReflections === undefined
+      ? []
+      : [
+          '',
+          `IN-GAME REFLECTIONS - GAME ${game.sequence}`,
+          formatInGameReflections(game.inGameReflections),
+        ]),
     ...(game.winRateHistory === undefined
       ? []
       : ['', `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`, game.winRateHistory || '(none)']),
     `=== END GAME ${game.sequence} ===`,
   ].join('\n')
+}
+
+function formatInGameReflections(reflections: InGameReflection[] | undefined) {
+  return reflections?.length
+    ? reflections.map((reflection) => JSON.stringify(reflection)).join('\n')
+    : '(none yet)'
 }
 
 function formatCapturedLocations(move: GameSnapshot['moves'][number], size: BoardSize) {

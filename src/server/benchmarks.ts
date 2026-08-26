@@ -7,6 +7,7 @@ import type {
   BenchmarkRun,
   Color,
   Game,
+  InGameReflection,
   PlayerAction,
   PositionAnalysis,
 } from '../shared/types'
@@ -23,7 +24,11 @@ import {
   MalformedModelOutputError,
 } from './providers'
 
-type InternalRun = BenchmarkRun & {pointLosses?: number[]; winRateLosses?: number[]}
+type InternalRun = BenchmarkRun & {
+  pointLosses?: number[]
+  winRateLosses?: number[]
+  inGameReflections?: InGameReflection[]
+}
 
 class KataGoUnavailableError extends Error {}
 
@@ -79,6 +84,7 @@ export class BenchmarkService {
       notebook: {profileId: profile.id, currentUrl: `/api/profiles/${profile.id}/notebook.md`, snapshotUrl: `/api/benchmarks/${id}/notebook.md`},
       pointLosses: [],
       winRateLosses: [],
+      inGameReflections: [],
       createdAt: now,
       updatedAt: now,
     }
@@ -198,6 +204,7 @@ export class BenchmarkService {
         }
         run.currentGame += 1
         run.currentTurn = 0
+        run.inGameReflections = []
         this.save(run)
       }
       if (run.status === 'running') {
@@ -275,12 +282,19 @@ export class BenchmarkService {
             winRateHistory: run.currentGame < 10 && run.config.includeTrainingWinRates
               ? this.winRateHistory(game.id, llmColor)
               : undefined,
+            inGameReflections: run.inGameReflections,
           })
           try {
             const response = await adapter.requestAction(snapshot, signal, prompt)
             addUsage(run, response)
             response.retries = attempt
             game = this.games.acceptAutomated(game.id, response.action, response)
+            run.inGameReflections = mergeInGameReflections(
+              run.inGameReflections,
+              response.inGameReflections,
+            )
+            run.currentTurn = game.moves.length
+            this.save(run)
             break
           } catch (error) {
             if (!isRepairableMoveError(error)) throw error
@@ -345,6 +359,9 @@ export class BenchmarkService {
           winRateHistory: run.config.includeTrainingWinRates
             ? this.winRateHistory(game.id, llmColor)
             : undefined,
+          inGameReflections: index === run.currentGame
+            ? run.inGameReflections ?? []
+            : undefined,
         }
       }),
     }), signal)
@@ -407,6 +424,18 @@ export class BenchmarkService {
     this.events.emit(run.id, run)
     this.events.emit('changed', run.id)
   }
+}
+
+export function mergeInGameReflections(
+  current: InGameReflection[] | undefined,
+  updates: InGameReflection[] | undefined,
+) {
+  const reflections = new Map(
+    (current ?? []).map((reflection) => [reflection.number, reflection]),
+  )
+  for (const reflection of updates ?? [])
+    reflections.set(reflection.number, reflection)
+  return [...reflections.values()].sort((a, b) => a.number - b.number)
 }
 
 function isRepairableMoveError(error: unknown) {

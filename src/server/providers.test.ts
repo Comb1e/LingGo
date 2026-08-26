@@ -5,6 +5,7 @@ import {
   LlmPlayerAdapter,
   makePrompt,
   parseJsonAction,
+  parseJsonActionResult,
   SecretVault,
 } from './providers'
 
@@ -38,6 +39,28 @@ describe('provider normalization', () => {
     expect(() =>
       parseJsonAction('{"move":[9,0],"reason":"outside"}', 9),
     ).toThrow('outside the 9x9 board'))
+
+  it('parses optional numbered in-game reflection updates', () => {
+    expect(parseJsonActionResult(JSON.stringify({
+      move: [3, 5],
+      reason: 'shape',
+      in_game_reflections: [
+        {number: 1, reflection: 'Check whether the outside stones can escape.'},
+        {number: 3, reflection: 'Keep forcing moves in reserve.'},
+      ],
+    }), 9)).toEqual({
+      action: {action: 'play', coordinate: 'D4', comment: 'shape'},
+      inGameReflections: [
+        {number: 1, reflection: 'Check whether the outside stones can escape.'},
+        {number: 3, reflection: 'Keep forcing moves in reserve.'},
+      ],
+    })
+    expect(() => parseJsonActionResult(JSON.stringify({
+      move: [-1, -1],
+      reason: 'done',
+      in_game_reflections: [{number: 0, reflection: 'Not positively numbered.'}],
+    }), 9)).toThrow('Invalid')
+  })
 
   it('does not expose stored secrets', () => {
     const vault = new SecretVault()

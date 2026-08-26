@@ -169,9 +169,15 @@ export interface GameSnapshot {
   kataGoAnalysis?: string
 }
 
+export interface InGameReflection {
+  number: number
+  reflection: string
+}
+
 export interface LlmActionResult {
   action: PlayerAction
   reasoning?: string
+  inGameReflections?: InGameReflection[]
   latencyMs: number
   inputTokens: number
   outputTokens: number
