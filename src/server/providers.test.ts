@@ -3,6 +3,7 @@ import type {GameSnapshot, ProviderKind} from '../shared/types'
 import {emptyBoard} from './go'
 import {
   LlmPlayerAdapter,
+  isOpenAiReasoningModel,
   makePrompt,
   parseJsonAction,
   parseJsonActionResult,
@@ -12,6 +13,16 @@ import {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('provider normalization', () => {
+  it('identifies OpenAI models that do not support temperature', () => {
+    expect(isOpenAiReasoningModel('gpt-5.6-luna')).toBe(true)
+    expect(isOpenAiReasoningModel('gpt-5.6-sol')).toBe(true)
+    expect(isOpenAiReasoningModel('gpt-5')).toBe(true)
+    expect(isOpenAiReasoningModel('o4-mini')).toBe(true)
+    expect(isOpenAiReasoningModel('gpt-5-chat-latest')).toBe(false)
+    expect(isOpenAiReasoningModel('gpt-4.1')).toBe(false)
+    expect(isOpenAiReasoningModel('ft:gpt-5:custom')).toBe(false)
+  })
+
   it('parses plain JSON array moves and fenced fallback output', () => {
     expect(parseJsonAction('{"move":[-1,-1],"reason":"done"}', 9)).toEqual({
       action: 'pass',
@@ -227,6 +238,7 @@ describe('provider normalization', () => {
       const body = JSON.parse(requestBody)
       if (kind === 'openai') {
         expect(body.reasoning).toEqual({effort: 'medium', summary: 'detailed'})
+        expect(body).not.toHaveProperty('temperature')
       } else if (kind === 'anthropic') {
         expect(body.thinking).toBeTruthy()
       } else {

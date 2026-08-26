@@ -179,7 +179,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const result = await generateText({
       model,
       prompt,
-      temperature: this.profile.temperature,
+      temperature: this.temperature(),
       reasoning: requestsReasoning ? 'medium' : undefined,
       providerOptions:
         this.connection.kind === 'google'
@@ -207,7 +207,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const result = await generateText({
       model: this.createModel(),
       prompt,
-      temperature: this.profile.temperature,
+      temperature: this.temperature(),
       maxRetries: 0,
       abortSignal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
     })
@@ -262,6 +262,24 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     }
     throw new Error(`Unsupported provider: ${this.connection.kind}`)
   }
+
+  private temperature() {
+    return this.connection.kind === 'openai' &&
+      isOpenAiReasoningModel(this.profile.modelId)
+      ? undefined
+      : this.profile.temperature
+  }
+}
+
+export function isOpenAiReasoningModel(modelId: string) {
+  if (/^o\d+(?:-|$)/.test(modelId)) return true
+  const match = /^gpt-(\d+)(?:\.(\d+))?(?:-(.+))?$/.exec(modelId)
+  if (!match) return false
+  const major = Number(match[1])
+  const minor = match[2]
+  const variant = match[3]
+  const isChatModel = minor === undefined && variant?.startsWith('chat')
+  return major >= 5 && !isChatModel
 }
 
 export function createPlayerAdapter(
