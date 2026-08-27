@@ -524,7 +524,7 @@ export function SettingsPage() {
                     }}
                   />
                   <span className="switch" />
-                  <span>{t('deepSeekReasoning')}</span>
+                    <span>{t('modelReasoning')}</span>
                 </label>
               )}
               <div className="field request-options-field">
