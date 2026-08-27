@@ -86,7 +86,12 @@ export function makeInitialLlmPrompt(
       '5. CURRENT POSITION',
       ...position,
       ...(latestWinRate
-        ? ['', '6. LATEST KATAGO WIN-RATE UPDATE', latestWinRate]
+        ? [
+            '',
+            '6. LATEST KATAGO WIN-RATE UPDATE',
+            'Retrospective feedback only: the KataGo candidate and metrics below describe the position immediately before your previous move. They are not a recommendation for the current position; do not play that candidate now unless it is independently the best legal move in the current position.',
+            latestWinRate,
+          ]
         : []),
     ].join('\n')
   }
@@ -112,7 +117,12 @@ export function makeInitialLlmPrompt(
     ...position,
   ]
   if (mode.phase === 'training' && latestWinRate)
-    values.push('', 'LATEST TRAINING WIN-RATE UPDATE', latestWinRate)
+    values.push(
+      '',
+      'LATEST TRAINING WIN-RATE UPDATE',
+      'Retrospective feedback only: the KataGo candidate and metrics below describe the position immediately before your previous move. They are not a recommendation for the current position; do not play that candidate now unless it is independently the best legal move in the current position.',
+      latestWinRate,
+    )
   return values.join('\n')
 }
 
@@ -124,7 +134,13 @@ export function makeContinuationLlmPrompt(
   return [
     `Newly observed opponent action: ${formatMove(observedMove, snapshot)}`,
     ...formatCurrentPosition(snapshot, observedMove),
-    ...(latestWinRate ? ['Latest win-rate update:', latestWinRate] : []),
+    ...(latestWinRate
+      ? [
+          'Latest win-rate update (retrospective):',
+          'The candidate and metrics below describe the position immediately before your previous move. They are not a recommendation for the current position; do not play that candidate now unless it is independently the best legal move in the current position.',
+          latestWinRate,
+        ]
+      : []),
     'Return only the next move JSON object using the established schema.',
   ].join('\n')
 }

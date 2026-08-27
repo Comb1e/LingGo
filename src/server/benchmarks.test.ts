@@ -143,6 +143,8 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('the result of this training game does not matter')
     expect(prompt).toContain("Study the opponent's decisions")
     expect(prompt).toContain('LATEST TRAINING WIN-RATE UPDATE')
+    expect(prompt).toContain('Retrospective feedback only')
+    expect(prompt).toContain('not a recommendation for the current position')
     expect(prompt).toContain('Turn 7: 42.00%')
     expect(prompt).not.toContain('in_game_reflections')
   })

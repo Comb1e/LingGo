@@ -82,6 +82,12 @@ describe('persistent LLM game context', () => {
       'Newly observed opponent action: 2. W B9',
     )
     expect(continuation.request.content).toContain('Turn 2: your win rate')
+    expect(continuation.request.content).toContain(
+      'Latest win-rate update (retrospective)',
+    )
+    expect(continuation.request.content).toContain(
+      'not a recommendation for the current position',
+    )
     expect(continuation.request.content).not.toContain('GO RULES')
     expect(continuation.request.content).not.toContain('PLAYING STYLE')
     expect(continuation.request.content).not.toContain('RESPONSE SCHEMA')

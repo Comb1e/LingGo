@@ -1022,8 +1022,8 @@ export class BenchmarkService {
     const review = this.store.listBenchmarkMoveReviews(runId, gameIndex).at(-1)
     if (!review) return undefined
     return [
-      `Turn ${review.turn} review: chose ${review.chosenMove}.`,
-      `KataGo top candidate: ${review.topCandidate ?? 'unavailable'}.`,
+      `Retrospective feedback for your previous move on turn ${review.turn}: you chose ${review.chosenMove}.`,
+      `For the position immediately before turn ${review.turn}, KataGo's top candidate was ${review.topCandidate ?? 'unavailable'}; this was the alternative to your previous move, not a recommendation for the current position.`,
       `Point loss: ${review.pointLoss.toFixed(2)}; win-rate loss: ${(review.winRateLoss * 100).toFixed(2)}%.`,
       `Score estimate before/after from your perspective: ${review.beforeScore.toFixed(2)} / ${review.afterScore.toFixed(2)}.`,
     ].join(' ')
