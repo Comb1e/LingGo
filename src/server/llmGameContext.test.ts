@@ -2,10 +2,12 @@ import {afterEach, describe, expect, it} from 'vitest'
 import {Store} from './database'
 import {GameService} from './games'
 import {
+  makeContinuationLlmPrompt,
   makeGameIntentionPrompt,
   makeReflectionLlmPrompt,
   modelFingerprint,
 } from './llmGameContext'
+import {makeSnapshot} from './go'
 
 let store: Store
 afterEach(() => store?.close())
@@ -176,6 +178,26 @@ describe('persistent LLM game context', () => {
     expect(continuation.request.content).not.toContain('RESPONSE SCHEMA')
     expect(continuation.request.content).not.toContain('A9')
     expect(continuation.request.transcript).toHaveLength(2)
+  })
+
+  it('labels structured training continuations as top-five candidate feedback', () => {
+    const prompt = makeContinuationLlmPrompt(
+      makeSnapshot(9, 7.5, []),
+      {
+        number: 1,
+        color: 'W',
+        action: 'play',
+        coordinate: 'A9',
+        point: [0, 8],
+        captured: 0,
+      },
+      'KataGo candidates (best first): #1 D4, #2 Q16, #3 C3, #4 R17, #5 K10.',
+      'structured',
+    )
+    expect(prompt).toContain('#5 K10')
+    expect(prompt).toContain(
+      "Latest training win-rate update (retrospective; includes KataGo's top five ranked candidates",
+    )
   })
 
   it('puts KataGo candidate interpretation guidance in the initial training prompt', () => {

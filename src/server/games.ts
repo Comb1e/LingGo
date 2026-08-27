@@ -318,7 +318,14 @@ export class GameService {
     const rebase = !continuationValid && !seededInitialContext
     const now = new Date().toISOString()
     const content = continuationValid
-      ? makeContinuationLlmPrompt(snapshot, unseen[0], input.latestWinRate)
+      ? makeContinuationLlmPrompt(
+          snapshot,
+          unseen[0],
+          input.latestWinRate,
+          input.mode.kind === 'benchmark' && input.mode.phase === 'training'
+            ? input.mode.trainingFeedback
+            : 'none',
+        )
       : seededInitialContext && input.mode.kind === 'benchmark'
         ? makeFirstGameLlmPrompt(snapshot, input.mode.trainingFeedback)
         : makeInitialLlmPrompt(

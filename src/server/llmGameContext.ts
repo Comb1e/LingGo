@@ -187,13 +187,17 @@ export function makeContinuationLlmPrompt(
   snapshot: GameSnapshot,
   observedMove: Move,
   latestWinRate?: string,
+  trainingFeedback: 'none' | 'structured' = 'none',
 ) {
+  const isStructuredTraining = trainingFeedback === 'structured'
   return [
     `Newly observed opponent action: ${formatMove(observedMove, snapshot)}`,
     ...formatCurrentPosition(snapshot, observedMove),
     ...(latestWinRate
       ? [
-          'Latest win-rate update (retrospective; see the initial training instructions for ranked-candidate interpretation):',
+          isStructuredTraining
+            ? "Latest training win-rate update (retrospective; includes KataGo's top five ranked candidates, with candidate #1 as the loss baseline):"
+            : 'Latest win-rate update (retrospective; see the initial training instructions for candidate interpretation):',
           latestWinRate,
         ]
       : []),
