@@ -43,6 +43,7 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
       '5. CURRENT POSITION',
       `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
       `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
+      formatPassCounts(snapshot),
       'X = Black stone, O = White stone, . = empty intersection.',
       '',
       asciiBoard(snapshot),
@@ -79,6 +80,7 @@ function makeBenchmarkSections(snapshot: GameSnapshot): MovePromptSections {
       '5. CURRENT BOARD',
       `To move: ${snapshot.toMove}`,
       `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
+      formatPassCounts(snapshot),
       asciiBoard(snapshot),
     ],
   }
@@ -94,7 +96,7 @@ export function formatCanonicalGoRules(
     '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
     '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
     '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
-    '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
+    '- Passing is legal, but each player may pass at most twice in one game. Two consecutive passes end play for scoring. A player may resign at any time.',
     `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${settings.komi} komi; the higher total wins.`,
     '- Coordinates use column letters from left to right, skipping I, and row numbers from bottom to top.',
   ]
@@ -102,6 +104,17 @@ export function formatCanonicalGoRules(
 
 function makeGoRulesSection(snapshot: GameSnapshot) {
   return ['1. GO RULES', ...formatCanonicalGoRules(snapshot)]
+}
+
+function formatPassCounts(snapshot: GameSnapshot) {
+  const passCounts = snapshot.moves.reduce(
+    (counts, move) => {
+      if (move.action === 'pass') counts[move.color] += 1
+      return counts
+    },
+    {B: 0, W: 0},
+  )
+  return `Passes: Black ${passCounts.B}/2, White ${passCounts.W}/2.`
 }
 
 function formatPromptMoves(snapshot: GameSnapshot) {

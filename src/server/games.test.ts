@@ -86,6 +86,37 @@ describe('game orchestration', () => {
     expect(game.result).toBe('W+7.5')
   })
 
+  it('rejects a third pass by the same player', async () => {
+    setup()
+    let game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'B'},
+      white: {type: 'human', name: 'W'},
+    })
+    game = await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'pass',
+    })
+    game = await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'play',
+      coordinate: 'A1',
+    })
+    game = await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'pass',
+    })
+    game = await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'play',
+      coordinate: 'B1',
+    })
+    await expect(
+      service.command(game.id, {expectedVersion: game.version, type: 'pass'}),
+    ).rejects.toThrow('Black may pass at most twice')
+  })
+
   it('runs a fake LLM against a human sequentially', async () => {
     setup()
     const game = service.create({

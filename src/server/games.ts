@@ -799,6 +799,10 @@ export class GameService {
     let captured = 0
     let capturedPoints = [] as Point[]
     let point
+    if (action.action === 'pass' && state.passCounts[color] >= 2)
+      throw new IllegalMoveError(
+        `${color === 'B' ? 'Black' : 'White'} may pass at most twice per game`,
+      )
     if (action.action === 'play') {
       point = coordinateToPoint(action.coordinate, game.size)
       const result = playStone(state.board, color, point, state.hashes)

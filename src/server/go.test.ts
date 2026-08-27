@@ -58,7 +58,10 @@ describe('rules', () => {
     const snapshot = makeSnapshot(9, 7.5, moves)
 
     expect(snapshot.captures).toEqual({B: 1, W: 0})
-    expect(snapshot.moves[6]).toMatchObject({captured: 1, capturedPoints: [[1, 1]]})
+    expect(snapshot.moves[6]).toMatchObject({
+      captured: 1,
+      capturedPoints: [[1, 1]],
+    })
   })
 
   it('rejects suicide', () => {
@@ -83,7 +86,21 @@ describe('rules', () => {
       {number: 2, color: 'W', action: 'pass', captured: 0},
     ]
     expect(replay(9, moves).consecutivePasses).toBe(2)
+    expect(replay(9, moves).passCounts).toEqual({B: 1, W: 1})
     expect(replay(9, moves).toMove).toBe('B')
+  })
+
+  it('rejects a third pass by either color', () => {
+    const moves: Move[] = [
+      {number: 1, color: 'B', action: 'pass', captured: 0},
+      {number: 2, color: 'W', action: 'play', point: [0, 0], captured: 0},
+      {number: 3, color: 'B', action: 'pass', captured: 0},
+      {number: 4, color: 'W', action: 'play', point: [1, 0], captured: 0},
+      {number: 5, color: 'B', action: 'pass', captured: 0},
+      {number: 6, color: 'W', action: 'play', point: [2, 0], captured: 0},
+      {number: 7, color: 'B', action: 'pass', captured: 0},
+    ]
+    expect(() => replay(9, moves)).toThrow('Black may pass at most twice')
   })
 
   it('toggles whole dead chains', () => {

@@ -127,6 +127,7 @@ export interface ReplayResult {
   board: Board
   toMove: Color
   captures: {B: number; W: number}
+  passCounts: {B: number; W: number}
   hashes: Set<string>
   consecutivePasses: number
   capturedPointsByMove: Point[][]
@@ -136,6 +137,7 @@ export function replay(size: BoardSize, moves: Move[]): ReplayResult {
   let board = emptyBoard(size)
   let toMove: Color = 'B'
   const captures = {B: 0, W: 0}
+  const passCounts = {B: 0, W: 0}
   const hashes = new Set([boardHash(board)])
   let consecutivePasses = 0
   const capturedPointsByMove: Point[][] = []
@@ -151,6 +153,11 @@ export function replay(size: BoardSize, moves: Move[]): ReplayResult {
       hashes.add(boardHash(board))
       consecutivePasses = 0
     } else if (move.action === 'pass') {
+      if (passCounts[move.color] >= 2)
+        throw new IllegalMoveError(
+          `${move.color === 'B' ? 'Black' : 'White'} may pass at most twice per game`,
+        )
+      passCounts[move.color] += 1
       capturedPointsByMove.push([])
       consecutivePasses += 1
     } else {
@@ -158,7 +165,15 @@ export function replay(size: BoardSize, moves: Move[]): ReplayResult {
     }
     toMove = opposite(toMove)
   }
-  return {board, toMove, captures, hashes, consecutivePasses, capturedPointsByMove}
+  return {
+    board,
+    toMove,
+    captures,
+    passCounts,
+    hashes,
+    consecutivePasses,
+    capturedPointsByMove,
+  }
 }
 
 export function makeSnapshot(
