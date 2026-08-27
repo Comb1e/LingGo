@@ -52,6 +52,7 @@ export type LlmPromptMode =
       kind: 'benchmark'
       phase: 'training' | 'final'
       notebook: string
+      trainingFeedback?: 'none' | 'structured'
     }
 
 export function modelFingerprint(
@@ -116,11 +117,18 @@ export function makeInitialLlmPrompt(
     '5. CURRENT BOARD',
     ...position,
   ]
+  if (mode.phase === 'training' && mode.trainingFeedback === 'structured')
+    values.splice(
+      values.length - position.length,
+      0,
+      '',
+      'KATAGO TRAINING FEEDBACK',
+      'A retrospective update may appear after you make a move. Its KataGo candidate is the alternative move for the position immediately before your previous move, not a recommendation for the current position. Do not play that candidate now unless you independently determine it is legal and best in the current position.',
+    )
   if (mode.phase === 'training' && latestWinRate)
     values.push(
       '',
-      'LATEST TRAINING WIN-RATE UPDATE',
-      'Retrospective feedback only: the KataGo candidate and metrics below describe the position immediately before your previous move. They are not a recommendation for the current position; do not play that candidate now unless it is independently the best legal move in the current position.',
+      'LATEST TRAINING WIN-RATE UPDATE (RETROSPECTIVE)',
       latestWinRate,
     )
   return values.join('\n')
@@ -136,8 +144,7 @@ export function makeContinuationLlmPrompt(
     ...formatCurrentPosition(snapshot, observedMove),
     ...(latestWinRate
       ? [
-          'Latest win-rate update (retrospective):',
-          'The candidate and metrics below describe the position immediately before your previous move. They are not a recommendation for the current position; do not play that candidate now unless it is independently the best legal move in the current position.',
+          'Latest win-rate update (retrospective; see the initial training instructions for candidate interpretation):',
           latestWinRate,
         ]
       : []),

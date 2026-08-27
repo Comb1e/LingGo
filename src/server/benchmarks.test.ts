@@ -106,7 +106,12 @@ describe('benchmark scoring and prompts', () => {
     const snapshot = makeSnapshot(13, 6.5, [])
     const prompt = makeInitialLlmPrompt(
       snapshot,
-      {kind: 'benchmark', phase: 'training', notebook: ''},
+      {
+        kind: 'benchmark',
+        phase: 'training',
+        notebook: '',
+        trainingFeedback: 'structured',
+      },
       'Turn 7: 42.00%',
     )
     expect(prompt).toContain('played on a 13x13 grid. Black moves first')
@@ -143,7 +148,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('the result of this training game does not matter')
     expect(prompt).toContain("Study the opponent's decisions")
     expect(prompt).toContain('LATEST TRAINING WIN-RATE UPDATE')
-    expect(prompt).toContain('Retrospective feedback only')
+    expect(prompt).toContain('KATAGO TRAINING FEEDBACK')
     expect(prompt).toContain('not a recommendation for the current position')
     expect(prompt).toContain('Turn 7: 42.00%')
     expect(prompt).not.toContain('in_game_reflections')

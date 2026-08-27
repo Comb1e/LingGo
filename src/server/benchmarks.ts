@@ -506,7 +506,16 @@ export class BenchmarkService {
           color: llmColor,
           profile: run.profileSnapshot,
           connection,
-          mode: {kind: 'benchmark', phase: promptPhase, notebook},
+          mode: {
+            kind: 'benchmark',
+            phase: promptPhase,
+            notebook,
+            trainingFeedback:
+              phase === 'training_game' &&
+              trainingGameHasWinRates(run.config, run.currentGame)
+                ? 'structured'
+                : 'none',
+          },
           latestWinRate:
             phase === 'training_game' &&
             trainingGameHasWinRates(run.config, run.currentGame)
@@ -592,7 +601,16 @@ export class BenchmarkService {
                   color: llmColor,
                   profile: run.profileSnapshot,
                   connection,
-                  mode: {kind: 'benchmark', phase: promptPhase, notebook},
+                  mode: {
+                    kind: 'benchmark',
+                    phase: promptPhase,
+                    notebook,
+                    trainingFeedback:
+                      phase === 'training_game' &&
+                      trainingGameHasWinRates(run.config, run.currentGame)
+                        ? 'structured'
+                        : 'none',
+                  },
                   latestWinRate:
                     phase === 'training_game' &&
                     trainingGameHasWinRates(run.config, run.currentGame)
@@ -1022,8 +1040,8 @@ export class BenchmarkService {
     const review = this.store.listBenchmarkMoveReviews(runId, gameIndex).at(-1)
     if (!review) return undefined
     return [
-      `Retrospective feedback for your previous move on turn ${review.turn}: you chose ${review.chosenMove}.`,
-      `For the position immediately before turn ${review.turn}, KataGo's top candidate was ${review.topCandidate ?? 'unavailable'}; this was the alternative to your previous move, not a recommendation for the current position.`,
+      `Previous-move review for turn ${review.turn}: you chose ${review.chosenMove}.`,
+      `KataGo's top candidate in the position immediately before that move: ${review.topCandidate ?? 'unavailable'}.`,
       `Point loss: ${review.pointLoss.toFixed(2)}; win-rate loss: ${(review.winRateLoss * 100).toFixed(2)}%.`,
       `Score estimate before/after from your perspective: ${review.beforeScore.toFixed(2)} / ${review.afterScore.toFixed(2)}.`,
     ].join(' ')

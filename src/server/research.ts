@@ -80,7 +80,12 @@ export function buildResearchPrompt(
   const capabilities = conditionCapabilities(condition)
   return makeInitialLlmPrompt(
     snapshot,
-    {kind: 'benchmark', phase, notebook: capabilities.notebook ? notebook : ''},
+    {
+      kind: 'benchmark',
+      phase,
+      notebook: capabilities.notebook ? notebook : '',
+      trainingFeedback: capabilities.kataGo ? 'structured' : 'none',
+    },
     phase === 'training' && capabilities.kataGo ? latestWinRate : undefined,
   )
 }

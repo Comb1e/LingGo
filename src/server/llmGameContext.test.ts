@@ -83,9 +83,9 @@ describe('persistent LLM game context', () => {
     )
     expect(continuation.request.content).toContain('Turn 2: your win rate')
     expect(continuation.request.content).toContain(
-      'Latest win-rate update (retrospective)',
+      'Latest win-rate update (retrospective; see the initial training instructions',
     )
-    expect(continuation.request.content).toContain(
+    expect(continuation.request.content).not.toContain(
       'not a recommendation for the current position',
     )
     expect(continuation.request.content).not.toContain('GO RULES')
@@ -93,6 +93,27 @@ describe('persistent LLM game context', () => {
     expect(continuation.request.content).not.toContain('RESPONSE SCHEMA')
     expect(continuation.request.content).not.toContain('A9')
     expect(continuation.request.transcript).toHaveLength(2)
+  })
+
+  it('puts KataGo candidate interpretation guidance in the initial training prompt', () => {
+    const {games, game, profile, connection} = setupGame()
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {
+        kind: 'benchmark',
+        phase: 'training',
+        notebook: '',
+        trainingFeedback: 'structured',
+      },
+    })
+
+    expect(prepared.request.content).toContain('KATAGO TRAINING FEEDBACK')
+    expect(prepared.request.content).toContain(
+      'not a recommendation for the current position',
+    )
   })
 
   it('sends only the validation reason when repairing an invalid move', () => {
