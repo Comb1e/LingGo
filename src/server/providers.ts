@@ -26,7 +26,11 @@ import {
   type PlayerProfile,
   type ProviderConnection,
 } from '../shared/types'
-import {asciiBoard, playStone, replay} from './go'
+import {playStone, replay} from './go'
+import {
+  formatInGameReflections,
+  makeMovePromptSections,
+} from './movePrompt'
 
 const inGameReflectionSchema = z
   .object({
@@ -679,44 +683,18 @@ export function makePrompt(
   snapshot: GameSnapshot,
   stylePrompt?: string,
 ): string {
-  const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures =
-    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
-  const moves = snapshot.moves.length
-    ? snapshot.moves
-        .map((move) => formatPromptMove(move, snapshot, false))
-        .join('\n')
-    : '(none)'
+  const sections = makeMovePromptSections(snapshot, {mode: 'ordinary'})
   return [
-    ...formatGoRules(snapshot),
+    ...sections.goRules,
     '',
     '2. PLAYING STYLE',
     stylePrompt?.trim() || '(none)',
     '',
-    '3. INSTRUCTION',
-    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Choose exactly one legal intersection for your next Go stone. ${snapshot.kataGoAnalysis ? 'You may use the supplied KataGo win-rate history.' : 'Do not use external analysis.'} Do not suggest multiple moves.`,
-    ...(snapshot.previousError
-      ? [
-          `Your previous response was rejected: ${snapshot.previousError}. Use the unchanged position and correct the response.`,
-        ]
-      : []),
+    ...sections.instruction,
     '',
-    '4. RESPONSE SCHEMA',
-    'Return only plain text containing one valid JSON object. Do not use Markdown or code fences.',
-    '{"move":[column,row],"reason":"brief reason for this move"}',
-    `move must be a two-integer array. column and row are zero-based from the top-left, each from 0 to ${snapshot.size - 1}.`,
-    'Use {"move":[-1,-1],"reason":"..."} to pass or {"move":[-2,-2],"reason":"..."} to resign.',
+    ...sections.responseSchema,
     '',
-    '5. CURRENT POSITION',
-    `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
-    `Capture totals: Black has captured ${snapshot.captures.B} White stones; White has captured ${snapshot.captures.W} Black stones.`,
-    `From your perspective: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
-    'X = Black stone, O = White stone, . = empty intersection.',
-    '',
-    asciiBoard(snapshot),
-    '',
-    'Move list:',
-    moves,
+    ...sections.currentPosition,
     ...(snapshot.kataGoAnalysis
       ? ['', '6. KATAGO WIN-RATE HISTORY', snapshot.kataGoAnalysis]
       : []),
@@ -732,51 +710,26 @@ export function makeBenchmarkMovePrompt(
     inGameReflections?: InGameReflection[]
   },
 ): string {
-  const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures =
-    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
-  const moves = snapshot.moves.length
-    ? snapshot.moves
-        .map((move) => formatPromptMove(move, snapshot, true))
-        .join('\n')
-    : '(none)'
+  const promptSections = makeMovePromptSections(snapshot, {
+    mode: 'benchmark',
+    inGameReflections: options.inGameReflections,
+  })
   const sections = [
     'BACKGROUND',
     options.phase === 'training'
       ? "You are playing against the world's best Go player in order to learn. Study the opponent's decisions as well as your own, develop general skills that transfer to future positions, and work toward eventually surpassing the opponent."
       : 'This is the scored final game. Play to the best of your ability and maximize your score.',
     '',
-    ...formatGoRules(snapshot),
+    ...promptSections.goRules,
     '',
     '2. SELF-WRITTEN SKILLS',
     notebook.trim() || '(none)',
     '',
-    '3. INSTRUCTION TO PLACE ONE STONE',
-    `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone on an intersection shown as ".".`,
-    ...(snapshot.previousError
-      ? [
-          `Your previous response was rejected: ${snapshot.previousError}. The position is unchanged; choose a different legal move.`,
-        ]
-      : []),
+    ...promptSections.instruction,
     '',
-    '4. JSON OUTPUT SCHEMA',
-    'Example:',
-    '{"move":[3,4],"reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"general lesson"}]}',
-    'Required fields: move (exactly two integers in [column,row] order) and reason (a non-empty string).',
-    `Coordinates are zero-based from the top-left: column first, then row, each from 0 to ${snapshot.size - 1}.`,
-    'Use [-1,-1] to pass and [-2,-2] to resign.',
-    'Optional field: in_game_reflections, an array of objects containing only number (a positive integer) and reflection (a non-empty string). Omit it or use an empty array when no new lesson is warranted. It is a patch: use the next unused positive number for a new lesson, or reuse a number to replace an incorrect earlier entry.',
-    'Do not include any other top-level or nested fields.',
-    'Return JSON only, without Markdown fences.',
+    ...promptSections.responseSchema,
     '',
-    '5. CURRENT BOARD AND PREVIOUS MOVES',
-    'Current in-game reflections (this game only):',
-    formatInGameReflections(options.inGameReflections),
-    `To move: ${snapshot.toMove}`,
-    `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
-    asciiBoard(snapshot),
-    'Previous moves:',
-    moves,
+    ...promptSections.currentPosition,
   ]
   if (options.phase === 'training' && options.winRateHistory !== undefined)
     sections.push(
@@ -785,19 +738,6 @@ export function makeBenchmarkMovePrompt(
       options.winRateHistory || '(none)',
     )
   return sections.join('\n')
-}
-
-function formatGoRules(snapshot: GameSnapshot) {
-  return [
-    '1. GO RULES',
-    `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
-    '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
-    '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
-    '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
-    '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
-    '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
-    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${snapshot.komi} komi; the higher total wins.`,
-  ]
 }
 
 export function makeReflectionPrompt(input: {
@@ -882,34 +822,6 @@ function formatReflectionGame(game: {
         ]),
     `=== END GAME ${game.sequence} ===`,
   ].join('\n')
-}
-
-function formatInGameReflections(reflections: InGameReflection[] | undefined) {
-  return reflections?.length
-    ? reflections.map((reflection) => JSON.stringify(reflection)).join('\n')
-    : '(none yet)'
-}
-
-function formatCapturedLocations(
-  move: GameSnapshot['moves'][number],
-  size: BoardSize,
-) {
-  if (!move.capturedPoints?.length) return ''
-  return `; captured ${move.capturedPoints.length} at ${move.capturedPoints
-    .map(
-      (point) => `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`,
-    )
-    .join(', ')}`
-}
-
-function formatPromptMove(
-  move: GameSnapshot['moves'][number],
-  snapshot: GameSnapshot,
-  includePoint: boolean,
-) {
-  const point =
-    includePoint && move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
-  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}`
 }
 
 function pointName(x: number, y: number, size: number): string {

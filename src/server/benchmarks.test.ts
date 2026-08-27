@@ -169,6 +169,12 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain(
       'reuse a number to replace an incorrect earlier entry',
     )
+    expect(prompt).toContain(
+      'base each one on concrete evidence from the current game',
+    )
+    expect(prompt).toContain(
+      'do not wait for perfect certainty or the end of the game',
+    )
   })
 
   it('adds complete training feedback only to training move and reflection prompts', () => {
