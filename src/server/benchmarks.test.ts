@@ -664,6 +664,101 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
+  it('settles after five pass-limit violations by the LLM', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-pass-limit-'))
+    const games = new GameService(store)
+    const adapter = {
+      async requestAction(_snapshot, signal) {
+        signal.throwIfAborted()
+        return {
+          action: {action: 'pass' as const, comment: 'Pass again.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(_prompt, signal) {
+        signal.throwIfAborted()
+        return {
+          text: '# Lessons',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const kataMoves = [
+      'A19',
+      'B19',
+      'C19',
+      'D19',
+      'E19',
+      'F19',
+      'G19',
+      'H19',
+      'J19',
+      'K19',
+    ]
+    const kataGo: KataGoAnalyzer = {
+      async analyze(input) {
+        const used = new Set(
+          input.moves
+            .filter((move) => move.action === 'play')
+            .map((move) => move.coordinate),
+        )
+        const move = kataMoves.find((coordinate) => !used.has(coordinate))
+        return {
+          id: 'pass-limit-test',
+          rootInfo: {winrate: 0.5, scoreLead: 0, visits: input.visits},
+          moveInfos: [
+            {
+              move: move ?? 'pass',
+              visits: input.visits,
+              winrate: 0.5,
+              scoreLead: 0,
+            },
+          ],
+        }
+      },
+      async healthCheck() {
+        return {ok: true, message: 'ready'}
+      },
+      async close() {},
+    }
+    const service = new BenchmarkService(
+      store,
+      games,
+      kataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const run = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      finalColor: 'B',
+      trainingGamesWithWinRates: 0,
+      trainingGamesWithoutWinRates: 1,
+    })
+
+    expect(
+      await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
+    ).toBe(true)
+    const runGames = games
+      .list()
+      .filter((game) => game.benchmarkRunId === run.id)
+    expect(runGames).toHaveLength(2)
+    expect(runGames.every((game) => game.status === 'finished')).toBe(true)
+    expect(
+      runGames
+        .flatMap((game) => game.rejectedModelActions ?? [])
+        .filter(({reason}) => reason.includes('may pass at most twice')),
+    ).toHaveLength(10)
+    await service.close()
+  })
+
   it('allows five invalid benchmark outputs and records their actual attempts', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-output-retry-'))
