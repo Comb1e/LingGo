@@ -173,6 +173,7 @@ describe('benchmark scoring and prompts', () => {
           reasoning: `Thought at turn ${snapshot.moves.length}`,
           latencyMs: 0,
           inputTokens: 0,
+          cachedInputTokens: 2,
           outputTokens: 0,
           model: 'test-model',
           retries: 0,
@@ -184,6 +185,7 @@ describe('benchmark scoring and prompts', () => {
         return {
           text: '# Go techniques',
           inputTokens: 0,
+          cachedInputTokens: 7,
           outputTokens: 0,
           latencyMs: 0,
           model: 'test-model',
@@ -212,6 +214,7 @@ describe('benchmark scoring and prompts', () => {
     expect(completed).toBe(true)
     const saved = service.get(run.id)!
     expect(saved.gameIds).toHaveLength(11)
+    expect(saved.usage.cachedInputTokens).toBe(92)
     expect(saved.metrics).toMatchObject({
       result: 'Draw',
       resultScore: 50,

@@ -193,6 +193,7 @@ describe('persistent LLM game context', () => {
       transcript: [],
       previousResponseId: undefined,
     })
+    expect(next.request.cacheKey).not.toBe(first.request.cacheKey)
     expect(next.context.managedContinuation).toBe(true)
     expect(next.request.content).not.toContain('First game.')
   })
@@ -249,6 +250,7 @@ describe('persistent LLM game context', () => {
 
   it('prepares reflection in the move conversation with an unseen terminal delta', () => {
     const {games, game, profile, connection} = setupGame()
+    const managedConnection = {...connection, kind: 'openai' as const}
     const persisted = store.getGame(game.id)!
     persisted.benchmarkRunId = 'test-run'
     store.saveGame(persisted)
@@ -256,10 +258,13 @@ describe('persistent LLM game context', () => {
       gameId: game.id,
       color: 'B',
       profile,
-      connection,
+      connection: managedConnection,
       mode: {kind: 'benchmark', phase: 'training', notebook: '# Skills'},
     })
-    const response = turnResponse('{"move":"pass","reason":"Done."}')
+    const response = {
+      ...turnResponse('{"move":"pass","reason":"Done."}'),
+      providerContinuationId: 'resp-training-game',
+    }
     const context = games.completedLlmContext(moveTurn, response, 'active', 1)
     games.acceptAutomated(
       game.id,
@@ -281,8 +286,11 @@ describe('persistent LLM game context', () => {
       gameId: game.id,
       color: 'B',
       profile,
-      connection,
+      connection: managedConnection,
     })
+    expect(reflection.request.cacheKey).toBe(moveTurn.request.cacheKey)
+    expect(reflection.request.cacheKey).toBe(`linggo:${game.id}:B`)
+    expect(reflection.request.previousResponseId).toBe('resp-training-game')
     expect(reflection.request.transcript).toEqual([
       {role: 'user', content: moveTurn.request.content},
       {role: 'assistant', content: response.text},

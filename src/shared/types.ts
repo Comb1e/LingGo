@@ -73,6 +73,7 @@ export interface Move {
   capturedPoints?: Point[]
   latencyMs?: number
   inputTokens?: number
+  cachedInputTokens?: number
   outputTokens?: number
   model?: string
   providerKind?: ProviderKind
@@ -236,6 +237,7 @@ export interface LlmActionResult {
   reasoning?: string
   latencyMs: number
   inputTokens: number
+  cachedInputTokens?: number
   outputTokens: number
   model: string
   providerKind?: ProviderKind
@@ -311,6 +313,7 @@ export type BenchmarkConfig = z.infer<typeof benchmarkConfigSchema>
 export interface BenchmarkUsage {
   calls: number
   inputTokens: number
+  cachedInputTokens?: number
   outputTokens: number
   latencyMs: number
 }

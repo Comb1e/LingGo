@@ -313,6 +313,7 @@ describe('provider normalization', () => {
             {role: 'assistant', content: '{"move":"A9","reason":"open"}'},
           ],
           previousResponseId: 'resp_previous',
+          cacheKey: 'linggo:test-game:B',
           snapshot: emptySnapshot(),
           output: 'action',
         },
@@ -323,6 +324,7 @@ describe('provider normalization', () => {
     const body = JSON.parse(requestBody)
     expect(body.store).toBe(true)
     expect(body.previous_response_id).toBe('resp_previous')
+    expect(body.prompt_cache_key).toBe('linggo:test-game:B')
     expect(requestBody).toContain('Newly observed opponent action')
     expect(requestBody).not.toContain('STATIC INITIAL RULES')
   })
@@ -365,6 +367,7 @@ describe('provider normalization', () => {
             {role: 'user', content: 'INITIAL TURN'},
             {role: 'assistant', content: 'VISIBLE RESPONSE'},
           ],
+          cacheKey: 'linggo:test-game:B',
           snapshot: emptySnapshot(),
           output: 'action',
         },

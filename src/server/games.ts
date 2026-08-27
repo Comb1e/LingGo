@@ -715,6 +715,7 @@ export class GameService {
       capturedPoints,
       latencyMs: llm?.latencyMs,
       inputTokens: llm?.inputTokens,
+      cachedInputTokens: llm?.cachedInputTokens,
       outputTokens: llm?.outputTokens,
       model: llm?.model,
       providerKind: llm?.providerKind,
@@ -830,6 +831,7 @@ export class GameService {
             reasoning: response.reasoning,
             latencyMs: response.latencyMs,
             inputTokens: response.inputTokens,
+            cachedInputTokens: response.cachedInputTokens,
             outputTokens: response.outputTokens,
             model: response.model,
             providerKind: response.providerKind,
@@ -1054,6 +1056,7 @@ export class GameService {
         previousResponseId: context.managedContinuation
           ? context.providerContinuationId
           : undefined,
+        cacheKey: `linggo:${context.gameId}:${context.color}`,
         snapshot,
         output: pendingTurn.kind === 'reflection' ? 'notebook' : 'action',
       },
@@ -1091,6 +1094,7 @@ export class GameService {
       reasoning: result.reasoning,
       latencyMs: result.latencyMs,
       inputTokens: result.inputTokens,
+      cachedInputTokens: result.cachedInputTokens,
       outputTokens: result.outputTokens,
       model: result.model,
       providerKind: result.providerKind ?? prepared.context.providerKind,

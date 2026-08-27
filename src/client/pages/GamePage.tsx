@@ -384,8 +384,9 @@ export function GamePage() {
     (total, move) => ({
       calls: total.calls + (move.model ? 1 : 0),
       tokens: total.tokens + (move.inputTokens ?? 0) + (move.outputTokens ?? 0),
+      cachedTokens: total.cachedTokens + (move.cachedInputTokens ?? 0),
     }),
-    {calls: 0, tokens: 0},
+    {calls: 0, tokens: 0, cachedTokens: 0},
   )
   const humanTurn =
     !reviewing && game.status === 'active' && current.type === 'human'
@@ -789,7 +790,8 @@ export function GamePage() {
             <span>{t('usage')}</span>
             <strong>
               {usage.calls} {t('calls')} · {usage.tokens.toLocaleString()}{' '}
-              {t('tokens')}
+              {t('tokens')} · {usage.cachedTokens.toLocaleString()}{' '}
+              {t('cached')}
             </strong>
           </section>
           {hasLlmSeat && (

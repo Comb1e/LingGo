@@ -119,7 +119,13 @@ export class BenchmarkService {
         currentGame: 0,
         currentTurn: 0,
         gameIds: [],
-        usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+        usage: {
+          calls: 0,
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+        },
         notebook: {
           profileId: profile.id,
           notebookId: notebook.id,
@@ -433,6 +439,7 @@ export class BenchmarkService {
                 reasoning: turnResponse.reasoning,
                 latencyMs: turnResponse.latencyMs,
                 inputTokens: turnResponse.inputTokens,
+                cachedInputTokens: turnResponse.cachedInputTokens,
                 outputTokens: turnResponse.outputTokens,
                 model: turnResponse.model,
                 providerKind: turnResponse.providerKind,
@@ -864,10 +871,17 @@ function average(values: number[]) {
 
 function addUsage(
   run: InternalRun,
-  value: {inputTokens: number; outputTokens: number; latencyMs: number},
+  value: {
+    inputTokens: number
+    cachedInputTokens?: number
+    outputTokens: number
+    latencyMs: number
+  },
 ) {
   run.usage.calls += 1
   run.usage.inputTokens += value.inputTokens
+  run.usage.cachedInputTokens =
+    (run.usage.cachedInputTokens ?? 0) + (value.cachedInputTokens ?? 0)
   run.usage.outputTokens += value.outputTokens
   run.usage.latencyMs += value.latencyMs
 }

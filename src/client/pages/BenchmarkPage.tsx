@@ -145,7 +145,8 @@ export function BenchmarkPage() {
           <strong>
             {run.usage.calls} {t('calls')} ·{' '}
             {(run.usage.inputTokens + run.usage.outputTokens).toLocaleString()}{' '}
-            {t('tokens')}
+            {t('tokens')} ·{' '}
+            {(run.usage.cachedInputTokens ?? 0).toLocaleString()} {t('cached')}
           </strong>
         </div>
       </section>

@@ -86,6 +86,7 @@ export interface PlayerAdapter {
     text: string
     latencyMs: number
     inputTokens: number
+    cachedInputTokens?: number
     outputTokens: number
     model: string
   }>
@@ -96,6 +97,7 @@ export interface LlmTurnRequest {
   content: string
   transcript: VisibleLlmMessage[]
   previousResponseId?: string
+  cacheKey: string
   snapshot: GameSnapshot
   output: 'action' | 'notebook'
 }
@@ -106,6 +108,7 @@ export interface LlmTurnResponse {
   providerContinuationId?: string
   latencyMs: number
   inputTokens: number
+  cachedInputTokens?: number
   outputTokens: number
   model: string
   providerKind?: ProviderConnection['kind']
@@ -280,6 +283,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         : undefined,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
+      cachedInputTokens: cachedInputTokens(result.usage),
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
       providerKind: this.connection.kind,
@@ -296,6 +300,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         : await this.requestWithSdk(
             messages,
             request.previousResponseId,
+            request.cacheKey,
             signal,
           )
     return {
@@ -306,6 +311,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       providerContinuationId: result.providerContinuationId,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
+      cachedInputTokens: cachedInputTokens(result.usage),
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
       providerKind: this.connection.kind,
@@ -332,6 +338,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       text: result.text,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
+      cachedInputTokens: cachedInputTokens(result.usage),
       outputTokens: result.usage.outputTokens ?? 0,
       model: this.profile.modelId,
     }
@@ -341,6 +348,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     return this.requestWithSdk(
       [{role: 'user', content: prompt}],
       undefined,
+      undefined,
       signal,
     )
   }
@@ -348,6 +356,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   private requestWithSdk(
     messages: ModelMessage[],
     previousResponseId: string | undefined,
+    cacheKey: string | undefined,
     signal: AbortSignal,
   ) {
     const request = {
@@ -359,6 +368,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       providerOptions: providerTurnOptions(
         this.connection.kind,
         previousResponseId,
+        cacheKey,
       ) as any,
       maxRetries: 0,
       abortSignal: signal,
@@ -778,12 +788,14 @@ function providerMessages(
 function providerTurnOptions(
   kind: ProviderConnection['kind'],
   previousResponseId?: string,
+  cacheKey?: string,
 ) {
   if (kind === 'openai')
     return {
       openai: {
         store: true,
         previousResponseId,
+        promptCacheKey: cacheKey,
       },
     }
   if (kind === 'anthropic')
@@ -791,6 +803,13 @@ function providerTurnOptions(
   if (kind === 'google')
     return {google: {thinkingConfig: {includeThoughts: true}}}
   return undefined
+}
+
+function cachedInputTokens(usage: unknown) {
+  return (
+    (usage as {inputTokenDetails?: {cacheReadTokens?: number}})
+      .inputTokenDetails?.cacheReadTokens ?? 0
+  )
 }
 
 export function isProviderContextError(error: unknown) {

@@ -462,6 +462,7 @@ describe('game orchestration', () => {
       kind: string
       previousResponseId?: string
       transcriptLength: number
+      cacheKey: string
     }> = []
     let calls = 0
     const adapter = {
@@ -475,6 +476,7 @@ describe('game orchestration', () => {
           kind: request.kind,
           previousResponseId: request.previousResponseId,
           transcriptLength: request.transcript.length,
+          cacheKey: request.cacheKey,
         })
         if (calls === 2)
           throw new NoOutputGeneratedError({
@@ -486,6 +488,7 @@ describe('game orchestration', () => {
           providerContinuationId: `resp-${calls}`,
           latencyMs: 0,
           inputTokens: 0,
+          cachedInputTokens: calls * 128,
           outputTokens: 0,
           model: 'test-model',
           providerKind: 'openai' as const,
@@ -517,15 +520,26 @@ describe('game orchestration', () => {
       coordinate: 'B9',
     })
     await waitFor(() => service.get(game.id)?.moves.length === 3)
-    expect(requests.slice(0, 3)).toEqual([
-      {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
-      {kind: 'continuation', previousResponseId: 'resp-1', transcriptLength: 2},
-      {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
-    ])
+    expect(requests.slice(0, 3)).toEqual(
+      [
+        {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
+        {
+          kind: 'continuation',
+          previousResponseId: 'resp-1',
+          transcriptLength: 2,
+        },
+        {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
+      ].map((request) => ({
+        ...request,
+        cacheKey: `linggo:${game.id}:B`,
+      })),
+    )
     expect(store.getLlmGameContext(game.id, 'B')).toMatchObject({
       managedContinuation: false,
       providerContinuationId: undefined,
     })
+    expect(service.get(game.id)?.moves[0].cachedInputTokens).toBe(128)
+    expect(service.get(game.id)?.moves[2].cachedInputTokens).toBe(384)
 
     await service.command(game.id, {
       expectedVersion: service.get(game.id)!.version,
@@ -537,6 +551,7 @@ describe('game orchestration', () => {
       kind: 'continuation',
       previousResponseId: undefined,
       transcriptLength: 2,
+      cacheKey: `linggo:${game.id}:B`,
     })
   })
 
