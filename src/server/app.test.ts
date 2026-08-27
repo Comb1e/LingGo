@@ -9,10 +9,13 @@ import type {KataGoAnalyzer} from './katago'
 
 let store: Store
 let app: ReturnType<typeof createApp>['app']
+let games: ReturnType<typeof createApp>['games']
 
 beforeEach(() => {
   store = new Store(':memory:')
-  app = createApp({store}).app
+  const created = createApp({store})
+  app = created.app
+  games = created.games
 })
 afterEach(() => app.close())
 
@@ -67,6 +70,56 @@ describe('game API', () => {
       url: `/api/games/${game.id}/export.sgf`,
     })
     expect(sgf.body).toContain('SZ[19]')
+  })
+
+  it('returns only the visible LLM messages for a game', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/games',
+      payload: {
+        size: 9,
+        black: {type: 'human', name: 'Black'},
+        white: {type: 'human', name: 'White'},
+      },
+    })
+    const game = created.json()
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/games/${game.id}/llm-messages`,
+        })
+      ).json(),
+    ).toEqual([])
+
+    const profile = store.getProfile('builtin-fake-profile')!
+    const connection = store.getConnection(profile.connectionId)!
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {kind: 'ordinary'},
+    })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/games/${game.id}/llm-messages`,
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([
+      {
+        color: 'B',
+        status: 'active',
+        providerKind: 'fake',
+        continuationMode: 'transcript',
+        messages: [
+          {role: 'user', content: prepared.request.content, pending: true},
+        ],
+      },
+    ])
+    expect(response.body).not.toContain('modelFingerprint')
+    expect(response.body).not.toContain('providerContinuationId')
   })
 
   it('replays immutable board positions and validates the turn', async () => {

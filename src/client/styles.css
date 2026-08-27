@@ -1301,6 +1301,98 @@ svg {
   font-size: 12px;
   border-bottom: 1px solid var(--line);
 }
+.llm-message-inspector {
+  border-bottom: 1px solid var(--line);
+}
+.llm-message-inspector > summary {
+  min-height: 44px;
+  padding: 10px 15px;
+  display: grid;
+  grid-template-columns: 18px 1fr 18px;
+  align-items: center;
+  gap: 8px;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+.llm-message-inspector > summary::-webkit-details-marker {
+  display: none;
+}
+.llm-message-inspector > summary svg:last-child {
+  transition: transform 160ms ease;
+}
+.llm-message-inspector[open] > summary svg:last-child {
+  transform: rotate(180deg);
+}
+.llm-message-content {
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  padding: 0 14px 14px;
+}
+.llm-message-content > .muted {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.llm-message-set + .llm-message-set {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.llm-message-set > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.llm-message-set > header span,
+.llm-message-set li > div span {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #edf2ee;
+  color: var(--muted);
+  font-size: 10px;
+}
+.llm-message-set ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.llm-message-set li {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.llm-message-set li > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: #f6f8f6;
+  font-size: 11px;
+}
+.llm-message-set pre {
+  max-height: 300px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #171b19;
+  color: #eef3ef;
+  font:
+    11px/1.5 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
 .history-section header {
   min-height: 48px;
   padding: 8px 15px;

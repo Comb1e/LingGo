@@ -4,6 +4,7 @@ import type {
   Game,
   GameAnalysis,
   GamePosition,
+  LlmMessageSet,
   KataGoHealth,
   KataGoPositionReview,
   KataGoSettings,
@@ -78,6 +79,8 @@ async function connectionsWithRestoredKeys(): Promise<ProviderConnection[]> {
 export const api = {
   games: () => request<Game[]>('/api/games'),
   game: (id: string) => request<Game>(`/api/games/${id}`),
+  llmMessages: (id: string) =>
+    request<LlmMessageSet[]>(`/api/games/${id}/llm-messages`),
   gamePosition: (id: string, turn: number) =>
     request<GamePosition>(`/api/games/${id}/positions/${turn}`),
   reviewPositionWithKataGo: (id: string, turn: number, signal?: AbortSignal) =>

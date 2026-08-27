@@ -273,6 +273,12 @@ export class Store {
     }
   }
 
+  listLlmGameContexts(gameId: string) {
+    return (['B', 'W'] as const)
+      .map((color) => this.getLlmGameContext(gameId, color))
+      .filter((context): context is LlmGameContext => Boolean(context))
+  }
+
   saveLlmGameContext(context: LlmGameContext) {
     this.db
       .prepare(

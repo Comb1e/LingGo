@@ -147,6 +147,54 @@ describe('persistent LLM game context', () => {
     )
   })
 
+  it('starts each new game with an empty provider context', () => {
+    const {games, game, profile, connection} = setupGame()
+    const managedConnection = {...connection, kind: 'openai' as const}
+    const first = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection: managedConnection,
+      mode: {kind: 'ordinary'},
+    })
+    store.saveLlmGameContext(
+      games.completedLlmContext(
+        first,
+        {
+          ...turnResponse('{"move":"A9","reason":"First game."}'),
+          providerContinuationId: 'resp-first-game',
+        },
+        'complete',
+        1,
+      ),
+    )
+    games.disableManagedLlmContinuation(game.id, 'B')
+
+    const nextGame = games.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'Black'},
+      white: {type: 'human', name: 'White'},
+      commentsVisible: true,
+    })
+    expect(games.llmMessageSets(nextGame.id)).toEqual([])
+
+    const next = games.prepareLlmActionTurn({
+      gameId: nextGame.id,
+      color: 'B',
+      profile,
+      connection: managedConnection,
+      mode: {kind: 'ordinary'},
+    })
+    expect(next.request).toMatchObject({
+      kind: 'initial',
+      transcript: [],
+      previousResponseId: undefined,
+    })
+    expect(next.context.managedContinuation).toBe(true)
+    expect(next.request.content).not.toContain('First game.')
+  })
+
   it('rebases invalid persisted state and deletes context with its game', () => {
     const {games, game, profile, connection} = setupGame()
     games.prepareLlmActionTurn({

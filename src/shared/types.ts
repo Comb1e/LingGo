@@ -92,6 +92,26 @@ export type ModelTurnState =
       lastError: string
     }
 
+export interface LlmVisibleMessage {
+  role: 'user' | 'assistant'
+  content: string
+  pending?: boolean
+}
+
+export interface LlmMessageSet {
+  color: Color
+  status:
+    | 'uninitialized'
+    | 'active'
+    | 'repairing'
+    | 'reflecting'
+    | 'needs_rebase'
+    | 'complete'
+  providerKind: ProviderKind
+  continuationMode: 'provider' | 'transcript'
+  messages: LlmVisibleMessage[]
+}
+
 export interface Game {
   id: string
   version: number

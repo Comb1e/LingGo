@@ -227,6 +227,15 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await page.locator('.benchmark-games a').first().click()
   await expect(page.locator('.in-game-reflections-panel')).toHaveCount(0)
   await expect(page.locator('.move-reflections')).toHaveCount(0)
+  const trainingMessages = page.locator('.llm-message-inspector')
+  await trainingMessages.getByText('LLM messages').click()
+  await expect(
+    trainingMessages.getByText('User', {exact: true}).first(),
+  ).toBeVisible()
+  await expect(
+    trainingMessages.getByText('Assistant', {exact: true}).first(),
+  ).toBeVisible()
+  await expect(trainingMessages).toContainText('Outcome:')
   await page.getByRole('button', {name: 'Previous board position'}).click()
   await expect(page.getByText(/Move \d+ \/ \d+/)).toBeVisible()
   await page.getByRole('button', {name: 'Latest board position'}).click()
@@ -234,6 +243,15 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
     path: testInfo.outputPath('benchmark-game.png'),
     fullPage: true,
   })
+  await page.goBack()
+  await expect(page.getByText('Completed')).toBeVisible()
+  await page.locator('.benchmark-games a').nth(1).click()
+  const finalMessages = page.locator('.llm-message-inspector')
+  await finalMessages.getByText('LLM messages').click()
+  await expect(finalMessages).not.toContainText('Outcome:')
+  await expect(finalMessages).not.toContainText(
+    'Return only the complete replacement Markdown technique notebook.',
+  )
   await page.goBack()
   await expect(page.getByText('Completed')).toBeVisible()
 

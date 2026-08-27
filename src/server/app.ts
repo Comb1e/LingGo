@@ -139,6 +139,9 @@ export function createApp(
     async (request) =>
       games.get((request.params as {id: string}).id) ?? notFound(),
   )
+  app.get('/api/games/:id/llm-messages', async (request) =>
+    games.llmMessageSets((request.params as {id: string}).id),
+  )
   app.get('/api/games/:id/positions/:turn', async (request) => {
     const {id, turn} = request.params as {id: string; turn: string}
     return games.position(id, Number(turn))

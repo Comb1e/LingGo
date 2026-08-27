@@ -6,6 +6,7 @@ import type {
   Color,
   Game,
   GamePosition,
+  LlmMessageSet,
   LlmActionResult,
   Move,
   NewGameInput,
@@ -116,6 +117,31 @@ export class GameService {
       toMove: state.toMove,
       captures: state.captures,
     }
+  }
+
+  llmMessageSets(id: string): LlmMessageSet[] {
+    this.requireGame(id)
+    return this.store.listLlmGameContexts(id).map((context) => ({
+      color: context.color,
+      status: context.status,
+      providerKind: context.providerKind,
+      continuationMode:
+        context.managedContinuation && context.providerContinuationId
+          ? 'provider'
+          : 'transcript',
+      messages: [
+        ...context.transcript,
+        ...(context.pendingTurn
+          ? [
+              {
+                role: 'user' as const,
+                content: context.pendingTurn.content,
+                pending: true,
+              },
+            ]
+          : []),
+      ],
+    }))
   }
 
   delete(id: string) {

@@ -8,6 +8,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  MessagesSquare,
   Pause,
   Pencil,
   Play,
@@ -37,6 +38,7 @@ import type {
   GameAnalysis,
   GamePosition,
   KataGoPositionReview,
+  LlmMessageSet,
   Point,
 } from '../../shared/types'
 import {api} from '../api'
@@ -138,6 +140,13 @@ export function GamePage() {
     queryFn: () => api.analysis(id),
     enabled: Boolean(id),
   })
+  const hasLlmSeat =
+    gameQuery.data?.black.type === 'llm' || gameQuery.data?.white.type === 'llm'
+  const llmMessagesQuery = useQuery({
+    queryKey: ['llm-messages', id],
+    queryFn: () => api.llmMessages(id),
+    enabled: Boolean(id && hasLlmSeat),
+  })
   const analysisMutation = useMutation({
     mutationFn: (input: {enabled?: boolean; shareWithLlm?: boolean}) =>
       api.setAnalysis(id, input),
@@ -172,6 +181,7 @@ export function GamePage() {
     mutationFn: (command: Record<string, unknown>) => api.command(id, command),
     onSuccess: (game) => {
       queryClient.setQueryData(['game', id], game)
+      void queryClient.invalidateQueries({queryKey: ['llm-messages', id]})
       setReviewState((current) =>
         resetInvalidReview(current, game.moves.length),
       )
@@ -270,6 +280,7 @@ export function GamePage() {
         return
       }
       queryClient.setQueryData(['game', id], next)
+      void queryClient.invalidateQueries({queryKey: ['llm-messages', id]})
       setReviewState((current) =>
         resetInvalidReview(current, next.moves.length),
       )
@@ -781,6 +792,12 @@ export function GamePage() {
               {t('tokens')}
             </strong>
           </section>
+          {hasLlmSeat && (
+            <LlmMessageInspector
+              sets={llmMessagesQuery.data ?? []}
+              loading={llmMessagesQuery.isLoading}
+            />
+          )}
           <section className="history-section">
             <header>
               <h2>{t('moveHistory')}</h2>
@@ -833,6 +850,53 @@ export function GamePage() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function LlmMessageInspector({
+  sets,
+  loading,
+}: {
+  sets: LlmMessageSet[]
+  loading: boolean
+}) {
+  const {t} = useTranslation()
+  return (
+    <details className="llm-message-inspector">
+      <summary>
+        <MessagesSquare size={16} aria-hidden="true" />
+        <span>{t('llmMessages')}</span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </summary>
+      <div className="llm-message-content">
+        {loading ? (
+          <p className="muted">{t('loadingMessages')}</p>
+        ) : sets.length ? (
+          sets.map((set) => (
+            <section className="llm-message-set" key={set.color}>
+              <header>
+                <strong>{set.color === 'B' ? t('black') : t('white')}</strong>
+                <span>{t(`llmContextStatus.${set.status}`)}</span>
+                <span>{t(`llmContinuationMode.${set.continuationMode}`)}</span>
+              </header>
+              <ol>
+                {set.messages.map((message, index) => (
+                  <li key={`${message.role}-${index}`}>
+                    <div>
+                      <strong>{t(`llmMessageRole.${message.role}`)}</strong>
+                      {message.pending && <span>{t('pendingMessage')}</span>}
+                    </div>
+                    <pre>{message.content}</pre>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))
+        ) : (
+          <p className="muted">{t('noLlmMessages')}</p>
+        )}
+      </div>
+    </details>
   )
 }
 
