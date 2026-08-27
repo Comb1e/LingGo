@@ -590,14 +590,11 @@ describe('game orchestration', () => {
           previousResponseId: 'resp-1',
           transcriptLength: 2,
         },
-        {kind: 'summary', previousResponseId: undefined, transcriptLength: 0},
+        {kind: 'summary', previousResponseId: 'resp-1', transcriptLength: 2},
         {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
       ].map((request) => ({
         ...request,
-        cacheKey:
-          request.kind === 'summary'
-            ? `linggo:${game.id}:B:summary`
-            : `linggo:${game.id}:B`,
+        cacheKey: `linggo:${game.id}:B`,
       })),
     )
     expect(store.getLlmGameContext(game.id, 'B')).toMatchObject({

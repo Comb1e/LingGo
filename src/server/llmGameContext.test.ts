@@ -1,12 +1,27 @@
 import {afterEach, describe, expect, it} from 'vitest'
 import {Store} from './database'
 import {GameService} from './games'
-import {makeReflectionLlmPrompt, modelFingerprint} from './llmGameContext'
+import {
+  makeGameIntentionPrompt,
+  makeReflectionLlmPrompt,
+  modelFingerprint,
+} from './llmGameContext'
 
 let store: Store
 afterEach(() => store?.close())
 
 describe('persistent LLM game context', () => {
+  it('makes an appended intention request distinct from a move turn', () => {
+    const prompt = makeGameIntentionPrompt()
+
+    expect(prompt).toContain('TASK SWITCH')
+    expect(prompt).toContain('This is not a turn')
+    expect(prompt).toContain('game conversation immediately above')
+    expect(prompt).toContain('1 to 3 concise plain-text sentences')
+    expect(prompt).not.toContain('CURRENT POSITION')
+    expect(prompt).not.toContain('JSON OUTPUT SCHEMA')
+  })
+
   it('persists a pending initial turn and reuses it after restart', () => {
     const {games, game, profile, connection} = setupGame()
     const first = games.prepareLlmActionTurn({

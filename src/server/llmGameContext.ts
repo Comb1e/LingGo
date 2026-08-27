@@ -143,22 +143,11 @@ export function makeInitialLlmPrompt(
   return values.join('\n')
 }
 
-export function makeGameIntentionPrompt(
-  context: Pick<LlmGameContext, 'transcript'>,
-  snapshot: GameSnapshot,
-) {
+export function makeGameIntentionPrompt() {
   return [
-    'Summarize your current Go game intention briefly for a context reset.',
-    'Focus on strategic priorities, unresolved plans, and what you are trying to achieve. Do not choose or recommend a specific next move, restate the rules, or include analysis of unrelated positions.',
-    'Return only 1 to 3 concise sentences.',
-    '',
-    'CURRENT POSITION',
-    ...formatCurrentPosition(snapshot, snapshot.moves.at(-1)),
-    '',
-    'EXISTING CONVERSATION',
-    ...context.transcript.map(
-      (message) => `${message.role.toUpperCase()}: ${message.content}`,
-    ),
+    'TASK SWITCH: summarize your current game intention for a context reset.',
+    'This is not a turn and you must not play or recommend a move. Do not return the established move/reason JSON, a coordinate, pass, resign, or a move explanation.',
+    'Using the game conversation immediately above, state only your current strategic priorities, unresolved plans, and intended approach in 1 to 3 concise plain-text sentences.',
   ].join('\n')
 }
 

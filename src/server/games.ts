@@ -497,21 +497,30 @@ export class GameService {
     prepared: PreparedLlmTurn,
     signal: AbortSignal,
   ) {
-    const prompt = makeGameIntentionPrompt(prepared.context, prepared.snapshot)
-    if (adapter.requestText) {
-      const response = await adapter.requestText(prompt, signal)
+    const prompt = makeGameIntentionPrompt()
+    if (adapter.requestTurn) {
+      const response = await adapter.requestTurn(
+        {
+          kind: 'summary',
+          content: prompt,
+          transcript: prepared.context.transcript,
+          previousResponseId: prepared.context.managedContinuation
+            ? prepared.context.providerContinuationId
+            : undefined,
+          cacheKey: `linggo:${prepared.context.gameId}:${prepared.context.color}`,
+          snapshot: prepared.snapshot,
+          output: 'summary',
+        },
+        signal,
+      )
       return response.text.trim() || undefined
     }
-    if (!adapter.requestTurn) return undefined
-    const response = await adapter.requestTurn(
-      {
-        kind: 'summary',
-        content: prompt,
-        transcript: [],
-        cacheKey: `linggo:${prepared.context.gameId}:${prepared.context.color}:summary`,
-        snapshot: prepared.snapshot,
-        output: 'notebook',
-      },
+    if (!adapter.requestText) return undefined
+    const transcript = prepared.context.transcript
+      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+      .join('\n')
+    const response = await adapter.requestText(
+      `${transcript}\nUSER: ${prompt}`,
       signal,
     )
     return response.text.trim() || undefined

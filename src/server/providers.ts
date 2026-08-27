@@ -99,7 +99,7 @@ export interface LlmTurnRequest {
   previousResponseId?: string
   cacheKey: string
   snapshot: GameSnapshot
-  output: 'action' | 'notebook'
+  output: 'action' | 'notebook' | 'summary'
 }
 
 export interface LlmTurnResponse {
@@ -158,6 +158,15 @@ export class FakePlayerAdapter implements PlayerAdapter {
   async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
     signal.throwIfAborted()
     const started = Date.now()
+    if (request.kind === 'summary')
+      return {
+        text: 'Keep groups connected while developing influence and preserving options to reduce weak opposing stones.',
+        latencyMs: Date.now() - started,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: 'deterministic-v1',
+        providerKind: 'fake' as const,
+      }
     if (request.output === 'notebook')
       return {
         text: '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
