@@ -345,8 +345,8 @@ export const benchmarkConfigSchema = z
     trainingGameCount: z.number().int().min(1).max(1000),
     notebookSeed: notebookSeedSchema.default({mode: 'rules_only'}),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
-    notebookTokenBudget: z.number().int().min(256).max(100_000).default(8000),
-    trainingVisits: z.number().int().min(25).max(100_000).default(5000),
+    notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
+    trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
   })
   .strict()

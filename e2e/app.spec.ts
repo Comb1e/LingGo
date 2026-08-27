@@ -200,7 +200,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByRole('heading', {name: 'Benchmark', exact: true}),
   ).toBeVisible()
-  await expect(page.getByLabel('Training visits')).toHaveValue('5000')
+  await expect(page.getByLabel('Training visits')).toHaveValue('10000')
   await expect(page.getByLabel('Evaluation visits')).toHaveValue('10000')
   await page.getByRole('button', {name: 'Rules + existing notebook'}).click()
   page.once('dialog', (dialog) => dialog.accept('E2E notebook'))

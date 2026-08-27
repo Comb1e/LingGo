@@ -3,7 +3,7 @@ import {ArrowRight, Gauge, Pause, Play, Trash2} from 'lucide-react'
 import {useEffect, useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
-import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
+import {DEFAULT_BENCHMARK_TRAINING_VISITS} from '../../shared/constants'
 import type {BenchmarkRun, Color} from '../../shared/types'
 import {api} from '../api'
 import {hasLiveBenchmarkForProfile} from '../benchmarkAvailability'
@@ -24,9 +24,11 @@ export function BenchmarksPage() {
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [finalColor, setFinalColor] = useState<Color>('B')
-  const [trainingVisits, setTrainingVisits] = useState(DEFAULT_KATAGO_VISITS)
+  const [trainingVisits, setTrainingVisits] = useState(
+    DEFAULT_BENCHMARK_TRAINING_VISITS,
+  )
   const [evaluationVisits, setEvaluationVisits] = useState(10_000)
-  const [notebookTokenBudget, setNotebookTokenBudget] = useState(8000)
+  const [notebookTokenBudget, setNotebookTokenBudget] = useState(10_000)
   const [feedback, setFeedback] = useState(true)
   const [trainingGameCount, setTrainingGameCount] = useState(10)
   const [notebookId, setNotebookId] = useState('')

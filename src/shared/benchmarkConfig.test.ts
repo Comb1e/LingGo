@@ -7,8 +7,8 @@ const base = {
   trainingGameCount: 1,
   notebookSeed: {mode: 'rules_only' as const},
   trainingFeedback: 'none' as const,
-  notebookTokenBudget: 8000,
-  trainingVisits: 5000,
+  notebookTokenBudget: 10_000,
+  trainingVisits: 10_000,
   evaluationVisits: 10_000,
 }
 
@@ -56,8 +56,8 @@ describe('benchmark configuration', () => {
     ).toMatchObject({
       notebookSeed: {mode: 'rules_only'},
       trainingFeedback: 'structured',
-      notebookTokenBudget: 8000,
-      trainingVisits: 5000,
+      notebookTokenBudget: 10_000,
+      trainingVisits: 10_000,
       evaluationVisits: 10_000,
     })
     expect(() =>
