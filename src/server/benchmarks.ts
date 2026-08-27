@@ -7,13 +7,14 @@ import type {
   BenchmarkRun,
   Color,
   Game,
+  LlmActionResult,
   PlayerAction,
   PositionAnalysis,
   TechniqueNotebook,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
-import {boardHash, IllegalMoveError, makeSnapshot, replay} from './go'
+import {boardHash, IllegalMoveError, replay} from './go'
 import {GameService} from './games'
 import {
   gamePosition,
@@ -31,10 +32,10 @@ import {
 } from './network'
 import {
   createPlayerAdapter,
-  makeBenchmarkMovePrompt,
-  makeReflectionPrompt,
+  isProviderContextError,
+  type LlmTurnResponse,
   MalformedModelOutputError,
-  type PlayerAdapter,
+  parseJsonActionResult,
 } from './providers'
 
 type InternalRun = BenchmarkRun & {
@@ -305,6 +306,7 @@ export class BenchmarkService {
             return
           }
         } else {
+          this.games.completeLlmContexts(game.id)
           run.currentGame += 1
           run.currentTurn = 0
           this.save(run)
@@ -389,11 +391,25 @@ export class BenchmarkService {
           this.save(run)
           return false
         }
+        const connection = this.connection(run)
         const notebook = (await this.selectedNotebook(run.config)).content
-        let feedback = ''
         let outputFailures = 0
         let apiFailures = 0
+        let rebasedProviderContext = false
         const retryErrors = [...(game.providerErrors ?? [])]
+        const phase =
+          run.currentGame < run.config.trainingGameCount ? 'training' : 'final'
+        let prepared = this.games.prepareLlmActionTurn({
+          gameId: game.id,
+          color: llmColor,
+          profile: run.profileSnapshot,
+          connection,
+          mode: {kind: 'benchmark', phase, notebook},
+          latestWinRate:
+            phase === 'training' && run.config.includeTrainingWinRates
+              ? this.winRateUpdate(game.id, llmColor)
+              : undefined,
+        })
         this.games.setAutomatedTurnState(game.id, {
           phase: 'requesting',
           attempt: 1,
@@ -401,38 +417,44 @@ export class BenchmarkService {
         })
         try {
           while (outputFailures < 3) {
-            const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-            if (feedback) snapshot.previousError = feedback
-            const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
-              phase:
-                run.currentGame < run.config.trainingGameCount
-                  ? 'training'
-                  : 'final',
-              winRateHistory:
-                run.currentGame < run.config.trainingGameCount &&
-                run.config.includeTrainingWinRates
-                  ? this.winRateHistory(game.id, llmColor)
-                  : undefined,
-              inGameReflections: game.inGameReflections,
-            })
             let responseContent = ''
+            let turnResponse: LlmTurnResponse | undefined
             try {
-              const response = await adapter.requestAction(
-                snapshot,
+              turnResponse = await this.games.requestPreparedLlmTurn(
+                adapter,
+                prepared,
                 signal,
-                prompt,
               )
-              responseContent =
-                response.responseContent ?? JSON.stringify(response.action)
+              responseContent = turnResponse.text
+              const parsed = parseJsonActionResult(turnResponse.text, game.size)
+              const response: LlmActionResult = {
+                action: parsed.action,
+                responseContent: turnResponse.text,
+                reasoning: turnResponse.reasoning,
+                latencyMs: turnResponse.latencyMs,
+                inputTokens: turnResponse.inputTokens,
+                outputTokens: turnResponse.outputTokens,
+                model: turnResponse.model,
+                providerKind: turnResponse.providerKind,
+                retries: 0,
+              }
               addUsage(run, response)
               response.retries = outputFailures + apiFailures
               response.retryErrors = retryErrors.length
                 ? retryErrors
                 : undefined
+              const context = this.games.completedLlmContext(
+                prepared,
+                turnResponse,
+                'active',
+                game.moves.length + 1,
+              )
               game = this.games.acceptAutomated(
                 game.id,
                 response.action,
                 response,
+                false,
+                context,
               )
               run.currentTurn = game.moves.length
               this.save(run)
@@ -441,6 +463,26 @@ export class BenchmarkService {
             } catch (error) {
               if (signal.aborted) throw error
               if (!isRepairableMoveError(error)) {
+                if (
+                  !rebasedProviderContext &&
+                  isProviderContextError(error) &&
+                  prepared.context.providerContinuationId
+                ) {
+                  rebasedProviderContext = true
+                  this.games.rebaseLlmContext(game.id, llmColor)
+                  prepared = this.games.prepareLlmActionTurn({
+                    gameId: game.id,
+                    color: llmColor,
+                    profile: run.profileSnapshot,
+                    connection,
+                    mode: {kind: 'benchmark', phase, notebook},
+                    latestWinRate:
+                      phase === 'training' && run.config.includeTrainingWinRates
+                        ? this.winRateUpdate(game.id, llmColor)
+                        : undefined,
+                  })
+                  continue
+                }
                 apiFailures += 1
                 const message = publicProviderError(error)
                 retryErrors.push(message)
@@ -474,12 +516,24 @@ export class BenchmarkService {
                 truncated: retained.length < content.length,
               })
               outputFailures += 1
-              feedback = publicProviderError(error, 'Invalid action')
+              const feedback = publicProviderError(error, 'Invalid action')
               if (outputFailures >= 3)
                 throw new Error(
                   `Model failed to produce a legal action after 3 attempts: ${feedback}`,
                   {cause: error},
                 )
+              prepared = this.games.repairLlmActionTurn(
+                prepared,
+                turnResponse ?? {
+                  text: content,
+                  latencyMs: 0,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  model: run.profileSnapshot.modelId,
+                  providerKind: connection.kind,
+                },
+                feedback,
+              )
             }
           }
         } finally {
@@ -534,7 +588,7 @@ export class BenchmarkService {
 
   private async reflect(run: InternalRun, signal: AbortSignal) {
     const adapter = this.adapter(run)
-    if (!adapter?.requestText) {
+    if (!adapter) {
       run.waitingFor = 'credentials'
       this.save(run)
       return false
@@ -542,28 +596,26 @@ export class BenchmarkService {
     const notebook = await this.selectedNotebook(run.config)
     const game = this.currentGame(run)
     if (!game) throw new Error('Benchmark game not found')
-    const prompt = makeReflectionPrompt({
-      notebook: notebook.content,
-      games: [
-        {
-          sequence: run.currentGame + 1,
-          snapshot: makeSnapshot(game.size, game.komi, game.moves),
-          result: game.result ?? 'Unknown',
-          llmColor: run.currentGame % 2 === 0 ? 'B' : 'W',
-          winRateHistory: run.config.includeTrainingWinRates
-            ? this.winRateHistory(
-                game.id,
-                run.currentGame % 2 === 0 ? 'B' : 'W',
-              )
-            : undefined,
-          inGameReflections: game.inGameReflections ?? [],
-        },
-      ],
+    const color = run.currentGame % 2 === 0 ? 'B' : 'W'
+    const connection = this.connection(run)
+    let prepared = this.games.prepareLlmReflectionTurn({
+      gameId: game.id,
+      color,
+      profile: run.profileSnapshot,
+      connection,
     })
     const response = await this.requestReflection(
       game.id,
-      adapter.requestText.bind(adapter),
-      prompt,
+      () => this.games.requestPreparedLlmTurn(adapter, prepared, signal),
+      () => {
+        this.games.rebaseLlmContext(game.id, color)
+        prepared = this.games.prepareLlmReflectionTurn({
+          gameId: game.id,
+          color,
+          profile: run.profileSnapshot,
+          connection,
+        })
+      },
       signal,
     )
     addUsage(run, response)
@@ -573,8 +625,26 @@ export class BenchmarkService {
     run.phase =
       run.currentGame < run.config.trainingGameCount ? 'training' : 'final'
     run.updatedAt = run.notebook.updatedAt
-    await this.notebooks.saveReflection(notebook, run, response.text.trim())
-    if (!this.notebooks.store) this.store.saveBenchmark(run)
+    const completedContext = this.games.completedLlmContext(
+      prepared,
+      response,
+      'complete',
+      game.moves.length,
+    )
+    if (this.notebooks.store)
+      this.store.saveReflectionWithContext(
+        notebook,
+        run,
+        response.text.trim(),
+        completedContext,
+      )
+    else {
+      await this.notebooks.saveReflection(notebook, run, response.text.trim())
+      this.store.transaction(() => {
+        this.store.saveBenchmark(run)
+        this.store.saveLlmGameContext(completedContext)
+      })
+    }
     this.events.emit(run.id, run)
     this.events.emit('changed', run.id)
     return true
@@ -600,11 +670,7 @@ export class BenchmarkService {
   }
 
   private adapter(run: InternalRun) {
-    const connection = this.store.getConnection(
-      run.profileSnapshot.connectionId,
-    )
-    if (!connection)
-      throw new Error('The benchmark provider connection no longer exists')
+    const connection = this.connection(run)
     if (connection.kind !== 'fake' && !this.games.vault.get(connection))
       return undefined
     return this.adapterFactory(
@@ -614,13 +680,23 @@ export class BenchmarkService {
     )
   }
 
+  private connection(run: InternalRun) {
+    const connection = this.store.getConnection(
+      run.profileSnapshot.connectionId,
+    )
+    if (!connection)
+      throw new Error('The benchmark provider connection no longer exists')
+    return connection
+  }
+
   private async requestReflection(
     gameId: string,
-    request: NonNullable<PlayerAdapter['requestText']>,
-    prompt: string,
+    request: () => Promise<LlmTurnResponse>,
+    rebase: () => void,
     signal: AbortSignal,
   ) {
     let lastError = ''
+    let rebasedProviderContext = false
     try {
       for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
         this.games.setAutomatedTurnState(
@@ -639,9 +715,15 @@ export class BenchmarkService {
               },
         )
         try {
-          return await request(prompt, signal)
+          return await request()
         } catch (error) {
           if (signal.aborted) throw error
+          if (!rebasedProviderContext && isProviderContextError(error)) {
+            rebasedProviderContext = true
+            rebase()
+            attempt -= 1
+            continue
+          }
           lastError = publicProviderError(error)
           if (
             !shouldRetryProviderError(error) ||
@@ -684,14 +766,11 @@ export class BenchmarkService {
     return result
   }
 
-  private winRateHistory(gameId: string, color: Color) {
-    return this.store
-      .getGameAnalysis(gameId)
-      .positions.map((value) => {
-        const rate = color === 'B' ? value.blackWinRate : value.whiteWinRate
-        return `Turn ${value.turn}: ${(rate * 100).toFixed(2)}%`
-      })
-      .join('\n')
+  private winRateUpdate(gameId: string, color: Color) {
+    const value = this.store.getGameAnalysis(gameId).positions.at(-1)
+    if (!value) return ''
+    const rate = color === 'B' ? value.blackWinRate : value.whiteWinRate
+    return `Turn ${value.turn}: ${(rate * 100).toFixed(2)}%`
   }
 
   private currentGame(run: InternalRun) {

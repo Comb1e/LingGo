@@ -69,7 +69,6 @@ export interface Move {
   coordinate?: string
   comment?: string
   reasoning?: string
-  inGameReflections?: InGameReflection[]
   captured: number
   capturedPoints?: Point[]
   latencyMs?: number
@@ -122,7 +121,6 @@ export interface Game {
   shareAnalysisWithLlm?: boolean
   benchmarkRunId?: string
   benchmarkGameIndex?: number
-  inGameReflections?: InGameReflection[]
   rejectedModelActions?: RejectedModelAction[]
   createdAt: string
   updatedAt: string
@@ -212,16 +210,10 @@ export interface GameSnapshot {
   kataGoAnalysis?: string
 }
 
-export interface InGameReflection {
-  number: number
-  reflection: string
-}
-
 export interface LlmActionResult {
   action: PlayerAction
   responseContent?: string
   reasoning?: string
-  inGameReflections?: InGameReflection[]
   latencyMs: number
   inputTokens: number
   outputTokens: number

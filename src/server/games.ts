@@ -6,12 +6,13 @@ import type {
   Color,
   Game,
   GamePosition,
-  InGameReflection,
   LlmActionResult,
   Move,
   NewGameInput,
   PlayerAction,
   Point,
+  PlayerProfile,
+  ProviderConnection,
 } from '../shared/types'
 import {commandSchema, newGameSchema} from '../shared/types'
 import {Store} from './database'
@@ -26,10 +27,23 @@ import {
 } from './go'
 import {
   createPlayerAdapter,
+  isProviderContextError,
+  type LlmTurnRequest,
+  type LlmTurnResponse,
   MalformedModelOutputError,
+  parseJsonActionResult,
   type PlayerAdapter,
   SecretVault,
 } from './providers'
+import {
+  type LlmGameContext,
+  type LlmPromptMode,
+  makeContinuationLlmPrompt,
+  makeInitialLlmPrompt,
+  makeReflectionLlmPrompt,
+  makeRepairLlmPrompt,
+  modelFingerprint,
+} from './llmGameContext'
 import {
   MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
@@ -44,6 +58,12 @@ const MAX_MODEL_OUTPUT_ATTEMPTS = 3
 type PlayerAdapterFactory = (
   ...args: Parameters<typeof createPlayerAdapter>
 ) => PlayerAdapter
+
+export interface PreparedLlmTurn {
+  context: LlmGameContext
+  request: LlmTurnRequest
+  snapshot: ReturnType<typeof makeSnapshot>
+}
 
 export class StaleVersionError extends Error {
   constructor() {
@@ -202,7 +222,6 @@ export class GameService {
     game.autoplay = false
     game.benchmarkRunId = input.runId
     game.benchmarkGameIndex = input.gameIndex
-    game.inGameReflections = []
     return this.commit(game)
   }
 
@@ -211,14 +230,183 @@ export class GameService {
     action: PlayerAction,
     llm?: LlmActionResult,
     forced = false,
+    context?: LlmGameContext,
   ) {
-    const saved = this.accept(this.requireGame(id), action, llm)
+    const saved = this.accept(this.requireGame(id), action, llm, context)
     if (forced) {
       const game = this.requireGame(id)
       game.moves.at(-1)!.forced = true
+      this.store.markLlmGameContextsNeedsRebase(id)
       return this.commit(game)
     }
     return saved
+  }
+
+  prepareLlmActionTurn(input: {
+    gameId: string
+    color: Color
+    profile: PlayerProfile
+    connection: ProviderConnection
+    mode: LlmPromptMode
+    latestWinRate?: string
+    fingerprint?: string
+  }): PreparedLlmTurn {
+    const game = this.requireGame(input.gameId)
+    const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+    const fingerprint =
+      input.fingerprint ?? modelFingerprint(input.profile, input.connection)
+    let context = this.store.getLlmGameContext(game.id, input.color)
+    const identityChanged =
+      context &&
+      (context.profileId !== input.profile.id ||
+        context.providerKind !== input.connection.kind ||
+        context.modelFingerprint !== fingerprint)
+    const pendingValid =
+      context?.pendingTurn &&
+      !identityChanged &&
+      context.pendingTurn.observedMoveCount === game.moves.length &&
+      ['active', 'repairing'].includes(context.status)
+    if (pendingValid)
+      return this.preparedTurn(context!, snapshot, context!.pendingTurn!)
+
+    const unseen = context
+      ? game.moves.slice(context.lastObservedMove)
+      : game.moves
+    const continuationValid =
+      context?.status === 'active' &&
+      !identityChanged &&
+      context.lastObservedMove >= 0 &&
+      context.lastObservedMove < game.moves.length &&
+      unseen.length === 1 &&
+      unseen[0].color !== input.color
+    const rebase = !continuationValid
+    const now = new Date().toISOString()
+    const content = continuationValid
+      ? makeContinuationLlmPrompt(snapshot, unseen[0], input.latestWinRate)
+      : makeInitialLlmPrompt(snapshot, input.mode, input.latestWinRate)
+    context = {
+      gameId: game.id,
+      color: input.color,
+      status: 'active',
+      profileId: input.profile.id,
+      providerKind: input.connection.kind,
+      modelFingerprint: fingerprint,
+      lastObservedMove: game.moves.length,
+      transcript: rebase ? [] : context!.transcript,
+      pendingTurn: {
+        kind: continuationValid ? 'continuation' : 'initial',
+        content,
+        observedMoveCount: game.moves.length,
+      },
+      providerContinuationId: rebase
+        ? undefined
+        : context!.providerContinuationId,
+      createdAt: context?.createdAt ?? now,
+      updatedAt: now,
+    }
+    this.store.saveLlmGameContext(context)
+    return this.preparedTurn(context, snapshot, context.pendingTurn!)
+  }
+
+  repairLlmActionTurn(
+    prepared: PreparedLlmTurn,
+    response: LlmTurnResponse,
+    error: string,
+  ): PreparedLlmTurn {
+    const game = this.requireGame(prepared.context.gameId)
+    const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+    const content = makeRepairLlmPrompt(snapshot, response.text, error)
+    const context: LlmGameContext = {
+      ...prepared.context,
+      status: 'repairing',
+      transcript: appendVisibleTurn(prepared.context, response.text),
+      pendingTurn: {
+        kind: 'repair',
+        content,
+        observedMoveCount: game.moves.length,
+      },
+      providerContinuationId:
+        response.providerContinuationId ??
+        prepared.context.providerContinuationId,
+      updatedAt: new Date().toISOString(),
+    }
+    this.store.saveLlmGameContext(context)
+    return this.preparedTurn(context, snapshot, context.pendingTurn!)
+  }
+
+  prepareLlmReflectionTurn(input: {
+    gameId: string
+    color: Color
+    profile: PlayerProfile
+    connection: ProviderConnection
+    fingerprint?: string
+  }): PreparedLlmTurn {
+    const game = this.requireGame(input.gameId)
+    const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+    const fingerprint =
+      input.fingerprint ?? modelFingerprint(input.profile, input.connection)
+    let context = this.store.getLlmGameContext(game.id, input.color)
+    const valid =
+      context &&
+      context.profileId === input.profile.id &&
+      context.providerKind === input.connection.kind &&
+      context.modelFingerprint === fingerprint &&
+      context.status !== 'needs_rebase' &&
+      context.lastObservedMove <= game.moves.length
+    if (
+      valid &&
+      context!.status === 'reflecting' &&
+      context!.pendingTurn?.observedMoveCount === game.moves.length
+    )
+      return this.preparedTurn(context!, snapshot, context!.pendingTurn!)
+    const unseen = valid ? game.moves.slice(context!.lastObservedMove) : []
+    const now = new Date().toISOString()
+    const content = makeReflectionLlmPrompt(game, input.color, unseen)
+    context = {
+      gameId: game.id,
+      color: input.color,
+      status: 'reflecting',
+      profileId: input.profile.id,
+      providerKind: input.connection.kind,
+      modelFingerprint: fingerprint,
+      lastObservedMove: game.moves.length,
+      transcript: valid ? context!.transcript : [],
+      pendingTurn: {
+        kind: 'reflection',
+        content,
+        observedMoveCount: game.moves.length,
+      },
+      providerContinuationId: valid
+        ? context!.providerContinuationId
+        : undefined,
+      createdAt: context?.createdAt ?? now,
+      updatedAt: now,
+    }
+    this.store.saveLlmGameContext(context)
+    return this.preparedTurn(context, snapshot, context.pendingTurn!)
+  }
+
+  completedLlmContext(
+    prepared: PreparedLlmTurn,
+    response: LlmTurnResponse,
+    status: 'active' | 'complete',
+    lastObservedMove: number,
+  ): LlmGameContext {
+    return {
+      ...prepared.context,
+      status,
+      lastObservedMove,
+      transcript: appendVisibleTurn(prepared.context, response.text),
+      pendingTurn: undefined,
+      providerContinuationId:
+        response.providerContinuationId ??
+        prepared.context.providerContinuationId,
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  rebaseLlmContext(gameId: string, color: Color) {
+    this.store.markLlmGameContextsNeedsRebase(gameId, color)
   }
 
   finishAutomated(id: string, result: string) {
@@ -239,6 +427,10 @@ export class GameService {
   clearAutomatedTurnState(id: string) {
     if (!this.modelTurns.delete(id)) return
     this.emit(id)
+  }
+
+  completeLlmContexts(id: string) {
+    this.store.completeLlmGameContexts(id)
   }
 
   recordRejectedModelAction(
@@ -321,6 +513,7 @@ export class GameService {
       game.autoplay = false
       game.pauseAfterMove = false
       this.refreshPosition(game)
+      this.store.markLlmGameContextsNeedsRebase(id)
       return this.commit(game)
     }
     if (command.type === 'toggle-dead') {
@@ -378,6 +571,7 @@ export class GameService {
       game.status = 'active'
       game.error = undefined
       game.pauseAfterMove = false
+      this.store.markLlmGameContextsNeedsRebase(id, command.color)
       const saved = this.commit(game)
       this.schedule(id)
       return saved
@@ -394,10 +588,12 @@ export class GameService {
       game.error = undefined
       game.autoplay = false
       game.pauseAfterMove = false
-      return this.accept(game, {
+      const saved = this.accept(game, {
         action: 'pass',
         comment: 'Operator forced a pass.',
       })
+      this.store.markLlmGameContextsNeedsRebase(id)
+      return saved
     }
     if (
       command.type === 'resign' &&
@@ -450,6 +646,7 @@ export class GameService {
     game: Game,
     action: PlayerAction,
     llm?: LlmActionResult,
+    context?: LlmGameContext,
   ): Game {
     if (game.status !== 'active') throw new Error('Game is not active')
     const color = game.toMove
@@ -463,9 +660,6 @@ export class GameService {
       captured = result.captured
       capturedPoints = result.capturedPoints
     }
-    const inGameReflections = game.benchmarkRunId
-      ? mergeInGameReflections([], llm?.inGameReflections)
-      : []
     const move: Move = {
       number: game.moves.length + 1,
       color,
@@ -474,9 +668,6 @@ export class GameService {
       coordinate: point ? pointToCoordinate(point, game.size) : undefined,
       comment: action.comment,
       reasoning: llm?.reasoning,
-      inGameReflections: inGameReflections.length
-        ? inGameReflections
-        : undefined,
       captured,
       capturedPoints,
       latencyMs: llm?.latencyMs,
@@ -489,11 +680,6 @@ export class GameService {
     }
     game.moves.push(move)
     if (llm) game.providerErrors = undefined
-    if (inGameReflections.length)
-      game.inGameReflections = mergeInGameReflections(
-        game.inGameReflections,
-        inGameReflections,
-      )
     this.refreshPosition(game)
 
     if (action.action === 'resign') {
@@ -520,7 +706,7 @@ export class GameService {
       if (game.status === 'active') game.status = 'paused'
     }
 
-    const saved = this.commit(game)
+    const saved = this.commit(game, context)
     this.schedule(game.id)
     return saved
   }
@@ -549,10 +735,11 @@ export class GameService {
     })
     this.emit(id)
     try {
-      let feedback = ''
       let outputFailures = 0
       let apiFailures = 0
+      let rebasedProviderContext = false
       const retryErrors = [...(this.requireGame(id).providerErrors ?? [])]
+      let prepared: PreparedLlmTurn | undefined
       while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
         const game = this.requireGame(id)
         if (game.status !== 'active' || !game.autoplay) return
@@ -572,22 +759,49 @@ export class GameService {
           this.vault,
         )
         const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-        snapshot.kataGoAnalysis = await this.llmAnalysisProvider?.(
+        const latestWinRate = await this.llmAnalysisProvider?.(
           game,
           controller.signal,
         )
         if (controller.signal.aborted) return
-        if (feedback) snapshot.previousError = feedback
+        prepared ??= this.prepareLlmActionTurn({
+          gameId: id,
+          color: game.toMove,
+          profile,
+          connection,
+          mode: {kind: 'ordinary', stylePrompt: profile.stylePrompt},
+          latestWinRate,
+        })
+        let response: LlmTurnResponse | undefined
         try {
-          const result = await adapter.requestAction(
-            snapshot,
+          response = await this.requestPreparedLlmTurn(
+            adapter,
+            prepared,
             controller.signal,
           )
           if (controller.signal.aborted) return
+          const parsed = parseJsonActionResult(response.text, snapshot.size)
+          const result: LlmActionResult = {
+            action: parsed.action,
+            responseContent: response.text,
+            reasoning: response.reasoning,
+            latencyMs: response.latencyMs,
+            inputTokens: response.inputTokens,
+            outputTokens: response.outputTokens,
+            model: response.model,
+            providerKind: response.providerKind,
+            retries: 0,
+          }
           result.retries = outputFailures + apiFailures
           result.retryErrors = retryErrors.length ? retryErrors : undefined
           const latest = this.requireGame(id)
-          this.accept(latest, result.action, result)
+          const completed = this.completedLlmContext(
+            prepared,
+            response,
+            'active',
+            latest.moves.length + 1,
+          )
+          this.accept(latest, result.action, result, completed)
           return
         } catch (error) {
           if (controller.signal.aborted) return
@@ -596,6 +810,16 @@ export class GameService {
             error instanceof MalformedModelOutputError ||
             error instanceof NoOutputGeneratedError
           if (!repairable) {
+            if (
+              !rebasedProviderContext &&
+              isProviderContextError(error) &&
+              prepared.context.providerContinuationId
+            ) {
+              rebasedProviderContext = true
+              this.rebaseLlmContext(id, game.toMove)
+              prepared = undefined
+              continue
+            }
             apiFailures += 1
             const message = publicProviderError(error)
             retryErrors.push(message)
@@ -623,7 +847,20 @@ export class GameService {
             continue
           }
           outputFailures += 1
-          feedback = error instanceof Error ? error.message : 'Invalid action'
+          const feedback =
+            error instanceof Error ? error.message : 'Invalid action'
+          const rejected =
+            response ??
+            emptyTurnResponse(error, connection.kind, profile.modelId)
+          const content = rejected.text
+          const retained = content.slice(0, 32_000)
+          this.recordRejectedModelAction(id, {
+            turn: game.moves.length + 1,
+            attempt: outputFailures,
+            responseContent: retained,
+            reason: feedback,
+            truncated: retained.length < content.length,
+          })
           if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS) {
             const latest = this.requireGame(id)
             latest.status = 'error'
@@ -633,6 +870,7 @@ export class GameService {
             this.commit(latest)
             return
           }
+          prepared = this.repairLlmActionTurn(prepared, rejected, feedback)
         }
       }
     } catch (error) {
@@ -700,10 +938,22 @@ export class GameService {
     game.captures = state.captures
   }
 
-  private commit(game: Game): Game {
+  private commit(game: Game, context?: LlmGameContext): Game {
     game.version += 1
     game.updatedAt = new Date().toISOString()
-    this.save(game)
+    if (game.status === 'finished' && !game.benchmarkRunId && context)
+      context.status = 'complete'
+    if (context) {
+      this.store.saveGameWithLlmContext(game, context)
+      this.store.ensureGameAnalysis(
+        game.id,
+        game.analysisEnabled ?? true,
+        game.shareAnalysisWithLlm ?? false,
+      )
+      this.emit(game.id)
+    } else this.save(game)
+    if (game.status === 'finished' && !game.benchmarkRunId)
+      this.store.completeLlmGameContexts(game.id)
     return this.withPending(game)
   }
 
@@ -739,16 +989,85 @@ export class GameService {
           : undefined,
     }
   }
+
+  private preparedTurn(
+    context: LlmGameContext,
+    snapshot: ReturnType<typeof makeSnapshot>,
+    pendingTurn: NonNullable<LlmGameContext['pendingTurn']>,
+  ): PreparedLlmTurn {
+    return {
+      context,
+      snapshot,
+      request: {
+        kind: pendingTurn.kind,
+        content: pendingTurn.content,
+        transcript: context.transcript,
+        previousResponseId: context.providerContinuationId,
+        snapshot,
+        output: pendingTurn.kind === 'reflection' ? 'notebook' : 'action',
+      },
+    }
+  }
+
+  async requestPreparedLlmTurn(
+    adapter: PlayerAdapter,
+    prepared: PreparedLlmTurn,
+    signal: AbortSignal,
+  ): Promise<LlmTurnResponse> {
+    if (adapter.requestTurn)
+      return adapter.requestTurn(prepared.request, signal)
+    if (prepared.request.output === 'notebook') {
+      if (!adapter.requestText)
+        throw new Error('The selected provider cannot create reflections')
+      const result = await adapter.requestText(prepared.request.content, signal)
+      return {...result, providerKind: prepared.context.providerKind}
+    }
+    const result = await adapter.requestAction(
+      prepared.snapshot,
+      signal,
+      prepared.request.content,
+    )
+    return {
+      text:
+        result.responseContent ??
+        JSON.stringify({
+          move:
+            result.action.action === 'play'
+              ? result.action.coordinate
+              : result.action.action,
+          reason: result.action.comment,
+        }),
+      reasoning: result.reasoning,
+      latencyMs: result.latencyMs,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      model: result.model,
+      providerKind: result.providerKind ?? prepared.context.providerKind,
+    }
+  }
 }
 
-export function mergeInGameReflections(
-  current: InGameReflection[] | undefined,
-  updates: InGameReflection[] | undefined,
-) {
-  const reflections = new Map(
-    (current ?? []).map((reflection) => [reflection.number, reflection]),
-  )
-  for (const reflection of updates ?? [])
-    reflections.set(reflection.number, reflection)
-  return [...reflections.values()].sort((a, b) => a.number - b.number)
+function appendVisibleTurn(context: LlmGameContext, assistant: string) {
+  if (!context.pendingTurn) return context.transcript
+  return [
+    ...context.transcript,
+    {role: 'user' as const, content: context.pendingTurn.content},
+    {role: 'assistant' as const, content: assistant},
+  ]
+}
+
+function emptyTurnResponse(
+  error: unknown,
+  providerKind: ProviderConnection['kind'],
+  model: string,
+): LlmTurnResponse {
+  return {
+    text:
+      error instanceof MalformedModelOutputError ? error.responseContent : '',
+    latencyMs: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    model,
+    providerKind,
+  }
 }

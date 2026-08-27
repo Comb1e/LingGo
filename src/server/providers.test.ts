@@ -29,9 +29,10 @@ describe('provider normalization', () => {
       action: 'pass',
       comment: 'done',
     })
-    expect(
-      parseJsonAction('{"move":"RESIGN","reason":"concede"}', 9),
-    ).toEqual({action: 'resign', comment: 'concede'})
+    expect(parseJsonAction('{"move":"RESIGN","reason":"concede"}', 9)).toEqual({
+      action: 'resign',
+      comment: 'concede',
+    })
     expect(
       parseJsonAction('```json\n{"move":"d4","reason":"shape"}\n```', 9),
     ).toMatchObject({
@@ -66,37 +67,13 @@ describe('provider normalization', () => {
     },
   )
 
-  it('parses optional numbered in-game reflection updates', () => {
-    expect(
-      parseJsonActionResult(
-        JSON.stringify({
-          move: 'D4',
-          reason: 'shape',
-          in_game_reflections: [
-            {
-              number: 1,
-              reflection: 'Check whether the outside stones can escape.',
-            },
-            {number: 3, reflection: 'Keep forcing moves in reserve.'},
-          ],
-        }),
-        9,
-      ),
-    ).toEqual({
-      action: {action: 'play', coordinate: 'D4', comment: 'shape'},
-      inGameReflections: [
-        {number: 1, reflection: 'Check whether the outside stones can escape.'},
-        {number: 3, reflection: 'Keep forcing moves in reserve.'},
-      ],
-    })
+  it('rejects the removed in-game reflection response field', () => {
     expect(() =>
       parseJsonActionResult(
         JSON.stringify({
           move: 'pass',
           reason: 'done',
-          in_game_reflections: [
-            {number: 0, reflection: 'Not positively numbered.'},
-          ],
+          in_game_reflections: [],
         }),
         9,
       ),
@@ -314,6 +291,100 @@ describe('provider normalization', () => {
       }
     },
   )
+
+  it('chains stored OpenAI responses with only the pending delta', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {
+          status: 500,
+          headers: {'content-type': 'application/json'},
+        })
+      }),
+    )
+    const adapter = openAiAdapter()
+    await expect(
+      adapter.requestTurn!(
+        {
+          kind: 'continuation',
+          content: 'Newly observed opponent action: W B8',
+          transcript: [
+            {role: 'user', content: 'STATIC INITIAL RULES'},
+            {role: 'assistant', content: '{"move":"A9","reason":"open"}'},
+          ],
+          previousResponseId: 'resp_previous',
+          snapshot: emptySnapshot(),
+          output: 'action',
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow()
+
+    const body = JSON.parse(requestBody)
+    expect(body.store).toBe(true)
+    expect(body.previous_response_id).toBe('resp_previous')
+    expect(requestBody).toContain('Newly observed opponent action')
+    expect(requestBody).not.toContain('STATIC INITIAL RULES')
+  })
+
+  it('orders visible transcript messages and applies Anthropic cache hints', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {
+          status: 500,
+          headers: {'content-type': 'application/json'},
+        })
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'anthropic-context',
+        name: 'Anthropic context',
+        kind: 'anthropic',
+        baseUrl: 'https://models.example.test/v1',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'anthropic-profile',
+        name: 'Anthropic profile',
+        connectionId: 'anthropic-context',
+        modelId: 'test-model',
+        temperature: 0,
+      },
+      'test-key',
+    )
+    await expect(
+      adapter.requestTurn!(
+        {
+          kind: 'continuation',
+          content: 'DELTA TURN',
+          transcript: [
+            {role: 'user', content: 'INITIAL TURN'},
+            {role: 'assistant', content: 'VISIBLE RESPONSE'},
+          ],
+          snapshot: emptySnapshot(),
+          output: 'action',
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow()
+    const body = JSON.parse(requestBody)
+    expect(
+      body.messages.map((message: {role: string}) => message.role),
+    ).toEqual(['user', 'assistant', 'user'])
+    expect(requestBody.indexOf('INITIAL TURN')).toBeLessThan(
+      requestBody.indexOf('VISIBLE RESPONSE'),
+    )
+    expect(requestBody.indexOf('VISIBLE RESPONSE')).toBeLessThan(
+      requestBody.indexOf('DELTA TURN'),
+    )
+    expect(body.cache_control).toEqual({type: 'ephemeral'})
+  })
 
   it('receives DeepSeek reasoning separately from response content', async () => {
     let requestedUrl = ''
@@ -547,4 +618,24 @@ function emptySnapshot(): GameSnapshot {
     captures: {B: 0, W: 0},
     rules: 'Chinese area',
   }
+}
+
+function openAiAdapter() {
+  return new LlmPlayerAdapter(
+    {
+      id: 'openai-context',
+      name: 'OpenAI context',
+      kind: 'openai',
+      baseUrl: 'https://models.example.test/v1',
+      supportsStructuredOutput: false,
+    },
+    {
+      id: 'openai-profile',
+      name: 'OpenAI profile',
+      connectionId: 'openai-context',
+      modelId: 'gpt-5.6-sol',
+      temperature: 0,
+    },
+    'test-key',
+  )
 }

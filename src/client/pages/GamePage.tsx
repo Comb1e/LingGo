@@ -629,9 +629,7 @@ export function GamePage() {
               {displayPosition.captures.B} {t('captures')}
             </b>
           </div>
-          <div
-            className={`analysis-row${game.benchmarkRunId ? ' has-reflections' : ''}`}
-          >
+          <div className="analysis-row">
             <WinRatePanel
               analysis={analysisQuery.data}
               moveCount={game.moves.length}
@@ -642,11 +640,6 @@ export function GamePage() {
               }
               onAnalyze={() => backfillMutation.mutate()}
             />
-            {game.benchmarkRunId && (
-              <InGameReflectionsPanel
-                reflections={game.inGameReflections ?? []}
-              />
-            )}
           </div>
         </section>
         <aside className="game-panel">
@@ -827,9 +820,6 @@ export function GamePage() {
                         preserveText={isDeepSeekMove(move)}
                       />
                     )}
-                    {move.inGameReflections?.length && (
-                      <MoveReflections reflections={move.inGameReflections} />
-                    )}
                     {move.retryErrors?.length && (
                       <ProviderErrorHistory errors={move.retryErrors} />
                     )}
@@ -890,55 +880,6 @@ function RejectedModelActionHistory({
         ))}
       </ol>
     </details>
-  )
-}
-
-function MoveReflections({
-  reflections,
-}: {
-  reflections: NonNullable<Game['inGameReflections']>
-}) {
-  const {t} = useTranslation()
-  return (
-    <div className="move-reflections">
-      <span>
-        <Brain /> {t('inGameReflections')}
-      </span>
-      <ol>
-        {reflections.map((reflection) => (
-          <li key={reflection.number} value={reflection.number}>
-            {reflection.reflection}
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
-}
-
-function InGameReflectionsPanel({
-  reflections,
-}: {
-  reflections: NonNullable<Game['inGameReflections']>
-}) {
-  const {t} = useTranslation()
-  return (
-    <section className="in-game-reflections-panel">
-      <header>
-        <Brain />
-        <h2>{t('inGameReflections')}</h2>
-      </header>
-      {reflections.length ? (
-        <ol>
-          {reflections.map((reflection) => (
-            <li key={reflection.number} value={reflection.number}>
-              {reflection.reflection}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="muted analysis-empty">{t('noInGameReflections')}</p>
-      )}
-    </section>
   )
 }
 

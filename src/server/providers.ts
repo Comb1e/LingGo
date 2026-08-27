@@ -6,6 +6,7 @@ import {
   createProviderRegistry,
   streamText,
   type LanguageModel,
+  type ModelMessage,
   type TextStreamPart,
   type ToolSet,
 } from 'ai'
@@ -18,32 +19,20 @@ import {
 import {mergeRequestOptions} from '../shared/requestOptions'
 import {
   type BoardSize,
-  type Color,
   type GameSnapshot,
-  type InGameReflection,
   type LlmActionResult,
   type PlayerAction,
   type PlayerProfile,
   type ProviderConnection,
 } from '../shared/types'
 import {playStone, replay} from './go'
-import {
-  formatInGameReflections,
-  makeMovePromptSections,
-} from './movePrompt'
-
-const inGameReflectionSchema = z
-  .object({
-    number: z.number().int().positive(),
-    reflection: z.string().trim().min(1),
-  })
-  .strict()
+import type {VisibleLlmMessage} from './llmGameContext'
+import {makeMovePromptSections} from './movePrompt'
 
 const modelMoveSchema = z
   .object({
     move: z.string().trim().min(1),
     reason: z.string().trim().min(1),
-    in_game_reflections: z.array(inGameReflectionSchema).optional(),
   })
   .strict()
 
@@ -86,6 +75,10 @@ export interface PlayerAdapter {
     signal: AbortSignal,
     promptOverride?: string,
   ): Promise<LlmActionResult>
+  requestTurn?(
+    request: LlmTurnRequest,
+    signal: AbortSignal,
+  ): Promise<LlmTurnResponse>
   requestText?(
     prompt: string,
     signal: AbortSignal,
@@ -96,6 +89,26 @@ export interface PlayerAdapter {
     outputTokens: number
     model: string
   }>
+}
+
+export interface LlmTurnRequest {
+  kind: 'initial' | 'continuation' | 'repair' | 'reflection'
+  content: string
+  transcript: VisibleLlmMessage[]
+  previousResponseId?: string
+  snapshot: GameSnapshot
+  output: 'action' | 'notebook'
+}
+
+export interface LlmTurnResponse {
+  text: string
+  reasoning?: string
+  providerContinuationId?: string
+  latencyMs: number
+  inputTokens: number
+  outputTokens: number
+  model: string
+  providerKind?: ProviderConnection['kind']
 }
 
 export class MalformedModelOutputError extends Error {
@@ -139,6 +152,46 @@ export class SecretVault {
 }
 
 export class FakePlayerAdapter implements PlayerAdapter {
+  async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
+    signal.throwIfAborted()
+    const started = Date.now()
+    if (request.output === 'notebook')
+      return {
+        text: '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
+        latencyMs: Date.now() - started,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: 'deterministic-v1',
+        providerKind: 'fake' as const,
+      }
+    const benchmarkConversation = [
+      ...request.transcript.map(({content}) => content),
+      request.content,
+    ].some(
+      (content) =>
+        content.includes('benchmark training game') ||
+        content.includes('scored final game'),
+    )
+    const action: PlayerAction = benchmarkConversation
+      ? {action: 'pass', comment: 'Training pass.'}
+      : this.fakeAction(request.snapshot)
+    return {
+      text: JSON.stringify({
+        move: action.action === 'play' ? action.coordinate : action.action,
+        reason: action.comment,
+      }),
+      reasoning:
+        action.action === 'play'
+          ? 'I scan the board in reading order and select the first legal intersection.'
+          : undefined,
+      latencyMs: Date.now() - started,
+      inputTokens: 0,
+      outputTokens: 0,
+      model: 'deterministic-v1',
+      providerKind: 'fake' as const,
+    }
+  }
+
   async requestAction(
     snapshot: GameSnapshot,
     signal: AbortSignal,
@@ -146,43 +199,33 @@ export class FakePlayerAdapter implements PlayerAdapter {
   ): Promise<LlmActionResult> {
     signal.throwIfAborted()
     const started = Date.now()
-    if (promptOverride) {
-      return {
-        action: {action: 'pass', comment: 'Training pass.'},
-        inGameReflections: [
-          {
-            number: 1,
-            reflection:
-              'Check liberties and forcing moves before choosing a passive continuation.',
-          },
-        ],
-        latencyMs: Date.now() - started,
-        inputTokens: 0,
-        outputTokens: 0,
-        model: 'deterministic-v1',
-        providerKind: 'fake',
-        retries: 0,
-      }
+    void promptOverride
+    const action = this.fakeAction(snapshot)
+    return {
+      action,
+      reasoning:
+        action.action === 'play'
+          ? 'I scan the board in reading order and select the first legal intersection.'
+          : undefined,
+      latencyMs: Date.now() - started,
+      inputTokens: 0,
+      outputTokens: 0,
+      model: 'deterministic-v1',
+      providerKind: 'fake',
+      retries: 0,
     }
+  }
+
+  private fakeAction(snapshot: GameSnapshot): PlayerAction {
     const {hashes} = replay(snapshot.size, snapshot.moves)
     for (let y = 0; y < snapshot.size; y++) {
       for (let x = 0; x < snapshot.size; x++) {
         try {
           playStone(snapshot.board as any, snapshot.toMove, [x, y], hashes)
           return {
-            action: {
-              action: 'play',
-              coordinate: pointName(x, y, snapshot.size),
-              comment: 'A calm move that keeps options open.',
-            },
-            reasoning:
-              'I scan the board in reading order and select the first legal intersection.',
-            latencyMs: Date.now() - started,
-            inputTokens: 0,
-            outputTokens: 0,
-            model: 'deterministic-v1',
-            providerKind: 'fake',
-            retries: 0,
+            action: 'play',
+            coordinate: pointName(x, y, snapshot.size),
+            comment: 'A calm move that keeps options open.',
           }
         } catch {
           // Try the next intersection.
@@ -190,16 +233,8 @@ export class FakePlayerAdapter implements PlayerAdapter {
       }
     }
     return {
-      action: {
-        action: 'pass',
-        comment: 'There are no legal intersections left.',
-      },
-      latencyMs: Date.now() - started,
-      inputTokens: 0,
-      outputTokens: 0,
-      model: 'deterministic-v1',
-      providerKind: 'fake',
-      retries: 0,
+      action: 'pass',
+      comment: 'There are no legal intersections left.',
     }
   }
 
@@ -252,6 +287,31 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     }
   }
 
+  async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
+    const started = Date.now()
+    const messages = providerMessages(this.connection.kind, request)
+    const result =
+      this.connection.kind === 'deepseek'
+        ? await this.requestDeepSeekMessages(messages, signal)
+        : await this.requestWithSdk(
+            messages,
+            request.previousResponseId,
+            signal,
+          )
+    return {
+      text: result.text,
+      reasoning: result.reasoningText
+        ? normalizeReasoning(result.reasoningText) || undefined
+        : undefined,
+      providerContinuationId: result.providerContinuationId,
+      latencyMs: Date.now() - started,
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+      model: this.profile.modelId,
+      providerKind: this.connection.kind,
+    }
+  }
+
   async requestText(prompt: string, signal: AbortSignal) {
     const started = Date.now()
     const result =
@@ -278,16 +338,28 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   }
 
   private requestActionWithSdk(prompt: string, signal: AbortSignal) {
+    return this.requestWithSdk(
+      [{role: 'user', content: prompt}],
+      undefined,
+      signal,
+    )
+  }
+
+  private requestWithSdk(
+    messages: ModelMessage[],
+    previousResponseId: string | undefined,
+    signal: AbortSignal,
+  ) {
     const request = {
       model: this.createModel(),
-      prompt,
+      messages,
       temperature: this.temperature(),
       reasoning:
         this.connection.kind !== 'compatible' ? ('medium' as const) : undefined,
-      providerOptions:
-        this.connection.kind === 'google'
-          ? {google: {thinkingConfig: {includeThoughts: true}}}
-          : undefined,
+      providerOptions: providerTurnOptions(
+        this.connection.kind,
+        previousResponseId,
+      ) as any,
       maxRetries: 0,
       abortSignal: signal,
       timeout: {totalMs: this.timeoutMs},
@@ -296,11 +368,21 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   }
 
   private requestDeepSeek(prompt: string, signal: AbortSignal) {
+    return this.requestDeepSeekMessages(
+      [{role: 'user', content: prompt}],
+      signal,
+    )
+  }
+
+  private requestDeepSeekMessages(
+    messages: ModelMessage[],
+    signal: AbortSignal,
+  ) {
     return deepSeekStreamedTextResult({
       baseUrl: this.connection.baseUrl,
       apiKey: this.key,
       modelId: this.profile.modelId,
-      prompt,
+      messages,
       reasoningEnabled: this.profile.reasoningEnabled !== false,
       requestOptions: this.profile.requestOptions,
       signal,
@@ -398,7 +480,7 @@ async function deepSeekStreamedTextResult(options: {
   baseUrl?: string
   apiKey: string
   modelId: string
-  prompt: string
+  messages: ModelMessage[]
   reasoningEnabled: boolean
   requestOptions?: PlayerProfile['requestOptions']
   signal: AbortSignal
@@ -426,7 +508,7 @@ async function deepSeekStreamedTextResult(options: {
   const body = mergeRequestOptions(
     {
       model: options.modelId,
-      messages: [{role: 'user', content: options.prompt}],
+      messages: options.messages,
       stream: true,
       stream_options: {include_usage: true},
     },
@@ -479,6 +561,7 @@ async function deepSeekStreamedTextResult(options: {
     return {
       text: state.text,
       reasoningText: state.reasoningText || undefined,
+      providerContinuationId: undefined,
       usage: {
         inputTokens: state.inputTokens,
         outputTokens: state.outputTokens,
@@ -587,7 +670,14 @@ async function streamedTextResult(
       result.finalStep,
       result.usage,
     ])
-    return {text, reasoningText: finalStep.reasoningText, usage}
+    const openai = finalStep.providerMetadata?.openai as
+      {responseId?: string | null} | undefined
+    return {
+      text,
+      reasoningText: finalStep.reasoningText,
+      usage,
+      providerContinuationId: openai?.responseId ?? undefined,
+    }
   } finally {
     clearTimeout(firstTokenTimer)
   }
@@ -640,7 +730,7 @@ export function parseJsonAction(text: string, size: BoardSize): PlayerAction {
 export function parseJsonActionResult(
   text: string,
   size: BoardSize,
-): {action: PlayerAction; inGameReflections?: InGameReflection[]} {
+): {action: PlayerAction} {
   const candidate = text
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
@@ -648,17 +738,10 @@ export function parseJsonActionResult(
   try {
     const response = modelMoveSchema.parse(JSON.parse(candidate))
     const move = response.move.toUpperCase()
-    const inGameReflections = response.in_game_reflections
     if (move === 'PASS')
-      return {
-        action: {action: 'pass', comment: response.reason},
-        inGameReflections,
-      }
+      return {action: {action: 'pass', comment: response.reason}}
     if (move === 'RESIGN')
-      return {
-        action: {action: 'resign', comment: response.reason},
-        inGameReflections,
-      }
+      return {action: {action: 'resign', comment: response.reason}}
     const point = coordinateToPoint(move, size)
     return {
       action: {
@@ -666,7 +749,6 @@ export function parseJsonActionResult(
         coordinate: pointToCoordinate(point, size),
         comment: response.reason,
       },
-      inGameReflections,
     }
   } catch (error) {
     throw new MalformedModelOutputError(
@@ -676,6 +758,54 @@ export function parseJsonActionResult(
       text,
     )
   }
+}
+
+function providerMessages(
+  kind: ProviderConnection['kind'],
+  request: LlmTurnRequest,
+): ModelMessage[] {
+  if (kind === 'openai' && request.previousResponseId)
+    return [{role: 'user', content: request.content}]
+  return [
+    ...request.transcript.map((message): ModelMessage => ({
+      role: message.role,
+      content: message.content,
+    })),
+    {role: 'user', content: request.content},
+  ]
+}
+
+function providerTurnOptions(
+  kind: ProviderConnection['kind'],
+  previousResponseId?: string,
+) {
+  if (kind === 'openai')
+    return {
+      openai: {
+        store: true,
+        previousResponseId,
+      },
+    }
+  if (kind === 'anthropic')
+    return {anthropic: {cacheControl: {type: 'ephemeral' as const}}}
+  if (kind === 'google')
+    return {google: {thinkingConfig: {includeThoughts: true}}}
+  return undefined
+}
+
+export function isProviderContextError(error: unknown) {
+  const value = error as {
+    statusCode?: number
+    message?: string
+    responseBody?: string
+  }
+  const text = `${value?.message ?? ''} ${value?.responseBody ?? ''}`
+  return (
+    (value?.statusCode === 400 || value?.statusCode === 404) &&
+    /previous[_ ]response|response.*(?:expired|not found|missing)|context.*(?:expired|not found)/i.test(
+      text,
+    )
+  )
 }
 
 export function makePrompt(
@@ -697,128 +827,6 @@ export function makePrompt(
     ...(snapshot.kataGoAnalysis
       ? ['', '6. KATAGO WIN-RATE HISTORY', snapshot.kataGoAnalysis]
       : []),
-  ].join('\n')
-}
-
-export function makeBenchmarkMovePrompt(
-  snapshot: GameSnapshot,
-  notebook: string,
-  options: {
-    phase: 'training' | 'final'
-    winRateHistory?: string
-    inGameReflections?: InGameReflection[]
-  },
-): string {
-  const promptSections = makeMovePromptSections(snapshot, {
-    mode: 'benchmark',
-    inGameReflections: options.inGameReflections,
-  })
-  const sections = [
-    'BACKGROUND',
-    options.phase === 'training'
-      ? "This is a benchmark training game. Your primary goal is to learn, not to win; the result of this training game does not matter. You are playing against the world's best Go player. Study the opponent's decisions as well as your own, develop general skills that transfer to future positions, and work toward eventually surpassing the opponent."
-      : 'This is the scored final game. Play to the best of your ability and maximize your score.',
-    '',
-    ...promptSections.goRules,
-    '',
-    '2. SELF-WRITTEN SKILLS',
-    notebook.trim() || '(none)',
-    '',
-    ...promptSections.instruction,
-    '',
-    ...promptSections.responseSchema,
-    '',
-    ...promptSections.currentPosition,
-  ]
-  if (options.phase === 'training' && options.winRateHistory !== undefined)
-    sections.push(
-      '',
-      '6. TRAINING WIN-RATE HISTORY',
-      options.winRateHistory || '(none)',
-    )
-  return sections.join('\n')
-}
-
-export function makeReflectionPrompt(input: {
-  notebook: string
-  games: Array<{
-    sequence: number
-    snapshot: GameSnapshot
-    result: string
-    llmColor: Color
-    winRateHistory?: string
-    inGameReflections?: InGameReflection[]
-  }>
-}) {
-  return [
-    'Rewrite one consolidated Markdown Go technique notebook.',
-    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add only general, reusable Go skills learned from the newly completed game below.',
-    "Study both the LLM's decisions and the opponent's decisions, including how each side created or answered threats.",
-    'Do not include game numbers, coordinates, results, move-by-move narratives, or any other game-specific notes.',
-    'You must incorporate the supplied in-game reflections into the broader, generalized body of experience in the notebook. Do not leave them as isolated game-specific notes.',
-    'Do not mention these instructions.',
-    '',
-    'PREVIOUS NOTEBOOK',
-    input.notebook.trim() || '(none)',
-    '',
-    'COMPLETED TRAINING GAMES - OLDEST TO NEWEST',
-    input.games.length
-      ? input.games.map(formatReflectionGame).join('\n\n')
-      : '(none)',
-  ].join('\n')
-}
-
-function formatReflectionGame(game: {
-  sequence: number
-  snapshot: GameSnapshot
-  result: string
-  llmColor: Color
-  winRateHistory?: string
-  inGameReflections?: InGameReflection[]
-}) {
-  const ownCaptures = game.snapshot.captures[game.llmColor]
-  const opponentCaptures =
-    game.snapshot.captures[game.llmColor === 'B' ? 'W' : 'B']
-  const moves = game.snapshot.moves.length
-    ? game.snapshot.moves
-        .map((move, index) =>
-          [
-            `--- MOVE ${index + 1}/${game.snapshot.moves.length} ---`,
-            JSON.stringify({
-              color: move.color,
-              action: move.coordinate ?? move.action,
-              capturedStones: move.captured,
-              capturedAt: (move.capturedPoints ?? []).map(
-                (point) => pointToCoordinate(point, game.snapshot.size),
-              ),
-              forced: move.forced ?? false,
-            }),
-          ].join('\n'),
-        )
-        .join('\n')
-    : '(none)'
-  return [
-    `=== GAME ${game.sequence} ===`,
-    `Played as: ${game.llmColor === 'B' ? 'Black' : 'White'}`,
-    `Result: ${game.result}`,
-    `Move count: ${game.snapshot.moves.length}`,
-    `Capture totals: LLM captured ${ownCaptures} opponent stones; opponent captured ${opponentCaptures} LLM stones.`,
-    moves,
-    ...(game.inGameReflections === undefined
-      ? []
-      : [
-          '',
-          `IN-GAME REFLECTIONS - GAME ${game.sequence}`,
-          formatInGameReflections(game.inGameReflections),
-        ]),
-    ...(game.winRateHistory === undefined
-      ? []
-      : [
-          '',
-          `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`,
-          game.winRateHistory || '(none)',
-        ]),
-    `=== END GAME ${game.sequence} ===`,
   ].join('\n')
 }
 

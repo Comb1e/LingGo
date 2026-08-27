@@ -1,14 +1,8 @@
 import {pointToCoordinate} from '../shared/coordinates'
-import type {
-  BoardSize,
-  GameSnapshot,
-  InGameReflection,
-} from '../shared/types'
+import type {BoardSize, GameSnapshot} from '../shared/types'
 import {asciiBoard} from './go'
 
-export type MovePromptOptions =
-  | {mode: 'ordinary'}
-  | {mode: 'benchmark'; inGameReflections?: InGameReflection[]}
+export type MovePromptOptions = {mode: 'ordinary'} | {mode: 'benchmark'}
 
 export interface MovePromptSections {
   goRules: string[]
@@ -23,7 +17,7 @@ export function makeMovePromptSections(
 ): MovePromptSections {
   return options.mode === 'ordinary'
     ? makeOrdinarySections(snapshot)
-    : makeBenchmarkSections(snapshot, options.inGameReflections)
+    : makeBenchmarkSections(snapshot)
 }
 
 function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
@@ -63,10 +57,7 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
   }
 }
 
-function makeBenchmarkSections(
-  snapshot: GameSnapshot,
-  inGameReflections: InGameReflection[] | undefined,
-): MovePromptSections {
+function makeBenchmarkSections(snapshot: GameSnapshot): MovePromptSections {
   const ownCaptures = snapshot.captures[snapshot.toMove]
   const opponentCaptures =
     snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
@@ -84,26 +75,18 @@ function makeBenchmarkSections(
     responseSchema: [
       '4. JSON OUTPUT SCHEMA',
       'Example:',
-      '{"move":"D4","reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"general lesson"}]}',
+      '{"move":"D4","reason":"brief reason"}',
       'Required fields: move (one letter-number coordinate exactly as labeled on the board) and reason (a non-empty string).',
       'Columns use letters and skip I; rows use numbers counted from the bottom.',
       'Use "pass" to pass and "resign" to resign.',
-      'Optional field: in_game_reflections, an array of objects containing only number (a positive integer) and reflection (a non-empty string). It is a patch: use the next unused positive number for a new lesson, or reuse an existing number only to materially correct or replace that earlier reflection.',
-      'Never resubmit an existing reflection unchanged: do not reuse an existing number with the same or substantively equivalent reflection content. If there is no new lesson and no material correction, omit in_game_reflections or use an empty array.',
-      'Create and revise reflections carefully: base each one on concrete evidence from the current game, keep it concise and generally reusable, and correct it if later play disproves it.',
-      'Still be willing to summarize a useful lesson when the evidence is strong; do not wait for perfect certainty or the end of the game.',
       'Do not include any other top-level or nested fields.',
       'IMPORTANT: The correct output is pure JSON: your entire response must be exactly one valid JSON object and nothing else. Do not add explanations, introductory or trailing text, comments, or Markdown fences.',
     ],
     currentPosition: [
-      '5. CURRENT BOARD AND PREVIOUS MOVES',
-      'Current in-game reflections (this game only):',
-      formatInGameReflections(inGameReflections),
+      '5. CURRENT BOARD',
       `To move: ${snapshot.toMove}`,
       `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
       asciiBoard(snapshot),
-      'Previous moves:',
-      formatPromptMoves(snapshot),
     ],
   }
 }
@@ -111,7 +94,7 @@ function makeBenchmarkSections(
 function makeGoRulesSection(snapshot: GameSnapshot) {
   return [
     '1. GO RULES',
-    '- LEGAL MOVE: A play is legal only when it places one stone on an empty intersection, removes adjacent opposing chains with no liberties, leaves the played stone\'s chain with at least one liberty, and does not recreate any earlier complete board position.',
+    "- LEGAL MOVE: A play is legal only when it places one stone on an empty intersection, removes adjacent opposing chains with no liberties, leaves the played stone's chain with at least one liberty, and does not recreate any earlier complete board position.",
     `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
     '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
     '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
@@ -122,19 +105,9 @@ function makeGoRulesSection(snapshot: GameSnapshot) {
   ]
 }
 
-export function formatInGameReflections(
-  reflections: InGameReflection[] | undefined,
-) {
-  return reflections?.length
-    ? reflections.map((reflection) => JSON.stringify(reflection)).join('\n')
-    : '(none yet)'
-}
-
 function formatPromptMoves(snapshot: GameSnapshot) {
   return snapshot.moves.length
-    ? snapshot.moves
-        .map((move) => formatPromptMove(move, snapshot))
-        .join('\n')
+    ? snapshot.moves.map((move) => formatPromptMove(move, snapshot)).join('\n')
     : '(none)'
 }
 

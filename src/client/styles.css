@@ -900,53 +900,12 @@ svg {
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
-.analysis-row.has-reflections {
-  grid-template-columns: minmax(0, 2fr) minmax(230px, 1fr);
-}
-.winrate-panel,
-.in-game-reflections-panel {
+.winrate-panel {
   min-width: 0;
   margin-top: 16px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 12px 0 8px;
-}
-.in-game-reflections-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-.in-game-reflections-panel > header {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.in-game-reflections-panel > header svg {
-  width: 17px;
-  height: 17px;
-  color: var(--green);
-}
-.in-game-reflections-panel h2 {
-  margin: 0;
-  font-size: 14px;
-}
-.in-game-reflections-panel ol {
-  max-height: 222px;
-  margin: 10px 0 0;
-  padding: 0 4px 0 30px;
-  overflow-y: auto;
-}
-.in-game-reflections-panel li {
-  padding: 0 0 10px 3px;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.in-game-reflections-panel li::marker {
-  color: var(--green);
-  font-weight: 700;
 }
 .winrate-panel > header {
   display: flex;
@@ -1413,44 +1372,6 @@ svg {
   grid-column: 2 / -1;
   min-width: 0;
 }
-.move-reflections {
-  grid-column: 2 / -1;
-  min-width: 0;
-  margin-top: 3px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--green);
-  border-radius: 0 5px 5px 0;
-  background: var(--green-soft);
-}
-.move-reflections > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--green);
-  font-size: 11px;
-  font-weight: 750;
-}
-.move-reflections > span svg {
-  width: 14px;
-  height: 14px;
-}
-.move-reflections ol {
-  margin: 6px 0 0;
-  padding-left: 20px;
-}
-.move-reflections li {
-  padding-left: 2px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.move-reflections li + li {
-  margin-top: 5px;
-}
-.move-reflections li::marker {
-  color: var(--green);
-  font-weight: 700;
-}
 .reasoning-toggle {
   min-height: 30px;
   border: 0;
@@ -1740,10 +1661,6 @@ svg {
   }
   .winrate-panel {
     width: 100%;
-  }
-  .analysis-row.has-reflections {
-    grid-template-columns: 1fr;
-    gap: 0;
   }
   .katago-settings form,
   .benchmark-form-grid,

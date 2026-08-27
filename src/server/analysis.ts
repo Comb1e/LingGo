@@ -97,7 +97,7 @@ export class AnalysisService {
           value.turn === game.moves.length &&
           value.positionHash === expectedHash,
       )
-      if (current) return formatLlmHistory(latest, game.toMove)
+      if (current) return formatLlmUpdate(current, game.toMove)
       if (latest.status === 'error') return undefined
       await waitForEvent(this.events, game.id, signal)
     }
@@ -211,6 +211,15 @@ export function formatLlmHistory(analysis: GameAnalysis, color: 'B' | 'W') {
       return `Turn ${value.turn}: your win rate ${(own * 100).toFixed(2)}%; opponent ${(opponent * 100).toFixed(2)}%`
     })
     .join('\n')
+}
+
+export function formatLlmUpdate(
+  value: GameAnalysis['positions'][number],
+  color: 'B' | 'W',
+) {
+  const own = color === 'B' ? value.blackWinRate : value.whiteWinRate
+  const opponent = color === 'B' ? value.whiteWinRate : value.blackWinRate
+  return `Turn ${value.turn}: your win rate ${(own * 100).toFixed(2)}%; opponent ${(opponent * 100).toFixed(2)}%`
 }
 
 function waitForEvent(

@@ -14,6 +14,7 @@ import type {
   TechniqueNotebook,
   TechniqueNotebookSummary,
 } from '../shared/types'
+import type {LlmGameContext} from './llmGameContext'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -67,12 +68,7 @@ export class Store {
              (run_id, notebook_id, notebook_name, content, updated_at)
              VALUES (?, ?, 'Default', ?, ?)`,
           )
-          .run(
-            run.id,
-            notebook?.id ?? null,
-            readFileSync(path, 'utf8'),
-            now,
-          )
+          .run(run.id, notebook?.id ?? null, readFileSync(path, 'utf8'), now)
       }
       this.db
         .prepare('INSERT INTO app_metadata (key, value) VALUES (?, ?)')
@@ -197,6 +193,135 @@ export class Store {
         game.createdAt,
         game.updatedAt,
       )
+  }
+
+  saveGameWithLlmContext(game: Game, context: LlmGameContext) {
+    this.db.transaction(() => {
+      this.saveGame(game)
+      this.saveLlmGameContext(context)
+    })()
+  }
+
+  getLlmGameContext(
+    gameId: string,
+    color: 'B' | 'W',
+  ): LlmGameContext | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT game_id, color, status, profile_id, provider_kind,
+         model_fingerprint, last_observed_move, transcript_json,
+         pending_turn_json, provider_continuation_id, created_at, updated_at
+         FROM llm_game_contexts WHERE game_id = ? AND color = ?`,
+      )
+      .get(gameId, color) as any
+    if (!row) return undefined
+    try {
+      const transcript = JSON.parse(row.transcript_json)
+      const pendingTurn = row.pending_turn_json
+        ? JSON.parse(row.pending_turn_json)
+        : undefined
+      if (
+        !Array.isArray(transcript) ||
+        !transcript.every(
+          (message) =>
+            message &&
+            (message.role === 'user' || message.role === 'assistant') &&
+            typeof message.content === 'string',
+        ) ||
+        (pendingTurn !== undefined &&
+          (!pendingTurn ||
+            !['initial', 'continuation', 'repair', 'reflection'].includes(
+              pendingTurn.kind,
+            ) ||
+            typeof pendingTurn.content !== 'string' ||
+            !Number.isInteger(pendingTurn.observedMoveCount) ||
+            pendingTurn.observedMoveCount < 0)) ||
+        !Number.isInteger(row.last_observed_move) ||
+        row.last_observed_move < 0
+      )
+        throw new Error('Invalid persisted LLM context')
+      return {
+        gameId: row.game_id,
+        color: row.color,
+        status: row.status,
+        profileId: row.profile_id,
+        providerKind: row.provider_kind,
+        modelFingerprint: row.model_fingerprint,
+        lastObservedMove: row.last_observed_move,
+        transcript,
+        pendingTurn,
+        providerContinuationId: row.provider_continuation_id ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }
+    } catch {
+      return {
+        gameId: row.game_id,
+        color: row.color,
+        status: 'needs_rebase',
+        profileId: row.profile_id,
+        providerKind: row.provider_kind,
+        modelFingerprint: row.model_fingerprint,
+        lastObservedMove: 0,
+        transcript: [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }
+    }
+  }
+
+  saveLlmGameContext(context: LlmGameContext) {
+    this.db
+      .prepare(
+        `INSERT INTO llm_game_contexts
+         (game_id, color, status, profile_id, provider_kind,
+          model_fingerprint, last_observed_move, transcript_json,
+          pending_turn_json, provider_continuation_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(game_id, color) DO UPDATE SET
+         status = excluded.status, profile_id = excluded.profile_id,
+         provider_kind = excluded.provider_kind,
+         model_fingerprint = excluded.model_fingerprint,
+         last_observed_move = excluded.last_observed_move,
+         transcript_json = excluded.transcript_json,
+         pending_turn_json = excluded.pending_turn_json,
+         provider_continuation_id = excluded.provider_continuation_id,
+         updated_at = excluded.updated_at`,
+      )
+      .run(
+        context.gameId,
+        context.color,
+        context.status,
+        context.profileId,
+        context.providerKind,
+        context.modelFingerprint,
+        context.lastObservedMove,
+        JSON.stringify(context.transcript),
+        context.pendingTurn ? JSON.stringify(context.pendingTurn) : null,
+        context.providerContinuationId ?? null,
+        context.createdAt,
+        context.updatedAt,
+      )
+  }
+
+  markLlmGameContextsNeedsRebase(gameId: string, color?: 'B' | 'W') {
+    const where = color ? 'game_id = ? AND color = ?' : 'game_id = ?'
+    this.db
+      .prepare(
+        `UPDATE llm_game_contexts SET status = 'needs_rebase',
+         pending_turn_json = NULL, provider_continuation_id = NULL,
+         updated_at = ? WHERE ${where}`,
+      )
+      .run(new Date().toISOString(), gameId, ...(color ? [color] : []))
+  }
+
+  completeLlmGameContexts(gameId: string) {
+    this.db
+      .prepare(
+        `UPDATE llm_game_contexts SET status = 'complete',
+         pending_turn_json = NULL, updated_at = ? WHERE game_id = ?`,
+      )
+      .run(new Date().toISOString(), gameId)
   }
 
   deleteGame(id: string) {
@@ -531,6 +656,36 @@ export class Store {
         )
         .run(run.id, notebook.id, notebook.name, content, updatedAt)
       this.saveBenchmark(run)
+    })()
+  }
+
+  saveReflectionWithContext(
+    notebook: TechniqueNotebook,
+    run: BenchmarkRun,
+    content: string,
+    context: LlmGameContext,
+  ) {
+    this.db.transaction(() => {
+      const updatedAt = run.notebook.updatedAt ?? new Date().toISOString()
+      const notebookResult = this.db
+        .prepare(
+          `UPDATE technique_notebooks SET content = ?, updated_at = ?
+           WHERE profile_id = ? AND id = ?`,
+        )
+        .run(content, updatedAt, notebook.profileId, notebook.id)
+      if (!notebookResult.changes)
+        throw new Error('The selected technique notebook no longer exists')
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_snapshots
+           (run_id, notebook_id, notebook_name, content, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
+           updated_at = excluded.updated_at`,
+        )
+        .run(run.id, notebook.id, notebook.name, content, updatedAt)
+      this.saveBenchmark(run)
+      this.saveLlmGameContext(context)
     })()
   }
 

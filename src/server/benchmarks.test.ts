@@ -4,7 +4,7 @@ import {join} from 'node:path'
 import {afterEach, describe, expect, it} from 'vitest'
 import type {KataGoAnalyzer} from './katago'
 import {Store} from './database'
-import {GameService, mergeInGameReflections} from './games'
+import {GameService} from './games'
 import {
   BenchmarkConflictError,
   BenchmarkService,
@@ -12,14 +12,9 @@ import {
   pointLossQuality,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
-import {
-  makeBenchmarkMovePrompt,
-  makePrompt,
-  makeReflectionPrompt,
-  MalformedModelOutputError,
-  type PlayerAdapter,
-} from './providers'
+import {MalformedModelOutputError, type PlayerAdapter} from './providers'
 import {makeSnapshot} from './go'
+import {makeInitialLlmPrompt, perspectiveOutcome} from './llmGameContext'
 
 let store: Store | undefined
 let directory: string | undefined
@@ -59,13 +54,17 @@ describe('benchmark scoring and prompts', () => {
     expect(metrics.averageWinRateLoss).toBeCloseTo(0.15)
   })
 
-  it('keeps final prompts to exactly five sections with no style or analysis data', () => {
+  it('keeps final initial prompts to exactly five sections with no analysis data', () => {
     const snapshot = makeSnapshot(19, 7.5, [])
     snapshot.captures = {B: 4, W: 2}
-    const prompt = makeBenchmarkMovePrompt(
+    const prompt = makeInitialLlmPrompt(
       snapshot,
-      '# Shape\nStay connected.',
-      {phase: 'final'},
+      {
+        kind: 'benchmark',
+        phase: 'final',
+        notebook: '# Shape\nStay connected.',
+      },
+      'Turn 0: 50.00%',
     )
     expect(prompt.match(/^\d+\./gm)).toHaveLength(5)
     expect(prompt).toContain('2. SELF-WRITTEN SKILLS\n# Shape')
@@ -96,16 +95,16 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(instruction).not.toContain('final game')
     expect(instruction).not.toContain('training game')
-    expect(prompt).toContain(
-      'you have captured 4 opponent stones; the opponent has captured 2 of your stones',
-    )
+    expect(prompt).toContain('Black has captured 4 White stones')
   })
 
-  it('explains benchmark move legality, captures, and scoring', () => {
+  it('includes static training material and only the latest win-rate update', () => {
     const snapshot = makeSnapshot(13, 6.5, [])
-    const prompt = makeBenchmarkMovePrompt(snapshot, '', {
-      phase: 'training',
-    })
+    const prompt = makeInitialLlmPrompt(
+      snapshot,
+      {kind: 'benchmark', phase: 'training', notebook: ''},
+      'Turn 7: 42.00%',
+    )
     expect(prompt).toContain('played on a 13x13 grid. Black moves first')
     expect(prompt).toContain(
       'LEGAL MOVE: A play is legal only when it places one stone on an empty intersection',
@@ -135,253 +134,27 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain(
       'Neutral intersections score for neither side. White adds 6.5 komi',
     )
-    expect(
-      prompt.slice(prompt.indexOf('1. GO RULES'), prompt.indexOf('\n\n2. ')),
-    ).toBe(
-      makePrompt(snapshot).slice(0, makePrompt(snapshot).indexOf('\n\n2. ')),
-    )
     expect(prompt).toContain("world's best Go player")
     expect(prompt).toContain('Your primary goal is to learn, not to win')
-    expect(prompt).toContain(
-      'the result of this training game does not matter',
-    )
+    expect(prompt).toContain('the result of this training game does not matter')
     expect(prompt).toContain("Study the opponent's decisions")
-    expect(prompt).toContain('eventually surpassing the opponent')
+    expect(prompt).toContain('LATEST TRAINING WIN-RATE UPDATE')
+    expect(prompt).toContain('Turn 7: 42.00%')
+    expect(prompt).not.toContain('in_game_reflections')
   })
 
-  it('adds and rewrites numbered in-game reflections', () => {
-    expect(
-      mergeInGameReflections(
-        [
-          {number: 1, reflection: 'The corner is settled.'},
-          {number: 3, reflection: 'Keep sente.'},
-        ],
-        [
-          {number: 2, reflection: 'Count liberties first.'},
-          {number: 1, reflection: 'The corner still has a cutting point.'},
-        ],
-      ),
-    ).toEqual([
-      {number: 1, reflection: 'The corner still has a cutting point.'},
-      {number: 2, reflection: 'Count liberties first.'},
-      {number: 3, reflection: 'Keep sente.'},
-    ])
-  })
-
-  it('keeps reflections inside the five-section final move prompt', () => {
-    const prompt = makeBenchmarkMovePrompt(makeSnapshot(19, 7.5, []), '', {
-      phase: 'final',
-      inGameReflections: [
-        {number: 1, reflection: 'Do not answer a shoulder hit too passively.'},
-      ],
-    })
-    expect(prompt.match(/^\d+\./gm)).toHaveLength(5)
-    expect(prompt).toContain(
-      '"in_game_reflections":[{"number":1,"reflection":"general lesson"}]',
-    )
-    expect(prompt).toContain(
-      '{"number":1,"reflection":"Do not answer a shoulder hit too passively."}',
-    )
-    expect(prompt).toContain(
-      'reuse an existing number only to materially correct or replace that earlier reflection',
-    )
-    expect(prompt).toContain(
-      'Never resubmit an existing reflection unchanged',
-    )
-    expect(prompt).toContain(
-      'do not reuse an existing number with the same or substantively equivalent reflection content',
-    )
-    expect(prompt).toContain(
-      'If there is no new lesson and no material correction, omit in_game_reflections or use an empty array',
-    )
-    expect(prompt).toContain(
-      'base each one on concrete evidence from the current game',
-    )
-    expect(prompt).toContain(
-      'do not wait for perfect certainty or the end of the game',
-    )
-  })
-
-  it('adds complete training feedback only to training move and reflection prompts', () => {
-    const snapshot = makeSnapshot(19, 7.5, [])
-    const history = 'Turn 0: 50.00%\nTurn 1: 42.00%'
-    const movePrompt = makeBenchmarkMovePrompt(snapshot, '', {
-      phase: 'training',
-      winRateHistory: history,
-    })
-    const reflection = makeReflectionPrompt({
-      notebook: '',
-      games: [
-        {
-          sequence: 1,
-          snapshot,
-          result: 'W+2.5',
-          llmColor: 'B',
-          winRateHistory: history,
-        },
-      ],
-    })
-    expect(movePrompt).toContain(`6. TRAINING WIN-RATE HISTORY\n${history}`)
-    expect(movePrompt).toContain("world's best Go player")
-    expect(movePrompt).toContain('primary goal is to learn, not to win')
-    expect(movePrompt).toContain('training game does not matter')
-    expect(reflection).toContain(
-      `TURN-ALIGNED WIN-RATE HISTORY - GAME 1\n${history}`,
-    )
-    expect(reflection).not.toContain('This is a training game.')
-    expect(reflection).not.toContain('This is the final game.')
-    expect(reflection).toContain('only general, reusable Go skills')
-    expect(reflection).toContain(
-      "both the LLM's decisions and the opponent's decisions",
-    )
-    expect(reflection).toContain(
-      'Do not include game numbers, coordinates, results, move-by-move narratives',
-    )
-    expect(movePrompt).not.toContain('PLAYING STYLE')
-    expect(reflection).not.toContain('PLAYING STYLE')
-  })
-
-  it('shows prior moves and captures only as board coordinates', () => {
-    const snapshot = makeSnapshot(19, 7.5, [
-      {
-        number: 1,
-        color: 'B',
-        action: 'play',
-        point: [0, 0],
-        coordinate: 'A19',
-        comment: '',
-        captured: 1,
-        capturedPoints: [[1, 1]],
-      },
-    ])
-    snapshot.moves[0].captured = 1
-    snapshot.moves[0].capturedPoints = [[1, 1]]
-    expect(
-      makeBenchmarkMovePrompt(snapshot, '', {phase: 'training'}),
-    ).toContain('1. B A19; captured 1 at B18')
-  })
-
-  it('omits comments and reasoning from training and final move prompts', () => {
-    const snapshot = makeSnapshot(19, 7.5, [
-      {
-        number: 1,
-        color: 'B',
-        action: 'play',
-        point: [3, 15],
-        coordinate: 'D4',
-        comment: 'Take the open corner.',
-        reasoning: 'This leaves flexible extensions.',
-        captured: 0,
-      },
-      {
-        number: 2,
-        color: 'W',
-        action: 'play',
-        point: [15, 3],
-        coordinate: 'Q16',
-        comment: 'KataGo move.',
-        captured: 0,
-      },
-    ])
-
-    for (const phase of ['training', 'final'] as const) {
-      const prompt = makeBenchmarkMovePrompt(snapshot, '', {phase})
-      expect(prompt).toContain('1. B D4')
-      expect(prompt).toContain('2. W Q16')
-      expect(prompt).not.toContain('Take the open corner.')
-      expect(prompt).not.toContain('KataGo move.')
-      expect(prompt).not.toContain('This leaves flexible extensions.')
-      expect(prompt).not.toContain('your reasoning:')
-      expect(prompt).toContain('"reason":"brief reason"')
-    }
-  })
-
-  it('marks every reflection game and move without comments or model thoughts', () => {
-    const first = makeSnapshot(19, 7.5, [
-      {
-        number: 1,
-        color: 'B',
-        action: 'play',
-        point: [3, 15],
-        coordinate: 'D4',
-        comment: 'Build lower-side influence.\nKeep sente.',
-        reasoning: 'I compared the two open corners.',
-        captured: 0,
-      },
-    ])
-    first.moves[0].captured = 1
-    first.moves[0].capturedPoints = [[4, 4]]
-    first.captures.B = 1
-    const second = makeSnapshot(19, 7.5, [
-      {
-        number: 1,
-        color: 'B',
-        action: 'pass',
-        comment: 'KataGo passed.',
-        captured: 0,
-      },
-      {
-        number: 2,
-        color: 'W',
-        action: 'resign',
-        comment: 'The position is lost.',
-        reasoning: 'No practical winning chances remain.',
-        captured: 0,
-      },
-    ])
-
-    const prompt = makeReflectionPrompt({
-      notebook: '# Existing lesson',
-      games: [
-        {sequence: 1, snapshot: first, result: 'B+R', llmColor: 'B'},
-        {sequence: 2, snapshot: second, result: 'B+R', llmColor: 'W'},
-      ],
-    })
-
-    expect(prompt.indexOf('=== GAME 1 ===')).toBeLessThan(
-      prompt.indexOf('=== GAME 2 ==='),
-    )
-    expect(prompt).toContain('--- MOVE 1/1 ---')
-    expect(prompt).toContain('--- MOVE 1/2 ---')
-    expect(prompt).toContain('--- MOVE 2/2 ---')
-    expect(prompt).not.toContain('Build lower-side influence.')
-    expect(prompt).not.toContain('KataGo passed.')
-    expect(prompt).not.toContain('The position is lost.')
-    expect(prompt).not.toContain('"comment":')
-    expect(prompt).not.toContain('I compared the two open corners.')
-    expect(prompt).not.toContain('No practical winning chances remain.')
-    expect(prompt).not.toContain('"thought":')
-    expect(prompt).toContain('"capturedStones":0')
-    expect(prompt).toContain('"capturedAt":["E15"]')
-    expect(prompt).toContain(
-      'Capture totals: LLM captured 1 opponent stones; opponent captured 0 LLM stones.',
-    )
-    expect(prompt).toContain('=== END GAME 2 ===')
-  })
-
-  it('requires current-game reflections to be consolidated into broader experience', () => {
-    const prompt = makeReflectionPrompt({
-      notebook: '# Existing lesson',
-      games: [
-        {
-          sequence: 1,
-          snapshot: makeSnapshot(19, 7.5, []),
-          result: 'W+2.5',
-          llmColor: 'B',
-          inGameReflections: [
-            {number: 1, reflection: 'Review forcing moves before defending.'},
-          ],
-        },
-      ],
-    })
-    expect(prompt).toContain(
-      'must incorporate the supplied in-game reflections',
-    )
-    expect(prompt).toContain('IN-GAME REFLECTIONS - GAME 1')
-    expect(prompt).toContain(
-      '{"number":1,"reflection":"Review forcing moves before defending."}',
-    )
-  })
+  it.each([
+    ['B+7.5', 'B', 'You won by 7.5 points'],
+    ['B+7.5', 'W', 'You lost by 7.5 points'],
+    ['W+R', 'W', 'You won by resignation'],
+    ['W+R', 'B', 'You lost by resignation'],
+    ['Draw', 'B', 'Draw'],
+  ] as const)(
+    'normalizes reflection outcome %s for %s',
+    (result, color, expected) => {
+      expect(perspectiveOutcome(result, color)).toBe(expected)
+    },
+  )
 
   it('runs ten alternating training games and one scored final game', async () => {
     store = new Store(':memory:')
@@ -461,10 +234,12 @@ describe('benchmark scoring and prompts', () => {
       '# Go techniques',
     )
     expect(reflectionPrompts).toHaveLength(10)
-    expect(reflectionPrompts[0].match(/^=== GAME \d+ ===$/gm)).toHaveLength(1)
-    expect(reflectionPrompts[9].match(/^=== GAME \d+ ===$/gm)).toHaveLength(1)
-    expect(reflectionPrompts[9]).toContain('=== GAME 10 ===')
-    expect(reflectionPrompts[9]).not.toContain('=== GAME 9 ===')
+    expect(reflectionPrompts[0]).toContain('Outcome: Draw')
+    expect(reflectionPrompts[9]).toContain(
+      'Return only the complete replacement Markdown technique notebook.',
+    )
+    expect(reflectionPrompts[9]).not.toContain('PREVIOUS NOTEBOOK')
+    expect(reflectionPrompts[9]).not.toContain('Move list')
     expect(reflectionPrompts[9]).not.toContain('Comment at turn')
     expect(reflectionPrompts[9]).not.toContain('KataGo passed.')
     expect(reflectionPrompts[9]).not.toContain('"comment":')
@@ -752,7 +527,7 @@ describe('benchmark scoring and prompts', () => {
         const repeatsOccupiedPoint =
           snapshot.toMove === 'B' &&
           snapshot.moves.length === 2 &&
-          !snapshot.previousError
+          !prompt?.includes('Your visible response was rejected')
         const opensAtA19 =
           snapshot.toMove === 'B' && snapshot.moves.length === 0
         return {
@@ -804,10 +579,8 @@ describe('benchmark scoring and prompts', () => {
     const correction = prompts.find((prompt) =>
       prompt.includes('Intersection is occupied'),
     )
-    expect(correction).toContain(
-      'The position is unchanged; choose a different legal move.',
-    )
-    expect(correction).toContain('1. B A19')
+    expect(correction).toContain('The authoritative position is unchanged:')
+    expect(correction).toContain('Rejected response:')
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
@@ -815,127 +588,6 @@ describe('benchmark scoring and prompts', () => {
     expect(rejection).toMatchObject({turn: 3, attempt: 1, truncated: false})
     expect(rejection?.responseContent).toContain('A19')
     expect(service.get(run.id)?.error).toBeUndefined()
-    await service.close()
-  })
-
-  it('carries reflections through one game and resets them before the next', async () => {
-    store = new Store(':memory:')
-    directory = await mkdtemp(
-      join(tmpdir(), 'linggo-benchmark-in-game-reflection-'),
-    )
-    const games = new GameService(store)
-    const firstMovePrompts: string[] = []
-    const followUpPrompts: string[] = []
-    const reflectionPrompts: string[] = []
-    let gameSequence = 0
-    const adapter = {
-      async requestAction(_snapshot, signal, prompt) {
-        signal.throwIfAborted()
-        const value = prompt ?? ''
-        const startsGame = value.includes(
-          'Current in-game reflections (this game only):\n(none yet)',
-        )
-        if (startsGame) {
-          gameSequence += 1
-          firstMovePrompts.push(value)
-        } else {
-          followUpPrompts.push(value)
-        }
-        return {
-          action: startsGame
-            ? {action: 'play' as const, coordinate: 'A19', comment: 'Open.'}
-            : {action: 'pass' as const, comment: 'Finish.'},
-          inGameReflections: startsGame
-            ? [
-                {
-                  number: 1,
-                  reflection: `Initial lesson for game ${gameSequence}.`,
-                },
-              ]
-            : [
-                {
-                  number: 1,
-                  reflection: `Revised lesson for game ${gameSequence}.`,
-                },
-                {
-                  number: 2,
-                  reflection: `Second lesson for game ${gameSequence}.`,
-                },
-              ],
-          latencyMs: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          model: 'test-model',
-          retries: 0,
-        }
-      },
-      async requestText(prompt, signal) {
-        signal.throwIfAborted()
-        reflectionPrompts.push(prompt)
-        return {
-          text: '# Lessons',
-          inputTokens: 0,
-          outputTokens: 0,
-          latencyMs: 0,
-          model: 'test-model',
-        }
-      },
-    } satisfies PlayerAdapter
-    const service = new BenchmarkService(
-      store,
-      games,
-      fakeKataGo,
-      new NotebookStore(directory),
-      () => adapter,
-    )
-    const run = await service.create({
-      profileId: 'builtin-fake-profile',
-      finalColor: 'W',
-      visits: 25,
-      includeTrainingWinRates: false,
-      trainingGameCount: 10,
-      notebookId: 'default',
-    })
-
-    expect(
-      await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
-    ).toBe(true)
-    expect(firstMovePrompts).toHaveLength(11)
-    expect(followUpPrompts).toHaveLength(11)
-    expect(followUpPrompts[0]).toContain(
-      '{"number":1,"reflection":"Initial lesson for game 1."}',
-    )
-    expect(firstMovePrompts[1]).not.toContain('lesson for game 1')
-    expect(reflectionPrompts).toHaveLength(10)
-    expect(reflectionPrompts[0]).toContain(
-      '{"number":1,"reflection":"Revised lesson for game 1."}',
-    )
-    expect(reflectionPrompts[0]).toContain(
-      '{"number":2,"reflection":"Second lesson for game 1."}',
-    )
-    expect(reflectionPrompts[0]).not.toContain('Initial lesson for game 1')
-    expect(reflectionPrompts[9]).toContain('IN-GAME REFLECTIONS - GAME 10')
-    expect(reflectionPrompts[9]).not.toContain('IN-GAME REFLECTIONS - GAME 9')
-    expect(
-      games.get(service.get(run.id)!.gameIds[0])?.inGameReflections,
-    ).toEqual([
-      {number: 1, reflection: 'Revised lesson for game 1.'},
-      {number: 2, reflection: 'Second lesson for game 1.'},
-    ])
-    expect(
-      games.get(service.get(run.id)!.gameIds[1])?.inGameReflections,
-    ).toEqual([
-      {number: 1, reflection: 'Revised lesson for game 2.'},
-      {number: 2, reflection: 'Second lesson for game 2.'},
-    ])
-    const firstGame = games.get(service.get(run.id)!.gameIds[0])!
-    expect(firstGame.moves[0].inGameReflections).toEqual([
-      {number: 1, reflection: 'Initial lesson for game 1.'},
-    ])
-    expect(firstGame.moves[2].inGameReflections).toEqual([
-      {number: 1, reflection: 'Revised lesson for game 1.'},
-      {number: 2, reflection: 'Second lesson for game 1.'},
-    ])
     await service.close()
   })
 

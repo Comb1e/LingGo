@@ -225,36 +225,13 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   })
 
   await page.locator('.benchmark-games a').first().click()
-  await expect(
-    page.getByRole('heading', {name: 'In-game reflections'}),
-  ).toBeVisible()
-  const reflectionText =
-    'Check liberties and forcing moves before choosing a passive continuation.'
-  await expect(
-    page.locator('.in-game-reflections-panel').getByText(reflectionText),
-  ).toBeVisible()
-  await expect(
-    page.locator('.move-reflections').getByText(reflectionText),
-  ).toBeVisible()
+  await expect(page.locator('.in-game-reflections-panel')).toHaveCount(0)
+  await expect(page.locator('.move-reflections')).toHaveCount(0)
   await page.getByRole('button', {name: 'Previous board position'}).click()
   await expect(page.getByText(/Move \d+ \/ \d+/)).toBeVisible()
   await page.getByRole('button', {name: 'Latest board position'}).click()
-  const chartPanel = await page.locator('.winrate-panel').boundingBox()
-  const reflectionPanel = await page
-    .locator('.in-game-reflections-panel')
-    .boundingBox()
-  if (!chartPanel || !reflectionPanel)
-    throw new Error('Benchmark analysis panels are not visible')
-  if (testInfo.project.name === 'desktop')
-    expect(reflectionPanel.x).toBeGreaterThan(
-      chartPanel.x + chartPanel.width - 2,
-    )
-  else
-    expect(reflectionPanel.y).toBeGreaterThan(
-      chartPanel.y + chartPanel.height - 2,
-    )
   await page.screenshot({
-    path: testInfo.outputPath('benchmark-game-reflections.png'),
+    path: testInfo.outputPath('benchmark-game.png'),
     fullPage: true,
   })
   await page.goBack()
