@@ -89,7 +89,7 @@ function makeGoRulesSection(snapshot: GameSnapshot) {
     '1. GO RULES',
     "- LEGAL MOVE: A play is legal only when it places one stone on an empty intersection, removes adjacent opposing chains with no liberties, leaves the played stone's chain with at least one liberty, and does not recreate any earlier complete board position.",
     `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
-    '- On a turn, place one stone on an empty intersection. Stones remain there unless captured.',
+    '- On your turn, place one stone of your color on an empty intersection. Once placed, a stone does not move; it stays on the board until it is captured and removed.',
     '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
     '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
     '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
