@@ -680,7 +680,10 @@ export class BenchmarkService {
               run.outputAttempts = (run.outputAttempts ?? 0) + 1
               run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
-              if (isOccupiedMoveError(error)) {
+              if (
+                outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS &&
+                error instanceof IllegalMoveError
+              ) {
                 const score = scoreBoard(game.board as any, game.komi, [])
                 this.games.finishAutomated(game.id, score.result)
                 run.substate = {kind: 'ready'}
@@ -1148,13 +1151,6 @@ function isRepairableMoveError(error: unknown) {
     error instanceof IllegalMoveError ||
     error instanceof MalformedModelOutputError ||
     error instanceof NoOutputGeneratedError
-  )
-}
-
-function isOccupiedMoveError(error: unknown) {
-  return (
-    error instanceof IllegalMoveError &&
-    error.message === 'Intersection is occupied'
   )
 }
 

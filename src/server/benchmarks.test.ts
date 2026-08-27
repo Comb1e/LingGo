@@ -589,7 +589,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('settles immediately when a benchmark move targets an occupied intersection', async () => {
+  it('settles after five consecutive illegal benchmark moves', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
     const games = new GameService(store)
@@ -598,12 +598,9 @@ describe('benchmark scoring and prompts', () => {
       async requestAction(snapshot, signal, prompt) {
         signal.throwIfAborted()
         prompts.push(prompt ?? '')
-        const opensAtA19 =
-          snapshot.toMove === 'B' && snapshot.moves.length === 0
         return {
           action:
-            opensAtA19 ||
-            (snapshot.toMove === 'B' && snapshot.moves.length === 2)
+            snapshot.toMove === 'B' && snapshot.moves.length <= 2
               ? {
                   action: 'play' as const,
                   coordinate: 'A19',
@@ -648,13 +645,14 @@ describe('benchmark scoring and prompts', () => {
       await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
     ).toBe(true)
     expect(
-      prompts.some((prompt) => prompt === 'Intersection is occupied'),
-    ).toBe(false)
+      prompts.filter((prompt) => prompt === 'Intersection is occupied'),
+    ).toHaveLength(20)
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
-      .find(({reason}) => reason.includes('Intersection is occupied'))
-    expect(rejection).toMatchObject({turn: 3, attempt: 1, truncated: false})
+      .filter(({reason}) => reason.includes('Intersection is occupied'))
+      .at(-1)
+    expect(rejection).toMatchObject({turn: 3, attempt: 5, truncated: false})
     expect(rejection?.responseContent).toContain('A19')
     expect(
       games.list().find((game) => game.benchmarkRunId === run.id),
