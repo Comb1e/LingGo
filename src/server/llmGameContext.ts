@@ -181,13 +181,9 @@ export function perspectiveOutcome(result: string | undefined, color: Color) {
 }
 
 function formatCurrentPosition(snapshot: GameSnapshot, latestMove?: Move) {
-  const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures =
-    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   return [
     `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
-    `Capture totals: Black has captured ${snapshot.captures.B} White stones; White has captured ${snapshot.captures.W} Black stones.`,
-    `From the side to move: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
+    `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
     `Latest capture locations: ${formatCaptured(latestMove, snapshot)}`,
     'X = Black stone, O = White stone, . = empty intersection.',
     '',

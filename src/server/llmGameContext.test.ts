@@ -22,6 +22,8 @@ describe('persistent LLM game context', () => {
     expect(first.request.content).toContain('2. PLAYING STYLE')
     expect(first.request.content).toContain('Prefer influence.')
     expect(first.request.content).toContain('5. CURRENT POSITION')
+    expect(first.request.content).toContain('Captures: Black 0, White 0.')
+    expect(first.request.content).not.toContain('From the side to move')
     expect(first.request.content).not.toContain('Move list:')
     expect(store.getLlmGameContext(game.id, 'B')?.pendingTurn).toEqual(
       first.context.pendingTurn,

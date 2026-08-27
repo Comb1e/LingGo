@@ -21,9 +21,6 @@ export function makeMovePromptSections(
 }
 
 function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
-  const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures =
-    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   return {
     goRules: makeGoRulesSection(snapshot),
     instruction: [
@@ -45,8 +42,7 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
     currentPosition: [
       '5. CURRENT POSITION',
       `To move: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}`,
-      `Capture totals: Black has captured ${snapshot.captures.B} White stones; White has captured ${snapshot.captures.W} Black stones.`,
-      `From your perspective: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
+      `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
       'X = Black stone, O = White stone, . = empty intersection.',
       '',
       asciiBoard(snapshot),
@@ -58,9 +54,6 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
 }
 
 function makeBenchmarkSections(snapshot: GameSnapshot): MovePromptSections {
-  const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures =
-    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   return {
     goRules: makeGoRulesSection(snapshot),
     instruction: [
@@ -85,7 +78,7 @@ function makeBenchmarkSections(snapshot: GameSnapshot): MovePromptSections {
     currentPosition: [
       '5. CURRENT BOARD',
       `To move: ${snapshot.toMove}`,
-      `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
+      `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
       asciiBoard(snapshot),
     ],
   }

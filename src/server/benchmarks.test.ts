@@ -95,7 +95,8 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(instruction).not.toContain('final game')
     expect(instruction).not.toContain('training game')
-    expect(prompt).toContain('Black has captured 4 White stones')
+    expect(prompt).toContain('Captures: Black 4, White 2.')
+    expect(prompt).not.toContain('From your perspective')
   })
 
   it('includes static training material and only the latest win-rate update', () => {

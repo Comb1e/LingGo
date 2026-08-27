@@ -122,10 +122,8 @@ describe('provider normalization', () => {
     expect(prompt).toContain('9 X . . . . . . . .')
     expect(prompt).toContain('8 . O . . . . . . .')
     expect(prompt).toContain('To move: Black')
-    expect(prompt).toContain('Black has captured 3 White stones')
-    expect(prompt).toContain(
-      'you have captured 3 opponent stones; the opponent has captured 2 of your stones',
-    )
+    expect(prompt).toContain('Captures: Black 3, White 2.')
+    expect(prompt).not.toContain('From your perspective')
   })
 
   it('includes the intersections where stones were captured', () => {
