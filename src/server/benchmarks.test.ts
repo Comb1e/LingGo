@@ -177,7 +177,16 @@ describe('benchmark scoring and prompts', () => {
       '{"number":1,"reflection":"Do not answer a shoulder hit too passively."}',
     )
     expect(prompt).toContain(
-      'reuse a number to replace an incorrect earlier entry',
+      'reuse an existing number only to materially correct or replace that earlier reflection',
+    )
+    expect(prompt).toContain(
+      'Never resubmit an existing reflection unchanged',
+    )
+    expect(prompt).toContain(
+      'do not reuse an existing number with the same or substantively equivalent reflection content',
+    )
+    expect(prompt).toContain(
+      'If there is no new lesson and no material correction, omit in_game_reflections or use an empty array',
     )
     expect(prompt).toContain(
       'base each one on concrete evidence from the current game',
