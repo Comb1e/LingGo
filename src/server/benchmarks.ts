@@ -488,6 +488,7 @@ export class BenchmarkService {
     signal: AbortSignal,
   ) {
     let game = this.games.get(original.id)!
+    let illegalMoveFailures = 0
     while (run.status === 'running' && game.status !== 'finished') {
       let llmMoved = false
       signal.throwIfAborted()
@@ -726,8 +727,9 @@ export class BenchmarkService {
               run.outputAttempts = (run.outputAttempts ?? 0) + 1
               run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
+              if (error instanceof IllegalMoveError) illegalMoveFailures += 1
               if (
-                outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS &&
+                illegalMoveFailures >= MAX_MODEL_OUTPUT_ATTEMPTS &&
                 error instanceof IllegalMoveError
               ) {
                 const score = scoreBoard(game.board as any, game.komi, [])

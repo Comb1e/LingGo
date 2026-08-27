@@ -589,7 +589,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('settles after five consecutive illegal benchmark moves', async () => {
+  it('settles after five illegal benchmark moves', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
     const games = new GameService(store)
@@ -664,15 +664,39 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('settles after five pass-limit violations by the LLM', async () => {
+  it('combines pass-limit and occupied violations across turns', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-pass-limit-'))
     const games = new GameService(store)
+    const attemptsByPosition = new Map<number, number>()
     const adapter = {
-      async requestAction(_snapshot, signal) {
+      async requestAction(snapshot, signal) {
         signal.throwIfAborted()
+        const passCount = snapshot.moves.filter(
+          (move) => move.color === snapshot.toMove && move.action === 'pass',
+        ).length
+        if (snapshot.moves.length === 0) attemptsByPosition.clear()
+        if (passCount < 2)
+          return {
+            action: {action: 'pass' as const, comment: 'Pass.'},
+            latencyMs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: 'test-model',
+            retries: 0,
+          }
+        const attempts =
+          (attemptsByPosition.get(snapshot.moves.length) ?? 0) + 1
+        attemptsByPosition.set(snapshot.moves.length, attempts)
         return {
-          action: {action: 'pass' as const, comment: 'Pass again.'},
+          action:
+            attempts <= 3
+              ? {
+                  action: 'play' as const,
+                  coordinate: 'A19',
+                  comment: 'Try the occupied corner.',
+                }
+              : {action: 'pass' as const, comment: 'Pass again.'},
           latencyMs: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -751,11 +775,19 @@ describe('benchmark scoring and prompts', () => {
       .filter((game) => game.benchmarkRunId === run.id)
     expect(runGames).toHaveLength(2)
     expect(runGames.every((game) => game.status === 'finished')).toBe(true)
+    const rejections = runGames.flatMap(
+      (game) => game.rejectedModelActions ?? [],
+    )
     expect(
-      runGames
-        .flatMap((game) => game.rejectedModelActions ?? [])
-        .filter(({reason}) => reason.includes('may pass at most twice')),
-    ).toHaveLength(10)
+      rejections.filter(({reason}) =>
+        reason.includes('may pass at most twice'),
+      ),
+    ).toHaveLength(4)
+    expect(
+      rejections.filter(({reason}) =>
+        reason.includes('Intersection is occupied'),
+      ),
+    ).toHaveLength(6)
     await service.close()
   })
 
