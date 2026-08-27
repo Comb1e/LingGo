@@ -717,7 +717,7 @@ export function makeBenchmarkMovePrompt(
   const sections = [
     'BACKGROUND',
     options.phase === 'training'
-      ? "You are playing against the world's best Go player in order to learn. Study the opponent's decisions as well as your own, develop general skills that transfer to future positions, and work toward eventually surpassing the opponent."
+      ? "This is a benchmark training game. Your primary goal is to learn, not to win; the result of this training game does not matter. You are playing against the world's best Go player. Study the opponent's decisions as well as your own, develop general skills that transfer to future positions, and work toward eventually surpassing the opponent."
       : 'This is the scored final game. Play to the best of your ability and maximize your score.',
     '',
     ...promptSections.goRules,

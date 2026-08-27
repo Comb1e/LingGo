@@ -128,6 +128,9 @@ describe('provider normalization', () => {
     )
     expect(prompt).toContain('1. GO RULES')
     expect(prompt).toContain(
+      'LEGAL MOVE: A play is legal only when it places one stone on an empty intersection',
+    )
+    expect(prompt).toContain(
       '2. PLAYING STYLE\nPrefer influence over territory.',
     )
     expect(prompt).toContain('3. INSTRUCTION')

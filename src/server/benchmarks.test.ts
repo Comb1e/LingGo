@@ -102,6 +102,12 @@ describe('benchmark scoring and prompts', () => {
     })
     expect(prompt).toContain('played on a 13x13 grid. Black moves first')
     expect(prompt).toContain(
+      'LEGAL MOVE: A play is legal only when it places one stone on an empty intersection',
+    )
+    expect(prompt).toContain(
+      "leaves the played stone's chain with at least one liberty",
+    )
+    expect(prompt).toContain(
       'Orthogonally adjacent stones of one color form a chain and share liberties',
     )
     expect(prompt).toContain(
@@ -129,6 +135,10 @@ describe('benchmark scoring and prompts', () => {
       makePrompt(snapshot).slice(0, makePrompt(snapshot).indexOf('\n\n2. ')),
     )
     expect(prompt).toContain("world's best Go player")
+    expect(prompt).toContain('Your primary goal is to learn, not to win')
+    expect(prompt).toContain(
+      'the result of this training game does not matter',
+    )
     expect(prompt).toContain("Study the opponent's decisions")
     expect(prompt).toContain('eventually surpassing the opponent')
   })
@@ -198,7 +208,8 @@ describe('benchmark scoring and prompts', () => {
     })
     expect(movePrompt).toContain(`6. TRAINING WIN-RATE HISTORY\n${history}`)
     expect(movePrompt).toContain("world's best Go player")
-    expect(movePrompt).not.toContain('The game result does not matter')
+    expect(movePrompt).toContain('primary goal is to learn, not to win')
+    expect(movePrompt).toContain('training game does not matter')
     expect(reflection).toContain(
       `TURN-ALIGNED WIN-RATE HISTORY - GAME 1\n${history}`,
     )
