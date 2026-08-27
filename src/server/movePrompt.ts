@@ -37,7 +37,7 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
       'Return only plain text containing one valid JSON object. Do not use Markdown or code fences.',
       '{"move":"D4","reason":"brief reason for this move"}',
       'move must be one letter-number coordinate exactly as labeled on the board. Columns use letters and skip I; rows use numbers counted from the bottom.',
-      'Use {"move":"pass","reason":"..."} to pass or {"move":"resign","reason":"..."} to resign.',
+      'Use {"move":"pass","reason":"..."} to pass or {"move":"resign","reason":"..."} to resign and end the game.',
     ],
     currentPosition: [
       '5. CURRENT POSITION',
