@@ -93,7 +93,7 @@ export interface PlayerAdapter {
 }
 
 export interface LlmTurnRequest {
-  kind: 'initial' | 'continuation' | 'repair' | 'reflection'
+  kind: 'initial' | 'continuation' | 'repair' | 'reflection' | 'summary'
   content: string
   transcript: VisibleLlmMessage[]
   previousResponseId?: string

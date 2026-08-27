@@ -78,6 +78,36 @@ describe('persistent LLM game context', () => {
     expect(prepared.request.content).not.toContain('# Initialized notebook')
   })
 
+  it('includes a saved game intention in a rebuilt initial prompt', () => {
+    const {games, game, profile, connection} = setupGame()
+    games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {kind: 'ordinary'},
+    })
+    store.markLlmGameContextsNeedsRebase(
+      game.id,
+      'B',
+      'Build influence on the upper side while keeping the group connected.',
+    )
+
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {kind: 'ordinary'},
+    })
+
+    expect(prepared.request.content).toContain('GAME INTENTION')
+    expect(prepared.request.content).toContain(
+      'Build influence on the upper side while keeping the group connected.',
+    )
+    expect(prepared.request.transcript).toEqual([])
+  })
+
   it('advances atomically and sends only the newly observed opponent move', async () => {
     const {games, game, profile, connection} = setupGame()
     const prepared = games.prepareLlmActionTurn({

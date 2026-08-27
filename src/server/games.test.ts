@@ -515,6 +515,7 @@ describe('game orchestration', () => {
       cacheKey: string
     }> = []
     let calls = 0
+    let moveResponses = 0
     const adapter = {
       async requestAction() {
         throw new Error('Legacy request path should not be used')
@@ -528,17 +529,28 @@ describe('game orchestration', () => {
           transcriptLength: request.transcript.length,
           cacheKey: request.cacheKey,
         })
+        if (request.kind === 'summary')
+          return {
+            text: 'Keep developing the open-side influence.',
+            latencyMs: 0,
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            model: 'test-model',
+            providerKind: 'openai' as const,
+          }
         if (calls === 2)
           throw new NoOutputGeneratedError({
             message: 'No output generated. Check the stream for errors.',
           })
-        const move = ['A9', 'unused', 'C9', 'E9'][calls - 1]
+        moveResponses += 1
+        const move = ['A9', 'C9', 'E9'][moveResponses - 1]
         return {
           text: JSON.stringify({move, reason: 'Test move.'}),
           providerContinuationId: `resp-${calls}`,
           latencyMs: 0,
           inputTokens: 0,
-          cachedInputTokens: calls * 128,
+          cachedInputTokens: moveResponses * 128,
           outputTokens: 0,
           model: 'test-model',
           providerKind: 'openai' as const,
@@ -570,7 +582,7 @@ describe('game orchestration', () => {
       coordinate: 'B9',
     })
     await waitFor(() => service.get(game.id)?.moves.length === 3)
-    expect(requests.slice(0, 3)).toEqual(
+    expect(requests.slice(0, 4)).toEqual(
       [
         {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
         {
@@ -578,18 +590,23 @@ describe('game orchestration', () => {
           previousResponseId: 'resp-1',
           transcriptLength: 2,
         },
+        {kind: 'summary', previousResponseId: undefined, transcriptLength: 0},
         {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
       ].map((request) => ({
         ...request,
-        cacheKey: `linggo:${game.id}:B`,
+        cacheKey:
+          request.kind === 'summary'
+            ? `linggo:${game.id}:B:summary`
+            : `linggo:${game.id}:B`,
       })),
     )
     expect(store.getLlmGameContext(game.id, 'B')).toMatchObject({
       managedContinuation: false,
       providerContinuationId: undefined,
+      gameIntention: 'Keep developing the open-side influence.',
     })
     expect(service.get(game.id)?.moves[0].cachedInputTokens).toBe(128)
-    expect(service.get(game.id)?.moves[2].cachedInputTokens).toBe(384)
+    expect(service.get(game.id)?.moves[2].cachedInputTokens).toBe(256)
 
     await service.command(game.id, {
       expectedVersion: service.get(game.id)!.version,
@@ -597,7 +614,7 @@ describe('game orchestration', () => {
       coordinate: 'D9',
     })
     await waitFor(() => service.get(game.id)?.moves.length === 5)
-    expect(requests[3]).toEqual({
+    expect(requests[4]).toEqual({
       kind: 'continuation',
       previousResponseId: undefined,
       transcriptLength: 2,

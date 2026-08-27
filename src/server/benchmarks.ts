@@ -609,9 +609,24 @@ export class BenchmarkService {
                 (isProviderContextError(error) || managedContinuationFailed)
               ) {
                 rebasedProviderContext = true
+                let gameIntention: string | undefined
+                try {
+                  gameIntention = await this.games.summarizeLlmContext(
+                    adapter,
+                    prepared,
+                    signal,
+                  )
+                } catch (summaryError) {
+                  if (signal.aborted) throw summaryError
+                }
                 if (managedContinuationFailed)
-                  this.games.disableManagedLlmContinuation(game.id, llmColor)
-                else this.games.rebaseLlmContext(game.id, llmColor)
+                  this.games.disableManagedLlmContinuation(
+                    game.id,
+                    llmColor,
+                    gameIntention,
+                  )
+                else
+                  this.games.rebaseLlmContext(game.id, llmColor, gameIntention)
                 prepared = this.games.prepareLlmActionTurn({
                   gameId: game.id,
                   color: llmColor,

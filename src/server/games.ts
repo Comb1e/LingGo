@@ -41,6 +41,7 @@ import {
   type LlmPromptMode,
   makeContinuationLlmPrompt,
   makeFirstGameLlmPrompt,
+  makeGameIntentionPrompt,
   makeInitialLlmPrompt,
   makeReflectionLlmPrompt,
   makeRepairLlmPrompt,
@@ -320,7 +321,12 @@ export class GameService {
       ? makeContinuationLlmPrompt(snapshot, unseen[0], input.latestWinRate)
       : seededInitialContext && input.mode.kind === 'benchmark'
         ? makeFirstGameLlmPrompt(snapshot, input.mode.trainingFeedback)
-        : makeInitialLlmPrompt(snapshot, input.mode, input.latestWinRate)
+        : makeInitialLlmPrompt(
+            snapshot,
+            input.mode,
+            input.latestWinRate,
+            context?.gameIntention,
+          )
     context = {
       gameId: game.id,
       color: input.color,
@@ -330,6 +336,7 @@ export class GameService {
       modelFingerprint: fingerprint,
       lastObservedMove: game.moves.length,
       transcript: rebase ? [] : context!.transcript,
+      gameIntention: context?.gameIntention,
       pendingTurn: {
         kind: continuationValid ? 'continuation' : 'initial',
         content,
@@ -484,12 +491,41 @@ export class GameService {
     }
   }
 
-  rebaseLlmContext(gameId: string, color: Color) {
-    this.store.markLlmGameContextsNeedsRebase(gameId, color)
+  async summarizeLlmContext(
+    adapter: PlayerAdapter,
+    prepared: PreparedLlmTurn,
+    signal: AbortSignal,
+  ) {
+    const prompt = makeGameIntentionPrompt(prepared.context, prepared.snapshot)
+    if (adapter.requestText) {
+      const response = await adapter.requestText(prompt, signal)
+      return response.text.trim() || undefined
+    }
+    if (!adapter.requestTurn) return undefined
+    const response = await adapter.requestTurn(
+      {
+        kind: 'summary',
+        content: prompt,
+        transcript: [],
+        cacheKey: `linggo:${prepared.context.gameId}:${prepared.context.color}:summary`,
+        snapshot: prepared.snapshot,
+        output: 'notebook',
+      },
+      signal,
+    )
+    return response.text.trim() || undefined
   }
 
-  disableManagedLlmContinuation(gameId: string, color: Color) {
-    this.store.disableManagedLlmContinuation(gameId, color)
+  rebaseLlmContext(gameId: string, color: Color, gameIntention?: string) {
+    this.store.markLlmGameContextsNeedsRebase(gameId, color, gameIntention)
+  }
+
+  disableManagedLlmContinuation(
+    gameId: string,
+    color: Color,
+    gameIntention?: string,
+  ) {
+    this.store.disableManagedLlmContinuation(gameId, color, gameIntention)
   }
 
   finishAutomated(id: string, result: string) {
@@ -904,9 +940,19 @@ export class GameService {
             (isProviderContextError(error) || managedContinuationFailed)
           ) {
             rebasedProviderContext = true
+            let gameIntention: string | undefined
+            try {
+              gameIntention = await this.summarizeLlmContext(
+                adapter,
+                prepared,
+                controller.signal,
+              )
+            } catch (summaryError) {
+              if (controller.signal.aborted) throw summaryError
+            }
             if (managedContinuationFailed)
-              this.disableManagedLlmContinuation(id, game.toMove)
-            else this.rebaseLlmContext(id, game.toMove)
+              this.disableManagedLlmContinuation(id, game.toMove, gameIntention)
+            else this.rebaseLlmContext(id, game.toMove, gameIntention)
             prepared = undefined
             continue
           }

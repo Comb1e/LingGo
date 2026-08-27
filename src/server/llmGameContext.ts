@@ -39,6 +39,7 @@ export interface LlmGameContext {
   modelFingerprint: string
   lastObservedMove: number
   transcript: VisibleLlmMessage[]
+  gameIntention?: string
   pendingTurn?: PendingLlmTurn
   providerContinuationId?: string
   managedContinuation: boolean
@@ -68,6 +69,7 @@ export function makeInitialLlmPrompt(
   snapshot: GameSnapshot,
   mode: LlmPromptMode,
   latestWinRate?: string,
+  gameIntention?: string,
 ) {
   const sections = makeMovePromptSections(snapshot, {
     mode: mode.kind === 'ordinary' ? 'ordinary' : 'benchmark',
@@ -79,6 +81,9 @@ export function makeInitialLlmPrompt(
       '',
       '2. PLAYING STYLE',
       mode.stylePrompt?.trim() || '(none)',
+      ...(gameIntention?.trim()
+        ? ['', 'GAME INTENTION', gameIntention.trim()]
+        : []),
       '',
       ...sections.instruction,
       '',
@@ -109,6 +114,9 @@ export function makeInitialLlmPrompt(
     '',
     '2. SELF-WRITTEN SKILLS',
     mode.notebook.trim() || '(none)',
+    ...(gameIntention?.trim()
+      ? ['', 'GAME INTENTION', gameIntention.trim()]
+      : []),
     '',
     ...sections.instruction,
     '',
@@ -132,6 +140,25 @@ export function makeInitialLlmPrompt(
       latestWinRate,
     )
   return values.join('\n')
+}
+
+export function makeGameIntentionPrompt(
+  context: Pick<LlmGameContext, 'transcript'>,
+  snapshot: GameSnapshot,
+) {
+  return [
+    'Summarize your current Go game intention briefly for a context reset.',
+    'Focus on strategic priorities, unresolved plans, and what you are trying to achieve. Do not choose or recommend a specific next move, restate the rules, or include analysis of unrelated positions.',
+    'Return only 1 to 3 concise sentences.',
+    '',
+    'CURRENT POSITION',
+    ...formatCurrentPosition(snapshot, snapshot.moves.at(-1)),
+    '',
+    'EXISTING CONVERSATION',
+    ...context.transcript.map(
+      (message) => `${message.role.toUpperCase()}: ${message.content}`,
+    ),
+  ].join('\n')
 }
 
 export function makeFirstGameLlmPrompt(
