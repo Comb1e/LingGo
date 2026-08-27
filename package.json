@@ -16,7 +16,10 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "research:run": "node --import tsx scripts/research-run.ts",
+    "research:analyze": "node --import tsx scripts/research-analyze.ts",
+    "research:validate": "node --import tsx scripts/research-validate.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "latest",

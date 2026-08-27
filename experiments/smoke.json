@@ -1,0 +1,25 @@
+{
+  "experimentId": "smoke",
+  "model": {"provider": "fake", "modelId": "deterministic-v1"},
+  "boardSize": 9,
+  "trainingGameCount": 1,
+  "evaluationGameCount": 1,
+  "moveCap": 4,
+  "condition": "reflection_plus_katago",
+  "seed": 7,
+  "rawTraces": false,
+  "evaluator": {
+    "executable": "deterministic",
+    "network": "deterministic",
+    "config": "deterministic",
+    "visits": 1000
+  },
+  "trainingVisits": 100,
+  "protocol": {
+    "protocolVersion": "research-v1",
+    "movePromptVersion": "move-v1",
+    "reflectionPromptVersion": "reflection-v1",
+    "notebookFormatVersion": "notebook-v1",
+    "metricVersion": "metrics-v1"
+  }
+}

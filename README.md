@@ -96,6 +96,10 @@ Replace `7897` if Clash Verge shows a different port. Do not use LingGo's Vite p
 - Single-ply undo cancels pending generation and pauses autoplay
 - UTF-8 SGF import reads the first game and main line; SGF export writes linear FF4
 
+## Research experiments
+
+The headless research layer is documented in [docs/research-protocol.md](docs/research-protocol.md). It supports four typed adaptation conditions, reproducible fake-provider runs, filesystem response caching, per-turn provenance traces, held-out position manifests, and deterministic statistical summaries. Run a credential-free smoke experiment with `pnpm research:run -- --manifest experiments/smoke.json`, then analyze and validate its generated artifact directory. This studies inference-time context and externalized memory; it does not claim model weight updates.
+
 ## Verification
 
 ```bash

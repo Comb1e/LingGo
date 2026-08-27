@@ -1,0 +1,28 @@
+{
+  "experimentId": "iclr2027-example",
+  "model": {"provider": "fake", "modelId": "deterministic-v1"},
+  "boardSize": 9,
+  "komi": 7.5,
+  "trainingGameCount": 5,
+  "evaluationGameCount": 10,
+  "evaluationPositionCount": 100,
+  "moveCap": 722,
+  "condition": "reflection_plus_katago",
+  "seed": 2027,
+  "liveProvider": false,
+  "concurrency": 1,
+  "evaluator": {
+    "executable": "katago",
+    "network": "pinned-network.bin.gz",
+    "config": "analysis_config.cfg",
+    "visits": 10000
+  },
+  "trainingVisits": 1000,
+  "protocol": {
+    "protocolVersion": "research-v1",
+    "movePromptVersion": "move-v1",
+    "reflectionPromptVersion": "reflection-v1",
+    "notebookFormatVersion": "notebook-v1",
+    "metricVersion": "metrics-v1"
+  }
+}

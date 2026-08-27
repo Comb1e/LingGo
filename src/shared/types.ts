@@ -368,3 +368,118 @@ export interface BenchmarkRun {
   createdAt: string
   updatedAt: string
 }
+
+/** Inference-time adaptation conditions used by the research protocol. */
+export const researchConditionSchema = z.enum([
+  'no_adaptation',
+  'reflection_only',
+  'katago_feedback',
+  'reflection_plus_katago',
+])
+export type ResearchCondition = z.infer<typeof researchConditionSchema>
+
+export const researchProtocolSchema = z.object({
+  protocolVersion: z.string().min(1),
+  movePromptVersion: z.string().min(1),
+  reflectionPromptVersion: z.string().min(1),
+  notebookFormatVersion: z.string().min(1),
+  metricVersion: z.string().min(1),
+})
+export type ResearchProtocol = z.infer<typeof researchProtocolSchema>
+
+export const researchManifestSchema = z.object({
+  experimentId: z.string().regex(/^[A-Za-z0-9._-]+$/),
+  runId: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]+$/)
+    .optional(),
+  model: z.object({
+    provider: providerKindSchema,
+    modelId: z.string().min(1),
+    fingerprint: z.string().min(1).optional(),
+    profileId: z.string().min(1).optional(),
+  }),
+  boardSize: boardSizeSchema.default(9),
+  komi: z.number().min(-100).max(100).default(7.5),
+  rules: z.string().default('chinese'),
+  moveCap: z.number().int().positive().max(10_000).default(722),
+  trainingGameCount: z.number().int().min(0).max(1000).default(1),
+  evaluationGameCount: z.number().int().min(0).max(1000).default(1),
+  evaluationPositionCount: z.number().int().min(0).max(100_000).default(0),
+  evaluator: z
+    .object({
+      executable: z.string().default('deterministic'),
+      network: z.string().default('deterministic'),
+      config: z.string().default('deterministic'),
+      visits: z.number().int().min(1).max(1_000_000).default(1000),
+      fingerprint: z.string().min(1).optional(),
+    })
+    .default({
+      executable: 'deterministic',
+      network: 'deterministic',
+      config: 'deterministic',
+      visits: 1000,
+    }),
+  trainingVisits: z.number().int().min(1).max(1_000_000).default(100),
+  seed: z.number().int().default(1),
+  condition: researchConditionSchema,
+  notebookId: z.string().min(1).optional(),
+  initialNotebook: z.string().default(''),
+  initialNotebookDigest: z.string().min(1).optional(),
+  liveProvider: z.boolean().default(false),
+  concurrency: z.number().int().min(1).max(64).default(1),
+  rawTraces: z.boolean().default(false),
+  positionSet: z.string().optional(),
+  protocol: researchProtocolSchema.default({
+    protocolVersion: 'research-v1',
+    movePromptVersion: 'move-v1',
+    reflectionPromptVersion: 'reflection-v1',
+    notebookFormatVersion: 'notebook-v1',
+    metricVersion: 'metrics-v1',
+  }),
+  softwareVersion: z.string().default('unknown'),
+  createdAt: z.string().datetime().optional(),
+})
+export type ResearchManifest = z.infer<typeof researchManifestSchema>
+
+export interface ResearchMoveTrace {
+  game: number
+  turn: number
+  positionHash: string
+  historyHash: string
+  color: Color
+  condition: ResearchCondition
+  promptHash: string
+  notebookDigest: string
+  response?: string
+  cacheKey?: string
+  parsedAction?: PlayerAction
+  legal: boolean
+  retries: number
+  retryErrors?: string[]
+  kataGoBefore?: {winRate: number; scoreLead: number; visits: number}
+  kataGoAfter?: {winRate: number; scoreLead: number; visits: number}
+  pointLoss?: number
+  winRateLoss?: number
+  inputTokens: number
+  outputTokens: number
+  latencyMs: number
+  modelFingerprint: string
+  providerFingerprint: string
+  timestamp: string
+}
+
+export const researchPositionSchema = z.object({
+  sourceId: z.string().min(1),
+  sourceChecksum: z.string().min(1),
+  boardSize: boardSizeSchema,
+  komi: z.number(),
+  moveHistory: z.array(
+    z.object({color: z.enum(['B', 'W']), move: z.string().min(1)}),
+  ),
+  sideToMove: z.enum(['B', 'W']),
+  split: z.enum(['train', 'evaluation']),
+  opening: z.string().optional(),
+  gameId: z.string().optional(),
+})
+export type ResearchPosition = z.infer<typeof researchPositionSchema>
