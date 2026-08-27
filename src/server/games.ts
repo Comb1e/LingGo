@@ -40,6 +40,7 @@ import {
   type LlmGameContext,
   type LlmPromptMode,
   makeContinuationLlmPrompt,
+  makeFirstGameLlmPrompt,
   makeInitialLlmPrompt,
   makeReflectionLlmPrompt,
   makeRepairLlmPrompt,
@@ -317,7 +318,9 @@ export class GameService {
     const now = new Date().toISOString()
     const content = continuationValid
       ? makeContinuationLlmPrompt(snapshot, unseen[0], input.latestWinRate)
-      : makeInitialLlmPrompt(snapshot, input.mode, input.latestWinRate)
+      : seededInitialContext && input.mode.kind === 'benchmark'
+        ? makeFirstGameLlmPrompt(snapshot, input.mode.trainingFeedback)
+        : makeInitialLlmPrompt(snapshot, input.mode, input.latestWinRate)
     context = {
       gameId: game.id,
       color: input.color,

@@ -134,6 +134,38 @@ export function makeInitialLlmPrompt(
   return values.join('\n')
 }
 
+export function makeFirstGameLlmPrompt(
+  snapshot: GameSnapshot,
+  trainingFeedback: 'none' | 'structured' = 'none',
+) {
+  const sections = makeMovePromptSections(snapshot, {mode: 'benchmark'})
+  const values = [
+    'BEGIN FIRST BENCHMARK GAME',
+    'Use the technique notebook you just wrote as your play guidance. Begin the game by choosing one legal move for the current position.',
+    '',
+    ...sections.instruction.map((line, index) =>
+      index === 0 ? 'INSTRUCTION TO PLACE ONE STONE' : line,
+    ),
+    '',
+    ...sections.responseSchema.map((line, index) =>
+      index === 0 ? 'JSON OUTPUT SCHEMA' : line,
+    ),
+    '',
+    ...sections.currentPosition.map((line, index) =>
+      index === 0 ? 'CURRENT BOARD' : line,
+    ),
+  ]
+  if (trainingFeedback === 'structured')
+    values.splice(
+      3,
+      0,
+      'KATAGO TRAINING FEEDBACK',
+      'A retrospective update may appear after you make a move. Its KataGo candidate is the alternative move for the position immediately before your previous move, not a recommendation for the current position. Do not play that candidate now unless you independently determine it is legal and best in the current position.',
+      '',
+    )
+  return values.join('\n')
+}
+
 export function makeContinuationLlmPrompt(
   snapshot: GameSnapshot,
   observedMove: Move,

@@ -70,7 +70,12 @@ describe('persistent LLM game context', () => {
 
     expect(prepared.request.kind).toBe('initial')
     expect(prepared.request.transcript).toEqual(transcript)
-    expect(prepared.request.content).toContain('SELF-WRITTEN SKILLS')
+    expect(prepared.request.content).toContain('BEGIN FIRST BENCHMARK GAME')
+    expect(prepared.request.content).toContain('JSON OUTPUT SCHEMA')
+    expect(prepared.request.content).toContain('CURRENT BOARD')
+    expect(prepared.request.content).not.toContain('GO RULES')
+    expect(prepared.request.content).not.toContain('SELF-WRITTEN SKILLS')
+    expect(prepared.request.content).not.toContain('# Initialized notebook')
   })
 
   it('advances atomically and sends only the newly observed opponent move', async () => {
