@@ -89,6 +89,32 @@ describe('persistent LLM game context', () => {
     expect(continuation.request.transcript).toHaveLength(2)
   })
 
+  it('sends only the validation reason when repairing an invalid move', () => {
+    const {games, game, profile, connection} = setupGame()
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {kind: 'ordinary'},
+    })
+    const rejected = turnResponse('{"move":"A9","reason":"Occupied."}')
+    const repaired = games.repairLlmActionTurn(
+      prepared,
+      rejected,
+      'Intersection is occupied',
+    )
+
+    expect(repaired.request.content).toBe('Intersection is occupied')
+    expect(repaired.request.content).not.toContain(rejected.text)
+    expect(repaired.request.content).not.toContain('CURRENT POSITION')
+    expect(repaired.request.content).not.toContain('Captures:')
+    expect(repaired.request.transcript.at(-1)).toEqual({
+      role: 'assistant',
+      content: rejected.text,
+    })
+  })
+
   it('isolates seats and marks contexts for rebase after undo', async () => {
     const {games, game, profile, connection} = setupGame()
     games.prepareLlmActionTurn({

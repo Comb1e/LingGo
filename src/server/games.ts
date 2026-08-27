@@ -54,7 +54,7 @@ import {
 } from './network'
 import type {ImportedRecord} from './sgf'
 
-const MAX_MODEL_OUTPUT_ATTEMPTS = 3
+export const MAX_MODEL_OUTPUT_ATTEMPTS = 5
 
 type PlayerAdapterFactory = (
   ...args: Parameters<typeof createPlayerAdapter>
@@ -345,7 +345,7 @@ export class GameService {
   ): PreparedLlmTurn {
     const game = this.requireGame(prepared.context.gameId)
     const snapshot = makeSnapshot(game.size, game.komi, game.moves)
-    const content = makeRepairLlmPrompt(snapshot, response.text, error)
+    const content = makeRepairLlmPrompt(error)
     const context: LlmGameContext = {
       ...prepared.context,
       status: 'repairing',

@@ -531,7 +531,7 @@ describe('benchmark scoring and prompts', () => {
         const repeatsOccupiedPoint =
           snapshot.toMove === 'B' &&
           snapshot.moves.length === 2 &&
-          !prompt?.includes('Your visible response was rejected')
+          prompt !== 'Intersection is occupied'
         const opensAtA19 =
           snapshot.toMove === 'B' && snapshot.moves.length === 0
         return {
@@ -583,8 +583,7 @@ describe('benchmark scoring and prompts', () => {
     const correction = prompts.find((prompt) =>
       prompt.includes('Intersection is occupied'),
     )
-    expect(correction).toContain('The authoritative position is unchanged:')
-    expect(correction).toContain('Rejected response:')
+    expect(correction).toBe('Intersection is occupied')
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])

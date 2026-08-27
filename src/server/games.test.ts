@@ -355,6 +355,56 @@ describe('game orchestration', () => {
     })
   })
 
+  it('allows five invalid move attempts before stopping the game', async () => {
+    store = new Store(':memory:')
+    const repairMessages: string[] = []
+    let requests = 0
+    const adapter = {
+      async requestTurn(request, signal) {
+        signal.throwIfAborted()
+        requests += 1
+        if (request.kind === 'repair') repairMessages.push(request.content)
+        return {
+          text: '{"move":"A9","reason":"Try occupied point."}',
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          providerKind: 'fake' as const,
+        }
+      },
+      async requestAction() {
+        throw new Error('Legacy request path should not be used')
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+
+    let game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'human', name: 'Human'},
+      white: {
+        type: 'llm',
+        name: 'Bot',
+        profileId: 'builtin-fake-profile',
+      },
+      commentsVisible: true,
+    })
+    game = await service.command(game.id, {
+      expectedVersion: game.version,
+      type: 'play',
+      coordinate: 'A9',
+    })
+
+    await waitFor(() => service.get(game.id)?.status === 'error')
+    expect(requests).toBe(5)
+    expect(repairMessages).toEqual(Array(4).fill('Intersection is occupied'))
+    expect(service.get(game.id)?.rejectedModelActions).toHaveLength(5)
+    expect(service.get(game.id)?.error).toBe(
+      'Model failed to produce a legal action after 5 attempts: Intersection is occupied',
+    )
+  })
+
   it('reports API retry progress while the next request is pending', async () => {
     store = new Store(':memory:')
     let requests = 0

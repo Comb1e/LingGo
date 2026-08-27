@@ -15,7 +15,7 @@ import type {
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
 import {boardHash, IllegalMoveError, replay} from './go'
-import {GameService} from './games'
+import {GameService, MAX_MODEL_OUTPUT_ATTEMPTS} from './games'
 import {
   gamePosition,
   rootFromBlack,
@@ -530,9 +530,9 @@ export class BenchmarkService {
               })
               outputFailures += 1
               const feedback = publicProviderError(error, 'Invalid action')
-              if (outputFailures >= 3)
+              if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS)
                 throw new Error(
-                  `Model failed to produce a legal action after 3 attempts: ${feedback}`,
+                  `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`,
                   {cause: error},
                 )
               prepared = this.games.repairLlmActionTurn(

@@ -127,19 +127,8 @@ export function makeContinuationLlmPrompt(
   ].join('\n')
 }
 
-export function makeRepairLlmPrompt(
-  snapshot: GameSnapshot,
-  rejectedResponse: string,
-  error: string,
-) {
-  return [
-    'Your visible response was rejected.',
-    `Rejected response: ${rejectedResponse || '(empty)'}`,
-    `Validation error: ${error}`,
-    'The authoritative position is unchanged:',
-    ...formatCurrentPosition(snapshot, snapshot.moves.at(-1)),
-    'Return only a corrected move JSON object using the established schema.',
-  ].join('\n')
+export function makeRepairLlmPrompt(error: string) {
+  return error
 }
 
 export function makeReflectionLlmPrompt(
