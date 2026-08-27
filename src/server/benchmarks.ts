@@ -517,6 +517,15 @@ export class BenchmarkService {
         let rebasedProviderContext = false
         const retryErrors = [...(game.providerErrors ?? [])]
         const promptPhase = phase === 'training_game' ? 'training' : 'final'
+        const trainingFeedback =
+          phase === 'training_game' &&
+          trainingGameHasWinRates(run.config, run.currentGame)
+            ? ('structured' as const)
+            : ('none' as const)
+        const latestWinRate =
+          trainingFeedback === 'structured'
+            ? this.latestMoveReview(run.id, run.currentGame)
+            : undefined
         let prepared = this.games.prepareLlmActionTurn({
           gameId: game.id,
           color: llmColor,
@@ -526,18 +535,48 @@ export class BenchmarkService {
             kind: 'benchmark',
             phase: promptPhase,
             notebook,
-            trainingFeedback:
-              phase === 'training_game' &&
-              trainingGameHasWinRates(run.config, run.currentGame)
-                ? 'structured'
-                : 'none',
+            trainingFeedback,
           },
-          latestWinRate:
-            phase === 'training_game' &&
-            trainingGameHasWinRates(run.config, run.currentGame)
-              ? this.latestMoveReview(run.id, run.currentGame)
-              : undefined,
+          latestWinRate,
         })
+        const llmTurnCount = game.moves.filter(
+          (move) => move.color === llmColor,
+        ).length
+        if (
+          llmTurnCount > 0 &&
+          llmTurnCount % 10 === 0 &&
+          prepared.context.lastIntentionTurn !== llmTurnCount
+        ) {
+          let gameIntention: string | undefined
+          try {
+            gameIntention = await this.games.summarizeLlmContext(
+              adapter,
+              prepared,
+              signal,
+            )
+          } catch (summaryError) {
+            if (signal.aborted) throw summaryError
+          }
+          this.games.rebaseLlmContext(
+            game.id,
+            llmColor,
+            gameIntention,
+            llmTurnCount,
+          )
+          prepared = this.games.prepareLlmActionTurn({
+            gameId: game.id,
+            color: llmColor,
+            profile: run.profileSnapshot,
+            connection,
+            mode: {
+              kind: 'benchmark',
+              phase: promptPhase,
+              notebook,
+              trainingFeedback,
+            },
+            latestWinRate,
+          })
+        }
         run.substate = {
           kind: 'provider_request',
           operation: 'move',
@@ -636,17 +675,9 @@ export class BenchmarkService {
                     kind: 'benchmark',
                     phase: promptPhase,
                     notebook,
-                    trainingFeedback:
-                      phase === 'training_game' &&
-                      trainingGameHasWinRates(run.config, run.currentGame)
-                        ? 'structured'
-                        : 'none',
+                    trainingFeedback,
                   },
-                  latestWinRate:
-                    phase === 'training_game' &&
-                    trainingGameHasWinRates(run.config, run.currentGame)
-                      ? this.latestMoveReview(run.id, run.currentGame)
-                      : undefined,
+                  latestWinRate,
                 })
                 continue
               }

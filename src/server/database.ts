@@ -257,6 +257,7 @@ export class Store {
          model_fingerprint, last_observed_move, transcript_json,
          pending_turn_json, provider_continuation_id, managed_continuation,
          game_intention,
+         intention_turn,
          created_at, updated_at
          FROM llm_game_contexts WHERE game_id = ? AND color = ?`,
       )
@@ -300,6 +301,7 @@ export class Store {
         providerContinuationId: row.provider_continuation_id ?? undefined,
         managedContinuation: Boolean(row.managed_continuation),
         gameIntention: row.game_intention ?? undefined,
+        lastIntentionTurn: row.intention_turn ?? undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }
@@ -333,8 +335,8 @@ export class Store {
          (game_id, color, status, profile_id, provider_kind,
           model_fingerprint, last_observed_move, transcript_json,
          pending_turn_json, provider_continuation_id, managed_continuation,
-          game_intention, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          game_intention, intention_turn, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(game_id, color) DO UPDATE SET
          status = excluded.status, profile_id = excluded.profile_id,
          provider_kind = excluded.provider_kind,
@@ -345,6 +347,7 @@ export class Store {
          provider_continuation_id = excluded.provider_continuation_id,
          managed_continuation = excluded.managed_continuation,
          game_intention = excluded.game_intention,
+         intention_turn = excluded.intention_turn,
          updated_at = excluded.updated_at`,
       )
       .run(
@@ -360,6 +363,7 @@ export class Store {
         context.providerContinuationId ?? null,
         context.managedContinuation ? 1 : 0,
         context.gameIntention ?? null,
+        context.lastIntentionTurn ?? null,
         context.createdAt,
         context.updatedAt,
       )
@@ -369,6 +373,7 @@ export class Store {
     gameId: string,
     color?: 'B' | 'W',
     gameIntention?: string,
+    intentionTurn?: number,
   ) {
     const where = color ? 'game_id = ? AND color = ?' : 'game_id = ?'
     this.db
@@ -376,10 +381,12 @@ export class Store {
         `UPDATE llm_game_contexts SET status = 'needs_rebase',
          pending_turn_json = NULL, provider_continuation_id = NULL,
          game_intention = COALESCE(?, game_intention),
+         intention_turn = COALESCE(?, intention_turn),
          updated_at = ? WHERE ${where}`,
       )
       .run(
         gameIntention ?? null,
+        intentionTurn ?? null,
         new Date().toISOString(),
         gameId,
         ...(color ? [color] : []),
@@ -390,16 +397,24 @@ export class Store {
     gameId: string,
     color: 'B' | 'W',
     gameIntention?: string,
+    intentionTurn?: number,
   ) {
     this.db
       .prepare(
         `UPDATE llm_game_contexts SET status = 'needs_rebase',
          pending_turn_json = NULL, provider_continuation_id = NULL,
          managed_continuation = 0,
-         game_intention = COALESCE(?, game_intention), updated_at = ?
+         game_intention = COALESCE(?, game_intention),
+         intention_turn = COALESCE(?, intention_turn), updated_at = ?
          WHERE game_id = ? AND color = ?`,
       )
-      .run(gameIntention ?? null, new Date().toISOString(), gameId, color)
+      .run(
+        gameIntention ?? null,
+        intentionTurn ?? null,
+        new Date().toISOString(),
+        gameId,
+        color,
+      )
   }
 
   completeLlmGameContexts(gameId: string) {

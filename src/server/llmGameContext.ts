@@ -40,6 +40,7 @@ export interface LlmGameContext {
   lastObservedMove: number
   transcript: VisibleLlmMessage[]
   gameIntention?: string
+  lastIntentionTurn?: number
   pendingTurn?: PendingLlmTurn
   providerContinuationId?: string
   managedContinuation: boolean

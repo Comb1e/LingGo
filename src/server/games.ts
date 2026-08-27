@@ -337,6 +337,7 @@ export class GameService {
       lastObservedMove: game.moves.length,
       transcript: rebase ? [] : context!.transcript,
       gameIntention: context?.gameIntention,
+      lastIntentionTurn: context?.lastIntentionTurn,
       pendingTurn: {
         kind: continuationValid ? 'continuation' : 'initial',
         content,
@@ -516,16 +517,32 @@ export class GameService {
     return response.text.trim() || undefined
   }
 
-  rebaseLlmContext(gameId: string, color: Color, gameIntention?: string) {
-    this.store.markLlmGameContextsNeedsRebase(gameId, color, gameIntention)
+  rebaseLlmContext(
+    gameId: string,
+    color: Color,
+    gameIntention?: string,
+    intentionTurn?: number,
+  ) {
+    this.store.markLlmGameContextsNeedsRebase(
+      gameId,
+      color,
+      gameIntention,
+      intentionTurn,
+    )
   }
 
   disableManagedLlmContinuation(
     gameId: string,
     color: Color,
     gameIntention?: string,
+    intentionTurn?: number,
   ) {
-    this.store.disableManagedLlmContinuation(gameId, color, gameIntention)
+    this.store.disableManagedLlmContinuation(
+      gameId,
+      color,
+      gameIntention,
+      intentionTurn,
+    )
   }
 
   finishAutomated(id: string, result: string) {
@@ -884,6 +901,43 @@ export class GameService {
           controller.signal,
         )
         if (controller.signal.aborted) return
+        const llmTurnCount = game.moves.filter(
+          (move) => move.color === game.toMove,
+        ).length
+        if (!prepared && llmTurnCount > 0 && llmTurnCount % 10 === 0) {
+          const currentContext = this.store.getLlmGameContext(
+            game.id,
+            game.toMove,
+          )
+          if (
+            currentContext &&
+            currentContext.lastIntentionTurn !== llmTurnCount
+          ) {
+            const boundaryPrepared = this.prepareLlmActionTurn({
+              gameId: id,
+              color: game.toMove,
+              profile,
+              connection,
+              mode: {
+                kind: 'ordinary',
+                stylePrompt: profile.stylePrompt,
+              },
+              latestWinRate,
+            })
+            let gameIntention: string | undefined
+            try {
+              gameIntention = await this.summarizeLlmContext(
+                adapter,
+                boundaryPrepared,
+                controller.signal,
+              )
+            } catch (summaryError) {
+              if (controller.signal.aborted) throw summaryError
+            }
+            this.rebaseLlmContext(id, game.toMove, gameIntention, llmTurnCount)
+            continue
+          }
+        }
         prepared ??= this.prepareLlmActionTurn({
           gameId: id,
           color: game.toMove,
