@@ -41,7 +41,7 @@ const inGameReflectionSchema = z
 
 const modelMoveSchema = z
   .object({
-    move: z.tuple([z.number().int(), z.number().int()]),
+    move: z.string().trim().min(1),
     reason: z.string().trim().min(1),
     in_game_reflections: z.array(inGameReflectionSchema).optional(),
   })
@@ -647,24 +647,23 @@ export function parseJsonActionResult(
     .replace(/\s*```$/, '')
   try {
     const response = modelMoveSchema.parse(JSON.parse(candidate))
-    const [x, y] = response.move
+    const move = response.move.toUpperCase()
     const inGameReflections = response.in_game_reflections
-    if (x === -1 && y === -1)
+    if (move === 'PASS')
       return {
         action: {action: 'pass', comment: response.reason},
         inGameReflections,
       }
-    if (x === -2 && y === -2)
+    if (move === 'RESIGN')
       return {
         action: {action: 'resign', comment: response.reason},
         inGameReflections,
       }
-    if (x < 0 || y < 0 || x >= size || y >= size)
-      throw new Error(`Move [${x},${y}] is outside the ${size}x${size} board`)
+    const point = coordinateToPoint(move, size)
     return {
       action: {
         action: 'play',
-        coordinate: pointToCoordinate([x, y], size),
+        coordinate: pointToCoordinate(point, size),
         comment: response.reason,
       },
       inGameReflections,
@@ -790,8 +789,7 @@ function formatReflectionGame(game: {
               action: move.coordinate ?? move.action,
               capturedStones: move.captured,
               capturedAt: (move.capturedPoints ?? []).map(
-                (point) =>
-                  `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
+                (point) => pointToCoordinate(point, game.snapshot.size),
               ),
               forced: move.forced ?? false,
             }),

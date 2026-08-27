@@ -24,17 +24,16 @@ describe('provider normalization', () => {
     expect(isOpenAiReasoningModel('ft:gpt-5:custom')).toBe(false)
   })
 
-  it('parses plain JSON array moves and fenced fallback output', () => {
-    expect(parseJsonAction('{"move":[-1,-1],"reason":"done"}', 9)).toEqual({
+  it('parses board coordinates, pass, resign, and fenced fallback output', () => {
+    expect(parseJsonAction('{"move":"pass","reason":"done"}', 9)).toEqual({
       action: 'pass',
       comment: 'done',
     })
-    expect(parseJsonAction('{"move":[-2,-2],"reason":"concede"}', 9)).toEqual({
-      action: 'resign',
-      comment: 'concede',
-    })
     expect(
-      parseJsonAction('```json\n{"move":[3,5],"reason":"shape"}\n```', 9),
+      parseJsonAction('{"move":"RESIGN","reason":"concede"}', 9),
+    ).toEqual({action: 'resign', comment: 'concede'})
+    expect(
+      parseJsonAction('```json\n{"move":"d4","reason":"shape"}\n```', 9),
     ).toMatchObject({
       action: 'play',
       coordinate: 'D4',
@@ -43,16 +42,16 @@ describe('provider normalization', () => {
   })
 
   it('rejects malformed action output', () =>
-    expect(() => parseJsonAction('{"move":[1],"reason":"bad"}', 9)).toThrow(
+    expect(() => parseJsonAction('{"move":1,"reason":"bad"}', 9)).toThrow(
       'Invalid',
     ))
 
-  it('rejects array coordinates outside the board', () =>
+  it('rejects labeled coordinates outside the board', () =>
     expect(() =>
-      parseJsonAction('{"move":[9,0],"reason":"outside"}', 9),
-    ).toThrow('outside the 9x9 board'))
+      parseJsonAction('{"move":"T1","reason":"outside"}', 9),
+    ).toThrow('outside 9x9 board'))
 
-  it.each(['', '{bad', '{"move":[9,0],"reason":"outside"}'])(
+  it.each(['', '{bad', '{"move":"T1","reason":"outside"}'])(
     'retains rejected response content for %j',
     (content) => {
       try {
@@ -71,7 +70,7 @@ describe('provider normalization', () => {
     expect(
       parseJsonActionResult(
         JSON.stringify({
-          move: [3, 5],
+          move: 'D4',
           reason: 'shape',
           in_game_reflections: [
             {
@@ -93,7 +92,7 @@ describe('provider normalization', () => {
     expect(() =>
       parseJsonActionResult(
         JSON.stringify({
-          move: [-1, -1],
+          move: 'pass',
           reason: 'done',
           in_game_reflections: [
             {number: 0, reflection: 'Not positively numbered.'},
@@ -136,8 +135,11 @@ describe('provider normalization', () => {
     expect(prompt).toContain('3. INSTRUCTION')
     expect(prompt).toContain('4. RESPONSE SCHEMA')
     expect(prompt).toContain(
-      '{"move":[column,row],"reason":"brief reason for this move"}',
+      '{"move":"D4","reason":"brief reason for this move"}',
     )
+    expect(prompt).toContain('Columns use letters and skip I')
+    expect(prompt).toContain('{"move":"pass","reason":"..."}')
+    expect(prompt).toContain('{"move":"resign","reason":"..."}')
     expect(prompt).toContain('5. CURRENT POSITION')
     expect(prompt).toContain('A B C D E F G H J')
     expect(prompt).toContain('9 X . . . . . . . .')
@@ -167,7 +169,7 @@ describe('provider normalization', () => {
       },
     ]
 
-    expect(makePrompt(snapshot)).toContain('captured 2 at B8 [1,1], B7 [1,2]')
+    expect(makePrompt(snapshot)).toContain('captured 2 at B8, B7')
   })
 
   it('omits stored comments and reasoning from ordinary move history', () => {
@@ -211,7 +213,7 @@ describe('provider normalization', () => {
     expect(prompt).not.toContain('your reasoning:')
     expect(prompt).not.toContain('Opponent private reasoning')
     expect(prompt).toContain(
-      '{"move":[column,row],"reason":"brief reason for this move"}',
+      '{"move":"D4","reason":"brief reason for this move"}',
     )
   })
 
@@ -323,7 +325,7 @@ describe('provider normalization', () => {
         requestBody = String(init?.body ?? '')
         const events = [
           'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Compare the open corners."},"finish_reason":null}]}\n\n',
-          'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[{"index":0,"delta":{"content":"{\\"move\\":[0,0],\\"reason\\":\\"Take the corner.\\"}"},"finish_reason":null}]}\n\n',
+          'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[{"index":0,"delta":{"content":"{\\"move\\":\\"A9\\",\\"reason\\":\\"Take the corner.\\"}"},"finish_reason":null}]}\n\n',
           'data: {"id":"chatcmpl-test","created":1,"model":"deepseek","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}\n\n',
           'data: [DONE]\n\n',
         ].join('')

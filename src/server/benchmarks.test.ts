@@ -78,8 +78,9 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain('maximize your score')
     expect(prompt).not.toContain('The game result does not matter')
     expect(prompt).toContain('Required fields: move')
-    expect(prompt).toContain('column first, then row')
-    expect(prompt).toContain('Use [-1,-1] to pass and [-2,-2] to resign')
+    expect(prompt).toContain('letter-number coordinate exactly as labeled')
+    expect(prompt).toContain('Columns use letters and skip I')
+    expect(prompt).toContain('Use "pass" to pass and "resign" to resign')
     expect(prompt).toContain(
       'Do not include any other top-level or nested fields',
     )
@@ -240,7 +241,7 @@ describe('benchmark scoring and prompts', () => {
     expect(reflection).not.toContain('PLAYING STYLE')
   })
 
-  it('shows prior moves in the JSON coordinate system', () => {
+  it('shows prior moves and captures only as board coordinates', () => {
     const snapshot = makeSnapshot(19, 7.5, [
       {
         number: 1,
@@ -257,7 +258,7 @@ describe('benchmark scoring and prompts', () => {
     snapshot.moves[0].capturedPoints = [[1, 1]]
     expect(
       makeBenchmarkMovePrompt(snapshot, '', {phase: 'training'}),
-    ).toContain('1. B A19 [0,0]; captured 1 at B18 [1,1]')
+    ).toContain('1. B A19; captured 1 at B18')
   })
 
   it('omits comments and reasoning from training and final move prompts', () => {
@@ -285,8 +286,8 @@ describe('benchmark scoring and prompts', () => {
 
     for (const phase of ['training', 'final'] as const) {
       const prompt = makeBenchmarkMovePrompt(snapshot, '', {phase})
-      expect(prompt).toContain('1. B D4 [3,15]')
-      expect(prompt).toContain('2. W Q16 [15,3]')
+      expect(prompt).toContain('1. B D4')
+      expect(prompt).toContain('2. W Q16')
       expect(prompt).not.toContain('Take the open corner.')
       expect(prompt).not.toContain('KataGo move.')
       expect(prompt).not.toContain('This leaves flexible extensions.')
@@ -351,7 +352,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).not.toContain('No practical winning chances remain.')
     expect(prompt).not.toContain('"thought":')
     expect(prompt).toContain('"capturedStones":0')
-    expect(prompt).toContain('"capturedAt":["E15 [4,4]"]')
+    expect(prompt).toContain('"capturedAt":["E15"]')
     expect(prompt).toContain(
       'Capture totals: LLM captured 1 opponent stones; opponent captured 0 LLM stones.',
     )
@@ -806,7 +807,7 @@ describe('benchmark scoring and prompts', () => {
     expect(correction).toContain(
       'The position is unchanged; choose a different legal move.',
     )
-    expect(correction).toContain('1. B A19 [0,0]')
+    expect(correction).toContain('1. B A19')
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])

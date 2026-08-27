@@ -44,9 +44,9 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
     responseSchema: [
       '4. RESPONSE SCHEMA',
       'Return only plain text containing one valid JSON object. Do not use Markdown or code fences.',
-      '{"move":[column,row],"reason":"brief reason for this move"}',
-      `move must be a two-integer array. column and row are zero-based from the top-left, each from 0 to ${snapshot.size - 1}.`,
-      'Use {"move":[-1,-1],"reason":"..."} to pass or {"move":[-2,-2],"reason":"..."} to resign.',
+      '{"move":"D4","reason":"brief reason for this move"}',
+      'move must be one letter-number coordinate exactly as labeled on the board. Columns use letters and skip I; rows use numbers counted from the bottom.',
+      'Use {"move":"pass","reason":"..."} to pass or {"move":"resign","reason":"..."} to resign.',
     ],
     currentPosition: [
       '5. CURRENT POSITION',
@@ -58,7 +58,7 @@ function makeOrdinarySections(snapshot: GameSnapshot): MovePromptSections {
       asciiBoard(snapshot),
       '',
       'Move list:',
-      formatPromptMoves(snapshot, false),
+      formatPromptMoves(snapshot),
     ],
   }
 }
@@ -84,10 +84,10 @@ function makeBenchmarkSections(
     responseSchema: [
       '4. JSON OUTPUT SCHEMA',
       'Example:',
-      '{"move":[3,4],"reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"general lesson"}]}',
-      'Required fields: move (exactly two integers in [column,row] order) and reason (a non-empty string).',
-      `Coordinates are zero-based from the top-left: column first, then row, each from 0 to ${snapshot.size - 1}.`,
-      'Use [-1,-1] to pass and [-2,-2] to resign.',
+      '{"move":"D4","reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"general lesson"}]}',
+      'Required fields: move (one letter-number coordinate exactly as labeled on the board) and reason (a non-empty string).',
+      'Columns use letters and skip I; rows use numbers counted from the bottom.',
+      'Use "pass" to pass and "resign" to resign.',
       'Optional field: in_game_reflections, an array of objects containing only number (a positive integer) and reflection (a non-empty string). It is a patch: use the next unused positive number for a new lesson, or reuse an existing number only to materially correct or replace that earlier reflection.',
       'Never resubmit an existing reflection unchanged: do not reuse an existing number with the same or substantively equivalent reflection content. If there is no new lesson and no material correction, omit in_game_reflections or use an empty array.',
       'Create and revise reflections carefully: base each one on concrete evidence from the current game, keep it concise and generally reusable, and correct it if later play disproves it.',
@@ -103,7 +103,7 @@ function makeBenchmarkSections(
       `Capture totals: you have captured ${ownCaptures} opponent stones; the opponent has captured ${opponentCaptures} of your stones.`,
       asciiBoard(snapshot),
       'Previous moves:',
-      formatPromptMoves(snapshot, true),
+      formatPromptMoves(snapshot),
     ],
   }
 }
@@ -130,10 +130,10 @@ export function formatInGameReflections(
     : '(none yet)'
 }
 
-function formatPromptMoves(snapshot: GameSnapshot, includePoint: boolean) {
+function formatPromptMoves(snapshot: GameSnapshot) {
   return snapshot.moves.length
     ? snapshot.moves
-        .map((move) => formatPromptMove(move, snapshot, includePoint))
+        .map((move) => formatPromptMove(move, snapshot))
         .join('\n')
     : '(none)'
 }
@@ -141,11 +141,8 @@ function formatPromptMoves(snapshot: GameSnapshot, includePoint: boolean) {
 function formatPromptMove(
   move: GameSnapshot['moves'][number],
   snapshot: GameSnapshot,
-  includePoint: boolean,
 ) {
-  const point =
-    includePoint && move.point ? ` [${move.point[0]},${move.point[1]}]` : ''
-  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${point}${formatCapturedLocations(move, snapshot.size)}`
+  return `${move.number}. ${move.color} ${move.coordinate ?? move.action}${formatCapturedLocations(move, snapshot.size)}`
 }
 
 function formatCapturedLocations(
@@ -154,9 +151,6 @@ function formatCapturedLocations(
 ) {
   if (!move.capturedPoints?.length) return ''
   return `; captured ${move.capturedPoints.length} at ${move.capturedPoints
-    .map(
-      (point) =>
-        `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`,
-    )
+    .map((point) => pointToCoordinate(point, size))
     .join(', ')}`
 }
