@@ -589,7 +589,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('invalidates immediately when a benchmark move targets an occupied intersection', async () => {
+  it('settles immediately when a benchmark move targets an occupied intersection', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
     const games = new GameService(store)
@@ -645,7 +645,7 @@ describe('benchmark scoring and prompts', () => {
     })
 
     expect(
-      await waitFor(() => service.get(run.id)?.status === 'invalid', 2_000),
+      await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
     ).toBe(true)
     expect(
       prompts.some((prompt) => prompt === 'Intersection is occupied'),
@@ -658,8 +658,11 @@ describe('benchmark scoring and prompts', () => {
     expect(rejection?.responseContent).toContain('A19')
     expect(
       games.list().find((game) => game.benchmarkRunId === run.id),
-    ).toMatchObject({status: 'finished', result: 'Invalid'})
-    expect(service.get(run.id)?.error).toContain('occupied intersection')
+    ).toMatchObject({
+      status: 'finished',
+    })
+    expect(service.get(run.id)?.status).toBe('completed')
+    expect(service.get(run.id)?.error).toBeUndefined()
     await service.close()
   })
 

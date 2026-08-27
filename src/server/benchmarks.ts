@@ -23,6 +23,7 @@ import {
   IllegalMoveError,
   makeSnapshot,
   replay,
+  scoreBoard,
 } from './go'
 import {GameService, MAX_MODEL_OUTPUT_ATTEMPTS} from './games'
 import {
@@ -680,16 +681,11 @@ export class BenchmarkService {
               run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
               if (isOccupiedMoveError(error)) {
-                this.games.finishAutomated(game.id, 'Invalid')
-                this.games.completeLlmContexts(game.id)
-                run.status = 'invalid'
-                run.error =
-                  'The model attempted to play on an occupied intersection. The benchmark was invalidated.'
-                run.waitingFor = undefined
-                run.pauseAfterLlmMove = false
+                const score = scoreBoard(game.board as any, game.komi, [])
+                this.games.finishAutomated(game.id, score.result)
                 run.substate = {kind: 'ready'}
                 this.save(run)
-                return false
+                return true
               }
               if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS)
                 throw new Error(
