@@ -2,6 +2,7 @@ import {describe, expect, it} from 'vitest'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import type {BoardSize, Move} from '../shared/types'
 import {
+  asciiBoard,
   boardHash,
   emptyBoard,
   IllegalMoveError,
@@ -21,6 +22,16 @@ describe('coordinates', () => {
   })
   it('skips the letter I', () =>
     expect(coordinateToPoint('J9', 9)).toEqual([8, 0]))
+})
+
+describe('ASCII board', () => {
+  it('labels columns above the board only', () => {
+    const lines = asciiBoard(makeSnapshot(9, 7.5, [])).split('\n')
+
+    expect(lines[0]).toBe('   A B C D E F G H J')
+    expect(lines.at(-1)).toBe(' 1 . . . . . . . . .')
+    expect(lines.filter((line) => line === lines[0])).toHaveLength(1)
+  })
 })
 
 describe('rules', () => {
