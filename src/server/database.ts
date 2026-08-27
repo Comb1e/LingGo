@@ -105,6 +105,12 @@ export class Store {
           profileId: legacy.config.profileId,
           finalColor: legacy.config.finalColor,
           trainingGameCount: legacy.config.trainingGameCount ?? 10,
+          trainingGamesWithWinRates: legacy.config.includeTrainingWinRates
+            ? (legacy.config.trainingGameCount ?? 10)
+            : 0,
+          trainingGamesWithoutWinRates: legacy.config.includeTrainingWinRates
+            ? 0
+            : (legacy.config.trainingGameCount ?? 10),
           notebookSeed: {mode: 'rules_only'},
           trainingFeedback: legacy.config.includeTrainingWinRates
             ? 'structured'

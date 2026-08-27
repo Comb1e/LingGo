@@ -29,12 +29,15 @@ export function BenchmarksPage() {
   )
   const [evaluationVisits, setEvaluationVisits] = useState(10_000)
   const [notebookTokenBudget, setNotebookTokenBudget] = useState(10_000)
-  const [feedback, setFeedback] = useState(true)
-  const [trainingGameCount, setTrainingGameCount] = useState(10)
+  const [trainingGamesWithWinRates, setTrainingGamesWithWinRates] = useState(5)
+  const [trainingGamesWithoutWinRates, setTrainingGamesWithoutWinRates] =
+    useState(5)
   const [notebookId, setNotebookId] = useState('')
   const [seedMode, setSeedMode] = useState<'rules_only' | 'refine_existing'>(
     'rules_only',
   )
+  const trainingGameCount =
+    trainingGamesWithWinRates + trainingGamesWithoutWinRates
   const create = useMutation({
     mutationFn: () =>
       api.createBenchmark({
@@ -45,7 +48,9 @@ export function BenchmarksPage() {
           seedMode === 'rules_only'
             ? {mode: 'rules_only'}
             : {mode: 'refine_existing', notebookId},
-        trainingFeedback: feedback ? 'structured' : 'none',
+        trainingFeedback: 'structured',
+        trainingGamesWithWinRates,
+        trainingGamesWithoutWinRates,
         notebookTokenBudget,
         trainingVisits,
         evaluationVisits,
@@ -186,15 +191,28 @@ export function BenchmarksPage() {
             />
           </label>
           <label className="field">
-            <span>{t('trainingGames')}</span>
+            <span>{t('trainingGamesWithWinRates')}</span>
             <input
               type="number"
-              min="1"
+              min="0"
               max="1000"
               required
-              value={trainingGameCount}
+              value={trainingGamesWithWinRates}
               onChange={(event) =>
-                setTrainingGameCount(Number(event.target.value))
+                setTrainingGamesWithWinRates(Number(event.target.value))
+              }
+            />
+          </label>
+          <label className="field">
+            <span>{t('trainingGamesWithoutWinRates')}</span>
+            <input
+              type="number"
+              min="0"
+              max="1000"
+              required
+              value={trainingGamesWithoutWinRates}
+              onChange={(event) =>
+                setTrainingGamesWithoutWinRates(Number(event.target.value))
               }
             />
           </label>
@@ -236,20 +254,12 @@ export function BenchmarksPage() {
               }
             />
           </label>
-          <label className="switch-field">
-            <input
-              type="checkbox"
-              checked={feedback}
-              onChange={(event) => setFeedback(event.target.checked)}
-            />
-            <span className="switch" />
-            <span>{t('trainingFeedback')}</span>
-          </label>
           <Button
             className="primary"
             disabled={
               create.isPending ||
               profileIsLive ||
+              trainingGameCount < 1 ||
               evaluationVisits < trainingVisits ||
               (seedMode === 'refine_existing' && !notebookId)
             }
@@ -282,7 +292,7 @@ export function BenchmarksPage() {
                 <b>
                   {run.status === 'completed'
                     ? run.metrics?.score.toFixed(1)
-                    : `${Math.min(run.currentGame, run.config.trainingGameCount ?? 10)}/${run.config.trainingGameCount ?? 10}`}
+                    : `${Math.min(run.currentGame, benchmarkTrainingGameCount(run.config))}/${benchmarkTrainingGameCount(run.config)}`}
                 </b>
                 <ArrowRight />
               </Link>
@@ -332,4 +342,15 @@ export function BenchmarksPage() {
       </section>
     </div>
   )
+}
+
+function benchmarkTrainingGameCount(config: BenchmarkRun['config']) {
+  if (
+    config.trainingGamesWithWinRates !== undefined &&
+    config.trainingGamesWithoutWinRates !== undefined
+  )
+    return (
+      config.trainingGamesWithWinRates + config.trainingGamesWithoutWinRates
+    )
+  return config.trainingGameCount ?? 10
 }

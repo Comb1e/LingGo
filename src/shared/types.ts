@@ -343,6 +343,8 @@ export const benchmarkConfigSchema = z
     profileId: z.string().min(1),
     finalColor: z.enum(['B', 'W']),
     trainingGameCount: z.number().int().min(1).max(1000),
+    trainingGamesWithWinRates: z.number().int().min(0).max(1000).optional(),
+    trainingGamesWithoutWinRates: z.number().int().min(0).max(1000).optional(),
     notebookSeed: notebookSeedSchema.default({mode: 'rules_only'}),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
     notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
@@ -350,6 +352,30 @@ export const benchmarkConfigSchema = z
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
   })
   .strict()
+  .superRefine((value, context) => {
+    const withWinRates = value.trainingGamesWithWinRates
+    const withoutWinRates = value.trainingGamesWithoutWinRates
+    if ((withWinRates === undefined) !== (withoutWinRates === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['trainingGamesWithWinRates'],
+        message: 'Both training game feedback counts must be provided together',
+      })
+      return
+    }
+    if (
+      withWinRates !== undefined &&
+      withoutWinRates !== undefined &&
+      withWinRates + withoutWinRates !== value.trainingGameCount
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['trainingGameCount'],
+        message:
+          'Training game count must equal the with-win-rates and without-win-rates counts combined',
+      })
+    }
+  })
   .refine((value) => value.evaluationVisits >= value.trainingVisits, {
     message: 'Evaluation visits must be at least training visits',
     path: ['evaluationVisits'],

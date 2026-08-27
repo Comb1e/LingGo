@@ -84,7 +84,7 @@ export function BenchmarkPage() {
       </div>
     )
   const run = query.data
-  const trainingGameCount = run.config.trainingGameCount ?? 10
+  const trainingGameCount = benchmarkTrainingGameCount(run.config)
   const trainingProgress = Math.min(run.currentGame, trainingGameCount)
   return (
     <div className="page benchmark-detail">
@@ -149,6 +149,37 @@ export function BenchmarkPage() {
             {trainingProgress} / {trainingGameCount}
           </strong>
         </div>
+        {run.config.trainingGamesWithWinRates !== undefined &&
+          run.config.trainingGamesWithoutWinRates !== undefined && (
+            <>
+              <div>
+                <span>{t('trainingGamesWithWinRates')}</span>
+                <strong>{run.config.trainingGamesWithWinRates}</strong>
+              </div>
+              <div>
+                <span>{t('trainingGamesWithoutWinRates')}</span>
+                <strong>{run.config.trainingGamesWithoutWinRates}</strong>
+              </div>
+            </>
+          )}
+        {run.config.trainingGamesWithWinRates === undefined &&
+          run.config.trainingGamesWithoutWinRates === undefined && (
+            <div>
+              <span>{t('trainingFeedbackMode')}</span>
+              <strong>
+                {t(
+                  run.config.trainingFeedback ??
+                    ((
+                      run.config as unknown as {
+                        includeTrainingWinRates?: boolean
+                      }
+                    ).includeTrainingWinRates
+                      ? 'structured'
+                      : 'none'),
+                )}
+              </strong>
+            </div>
+          )}
         <progress max={trainingGameCount} value={trainingProgress} />
         <div>
           <span>{t('phase')}</span>
@@ -177,18 +208,6 @@ export function BenchmarkPage() {
           <strong>
             {(run.notebookEstimatedTokens ?? 0).toLocaleString()} /{' '}
             {(run.config.notebookTokenBudget ?? 0).toLocaleString()}
-          </strong>
-        </div>
-        <div>
-          <span>{t('trainingFeedbackMode')}</span>
-          <strong>
-            {t(
-              run.config.trainingFeedback ??
-                ((run.config as unknown as {includeTrainingWinRates?: boolean})
-                  .includeTrainingWinRates
-                  ? 'structured'
-                  : 'none'),
-            )}
           </strong>
         </div>
         {(run.sourceRunId || run.successorRunId) && (
@@ -337,6 +356,17 @@ export function BenchmarkPage() {
       </div>
     </div>
   )
+}
+
+function benchmarkTrainingGameCount(config: BenchmarkRun['config']) {
+  if (
+    config.trainingGamesWithWinRates !== undefined &&
+    config.trainingGamesWithoutWinRates !== undefined
+  )
+    return (
+      config.trainingGamesWithWinRates + config.trainingGamesWithoutWinRates
+    )
+  return config.trainingGameCount ?? 10
 }
 
 function Metric({label, value}: {label: string; value: string}) {

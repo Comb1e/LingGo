@@ -67,4 +67,31 @@ describe('benchmark configuration', () => {
       benchmarkConfigSchema.parse({...base, visits: 100_000}),
     ).toThrow()
   })
+
+  it('accepts an explicit ordered split of training feedback games', () => {
+    expect(
+      benchmarkConfigSchema.parse({
+        ...base,
+        trainingGameCount: 7,
+        trainingGamesWithWinRates: 3,
+        trainingGamesWithoutWinRates: 4,
+      }),
+    ).toMatchObject({
+      trainingGamesWithWinRates: 3,
+      trainingGamesWithoutWinRates: 4,
+    })
+    expect(() =>
+      benchmarkConfigSchema.parse({
+        ...base,
+        trainingGamesWithWinRates: 3,
+        trainingGamesWithoutWinRates: 4,
+      }),
+    ).toThrow('combined')
+    expect(() =>
+      benchmarkConfigSchema.parse({
+        ...base,
+        trainingGamesWithWinRates: 3,
+      }),
+    ).toThrow('provided together')
+  })
 })

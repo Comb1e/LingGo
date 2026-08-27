@@ -211,7 +211,8 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(page.getByLabel('Technique notebook')).toContainText(
     'E2E renamed',
   )
-  await page.getByLabel('Training games').fill('1')
+  await page.getByLabel('Training games with win rates').fill('1')
+  await page.getByLabel('Training games without win rates').fill('0')
   await page.getByRole('button', {name: 'Start benchmark'}).click()
   await expect(page).toHaveURL(/\/benchmarks\//)
   const benchmarkUrl = page.url()

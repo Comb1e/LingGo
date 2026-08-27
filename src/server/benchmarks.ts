@@ -269,7 +269,7 @@ export class BenchmarkService {
     if (!game) throw new Error('Benchmark game not found')
     if (game.error) this.games.clearAutomatedError(game.id)
     this.games.acceptAutomated(game.id, action, undefined, true)
-    if (run.currentGame === run.config.trainingGameCount) {
+    if (run.currentGame === configuredTrainingGameCount(run.config)) {
       run.status = 'invalid'
       run.error = 'A forced final-game move invalidated this benchmark.'
       run.metrics = undefined
@@ -346,7 +346,7 @@ export class BenchmarkService {
           return
         }
       }
-      const trainingGameCount = run.config.trainingGameCount
+      const trainingGameCount = configuredTrainingGameCount(run.config)
       while (run.currentGame <= trainingGameCount && run.status === 'running') {
         run.phase =
           run.currentGame < trainingGameCount ? 'training_game' : 'final_game'
@@ -476,7 +476,7 @@ export class BenchmarkService {
       let llmMoved = false
       signal.throwIfAborted()
       const phase =
-        run.currentGame < run.config.trainingGameCount
+        run.currentGame < configuredTrainingGameCount(run.config)
           ? 'training_game'
           : 'final_game'
       const visits =
@@ -509,7 +509,7 @@ export class BenchmarkService {
           mode: {kind: 'benchmark', phase: promptPhase, notebook},
           latestWinRate:
             phase === 'training_game' &&
-            run.config.trainingFeedback === 'structured'
+            trainingGameHasWinRates(run.config, run.currentGame)
               ? this.latestMoveReview(run.id, run.currentGame)
               : undefined,
         })
@@ -595,7 +595,7 @@ export class BenchmarkService {
                   mode: {kind: 'benchmark', phase: promptPhase, notebook},
                   latestWinRate:
                     phase === 'training_game' &&
-                    run.config.trainingFeedback === 'structured'
+                    trainingGameHasWinRates(run.config, run.currentGame)
                       ? this.latestMoveReview(run.id, run.currentGame)
                       : undefined,
                 })
@@ -684,7 +684,7 @@ export class BenchmarkService {
         }
         if (
           phase === 'final_game' ||
-          run.config.trainingFeedback === 'structured'
+          trainingGameHasWinRates(run.config, run.currentGame)
         )
           this.store.saveBenchmarkMoveReview({
             runId: run.id,
@@ -813,27 +813,26 @@ export class BenchmarkService {
         (move) =>
           `${move.number}. ${move.coordinate ?? move.action}: ${move.comment!.trim()}`,
       )
-    const reviewLines =
-      run.config.trainingFeedback === 'structured'
-        ? this.store
-            .listBenchmarkMoveReviews(run.id, run.currentGame)
-            .sort(compareMoveReviews)
-            .slice(0, 12)
-            .map((review, index) =>
-              [
-                `${index + 1}. Turn ${review.turn}: chose ${review.chosenMove}; KataGo ${review.topCandidate ?? 'unavailable'}; point loss ${review.pointLoss.toFixed(2)}; win-rate loss ${(review.winRateLoss * 100).toFixed(2)}%.`,
-                asciiBoard({
-                  size: review.position.size,
-                  komi: review.position.komi,
-                  board: review.position.board,
-                  toMove: review.position.toMove,
-                  moves: [],
-                  captures: review.position.captures,
-                  rules: 'Chinese area',
-                }),
-              ].join('\n'),
-            )
-        : []
+    const reviewLines = trainingGameHasWinRates(run.config, run.currentGame)
+      ? this.store
+          .listBenchmarkMoveReviews(run.id, run.currentGame)
+          .sort(compareMoveReviews)
+          .slice(0, 12)
+          .map((review, index) =>
+            [
+              `${index + 1}. Turn ${review.turn}: chose ${review.chosenMove}; KataGo ${review.topCandidate ?? 'unavailable'}; point loss ${review.pointLoss.toFixed(2)}; win-rate loss ${(review.winRateLoss * 100).toFixed(2)}%.`,
+              asciiBoard({
+                size: review.position.size,
+                komi: review.position.komi,
+                board: review.position.board,
+                toMove: review.position.toMove,
+                moves: [],
+                captures: review.position.captures,
+                rules: 'Chinese area',
+              }),
+            ].join('\n'),
+          )
+      : []
     const prompt = [
       'Update the technique notebook using only the explicit prior notebook and game review below.',
       'Generalize actionable lessons. Do not rely on conversation continuity.',
@@ -845,7 +844,7 @@ export class BenchmarkService {
       `Outcome: ${perspectiveOutcome(game.result, color)}`,
       'Visible move reasons:',
       ...(reasons.length ? reasons : ['(none)']),
-      ...(run.config.trainingFeedback === 'structured'
+      ...(trainingGameHasWinRates(run.config, run.currentGame)
         ? [
             '',
             'Largest mistakes (stable by point loss, then turn):',
@@ -869,7 +868,7 @@ export class BenchmarkService {
     run.currentGame += 1
     run.currentTurn = 0
     run.phase =
-      run.currentGame < run.config.trainingGameCount
+      run.currentGame < configuredTrainingGameCount(run.config)
         ? 'training_game'
         : 'final_game'
     run.substate = {kind: 'ready'}
@@ -1229,10 +1228,33 @@ function normalizeConfig(
     trainingGameCount: input.trainingGameCount,
     notebookSeed: {mode: 'refine_existing', notebookId: input.notebookId},
     trainingFeedback: input.includeTrainingWinRates ? 'structured' : 'none',
+    trainingGamesWithWinRates: input.includeTrainingWinRates
+      ? input.trainingGameCount
+      : 0,
+    trainingGamesWithoutWinRates: input.includeTrainingWinRates
+      ? 0
+      : input.trainingGameCount,
     notebookTokenBudget: 8000,
     trainingVisits: input.visits,
     evaluationVisits: input.visits,
   }
+}
+
+function configuredTrainingGameCount(config: BenchmarkConfig) {
+  if (
+    config.trainingGamesWithWinRates !== undefined &&
+    config.trainingGamesWithoutWinRates !== undefined
+  )
+    return (
+      config.trainingGamesWithWinRates + config.trainingGamesWithoutWinRates
+    )
+  return config.trainingGameCount
+}
+
+function trainingGameHasWinRates(config: BenchmarkConfig, gameIndex: number) {
+  if (config.trainingGamesWithWinRates !== undefined)
+    return gameIndex < config.trainingGamesWithWinRates
+  return config.trainingFeedback === 'structured'
 }
 
 function notebookVersion(

@@ -317,6 +317,73 @@ describe('benchmark scoring and prompts', () => {
     },
   )
 
+  it('runs with-win-rate training games before games without them', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(
+      join(tmpdir(), 'linggo-benchmark-feedback-split-'),
+    )
+    const games = new GameService(store)
+    const reviewPrompts: string[] = []
+    const adapter = {
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'Pass.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(prompt: string) {
+        reviewPrompts.push(prompt)
+        return {
+          text: '# Lessons',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      trainingGameCount: 5,
+      trainingGamesWithWinRates: 2,
+      trainingGamesWithoutWinRates: 3,
+    })
+
+    expect(
+      await waitFor(
+        () => service.get(created.id)?.status === 'completed',
+        5_000,
+      ),
+    ).toBe(true)
+    const run = service.get(created.id)!
+    expect(run.config).toMatchObject({
+      trainingGameCount: 5,
+      trainingGamesWithWinRates: 2,
+      trainingGamesWithoutWinRates: 3,
+    })
+    expect(
+      store.listBenchmarkMoveReviews(run.id).map(({gameIndex}) => gameIndex),
+    ).toEqual([0, 1, 5])
+    expect(reviewPrompts).toHaveLength(6)
+    expect(reviewPrompts[1]).toContain('Largest mistakes')
+    expect(reviewPrompts[2]).toContain('Largest mistakes')
+    expect(reviewPrompts[3]).not.toContain('Largest mistakes')
+    expect(reviewPrompts[4]).not.toContain('Largest mistakes')
+    expect(reviewPrompts[5]).not.toContain('Largest mistakes')
+    await service.close()
+  })
+
   it('pauses after the next LLM move without aborting an in-flight request', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-step-'))
