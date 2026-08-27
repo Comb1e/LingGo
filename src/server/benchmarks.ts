@@ -765,19 +765,12 @@ export class BenchmarkService {
         ]
       : []
     const prompt = [
-      'Create an actionable Go technique notebook from the authoritative rules below.',
+      'Write a complete Markdown Go technique notebook from the authoritative rules below.',
+      'Choose the organization, headings, level of detail, and writing style yourself.',
       'Do not invent lessons from games, positions, or analysis that were not supplied.',
       '',
       'AUTHORITATIVE GO RULES',
       ...formatCanonicalGoRules({size: 19, komi: 7.5}),
-      '',
-      'Use exactly this Markdown structure:',
-      '# Technique Notebook',
-      '## Opening',
-      '## Fighting',
-      '## Shape and Life',
-      '## Endgame',
-      '## Move Checklist',
       ...seed,
       '',
       'Return only the complete Markdown notebook.',
@@ -963,7 +956,7 @@ export class BenchmarkService {
       prompt = content
         ? [
             `Compress the notebook below to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
-            'Preserve the Markdown structure and the most actionable knowledge. Do not truncate it.',
+            'Preserve the most useful knowledge while writing a complete Markdown notebook in your own organization and style. Do not truncate it.',
             '',
             content,
             '',

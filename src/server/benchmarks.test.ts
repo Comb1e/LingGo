@@ -840,6 +840,12 @@ describe('benchmark scoring and prompts', () => {
       expect(moveRules).toContain(rule)
     }
     expect(prompts[0]).toContain('# Original source')
+    expect(prompts[0]).not.toContain('Use exactly this Markdown structure')
+    expect(prompts[0]).not.toContain('## Opening')
+    expect(prompts[0]).not.toContain('## Fighting')
+    expect(prompts[0]).not.toContain('## Shape and Life')
+    expect(prompts[0]).not.toContain('## Endgame')
+    expect(prompts[0]).not.toContain('## Move Checklist')
     initializationGate.resolve()
     expect(
       await waitFor(
@@ -922,6 +928,7 @@ describe('benchmark scoring and prompts', () => {
       ),
     ).toBe(true)
     expect(prompts[1]).toContain('Compress the notebook')
+    expect(prompts[1]).not.toContain('Preserve the Markdown structure')
     expect(
       service.get(compressed.id)?.notebookEstimatedTokens,
     ).toBeLessThanOrEqual(8)
