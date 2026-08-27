@@ -3,6 +3,7 @@ import type {GameSnapshot, ProviderKind} from '../shared/types'
 import {emptyBoard} from './go'
 import {
   LlmPlayerAdapter,
+  MalformedModelOutputError,
   isOpenAiReasoningModel,
   makePrompt,
   parseJsonAction,
@@ -51,26 +52,56 @@ describe('provider normalization', () => {
       parseJsonAction('{"move":[9,0],"reason":"outside"}', 9),
     ).toThrow('outside the 9x9 board'))
 
+  it.each(['', '{bad', '{"move":[9,0],"reason":"outside"}'])(
+    'retains rejected response content for %j',
+    (content) => {
+      try {
+        parseJsonAction(content, 9)
+        throw new Error('Expected parsing to fail')
+      } catch (error) {
+        expect(error).toBeInstanceOf(MalformedModelOutputError)
+        expect((error as MalformedModelOutputError).responseContent).toBe(
+          content,
+        )
+      }
+    },
+  )
+
   it('parses optional numbered in-game reflection updates', () => {
-    expect(parseJsonActionResult(JSON.stringify({
-      move: [3, 5],
-      reason: 'shape',
-      in_game_reflections: [
-        {number: 1, reflection: 'Check whether the outside stones can escape.'},
-        {number: 3, reflection: 'Keep forcing moves in reserve.'},
-      ],
-    }), 9)).toEqual({
+    expect(
+      parseJsonActionResult(
+        JSON.stringify({
+          move: [3, 5],
+          reason: 'shape',
+          in_game_reflections: [
+            {
+              number: 1,
+              reflection: 'Check whether the outside stones can escape.',
+            },
+            {number: 3, reflection: 'Keep forcing moves in reserve.'},
+          ],
+        }),
+        9,
+      ),
+    ).toEqual({
       action: {action: 'play', coordinate: 'D4', comment: 'shape'},
       inGameReflections: [
         {number: 1, reflection: 'Check whether the outside stones can escape.'},
         {number: 3, reflection: 'Keep forcing moves in reserve.'},
       ],
     })
-    expect(() => parseJsonActionResult(JSON.stringify({
-      move: [-1, -1],
-      reason: 'done',
-      in_game_reflections: [{number: 0, reflection: 'Not positively numbered.'}],
-    }), 9)).toThrow('Invalid')
+    expect(() =>
+      parseJsonActionResult(
+        JSON.stringify({
+          move: [-1, -1],
+          reason: 'done',
+          in_game_reflections: [
+            {number: 0, reflection: 'Not positively numbered.'},
+          ],
+        }),
+        9,
+      ),
+    ).toThrow('Invalid')
   })
 
   it('does not expose stored secrets', () => {
@@ -110,25 +141,30 @@ describe('provider normalization', () => {
     expect(prompt).toContain('8 . O . . . . . . .')
     expect(prompt).toContain('To move: Black')
     expect(prompt).toContain('Black has captured 3 White stones')
-    expect(prompt).toContain('you have captured 3 opponent stones; the opponent has captured 2 of your stones')
+    expect(prompt).toContain(
+      'you have captured 3 opponent stones; the opponent has captured 2 of your stones',
+    )
   })
 
   it('includes the intersections where stones were captured', () => {
     const snapshot = emptySnapshot()
-    snapshot.moves = [{
-      number: 1,
-      color: 'B',
-      action: 'play',
-      point: [2, 2],
-      coordinate: 'C7',
-      comment: '',
-      captured: 2,
-      capturedPoints: [[1, 1], [1, 2]],
-    }]
+    snapshot.moves = [
+      {
+        number: 1,
+        color: 'B',
+        action: 'play',
+        point: [2, 2],
+        coordinate: 'C7',
+        comment: '',
+        captured: 2,
+        capturedPoints: [
+          [1, 1],
+          [1, 2],
+        ],
+      },
+    ]
 
-    expect(makePrompt(snapshot)).toContain(
-      'captured 2 at B8 [1,1], B7 [1,2]',
-    )
+    expect(makePrompt(snapshot)).toContain('captured 2 at B8 [1,1], B7 [1,2]')
   })
 
   it('omits stored comments and reasoning from ordinary move history', () => {
@@ -183,13 +219,14 @@ describe('provider normalization', () => {
   it('includes KataGo win rates in ordinary prompts only when provided', () => {
     const snapshot = emptySnapshot()
     expect(makePrompt(snapshot)).not.toContain('KATAGO WIN-RATE HISTORY')
-    snapshot.kataGoAnalysis =
-      'Turn 0: your win rate 50.00%; opponent 50.00%'
+    snapshot.kataGoAnalysis = 'Turn 0: your win rate 50.00%; opponent 50.00%'
     const prompt = makePrompt(snapshot)
     expect(prompt).toContain(
       '6. KATAGO WIN-RATE HISTORY\nTurn 0: your win rate 50.00%; opponent 50.00%',
     )
-    expect(prompt).toContain('You may use the supplied KataGo win-rate history.')
+    expect(prompt).toContain(
+      'You may use the supplied KataGo win-rate history.',
+    )
     expect(prompt).not.toContain('Do not use external analysis.')
   })
 
@@ -296,7 +333,9 @@ describe('provider normalization', () => {
             controller.close()
           },
         })
-        return new Response(body, {headers: {'content-type': 'text/event-stream'}})
+        return new Response(body, {
+          headers: {'content-type': 'text/event-stream'},
+        })
       }),
     )
     const adapter = new LlmPlayerAdapter(
@@ -419,13 +458,15 @@ describe('provider normalization', () => {
   it('aborts a DeepSeek request that does not produce a first token', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal
-          const rejectWithAbort = () => reject(signal?.reason)
-          if (signal?.aborted) rejectWithAbort()
-          else signal?.addEventListener('abort', rejectWithAbort, {once: true})
-        }),
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal
+            const rejectWithAbort = () => reject(signal?.reason)
+            if (signal?.aborted) rejectWithAbort()
+            else
+              signal?.addEventListener('abort', rejectWithAbort, {once: true})
+          }),
       ),
     )
     const adapter = new LlmPlayerAdapter(
@@ -455,13 +496,15 @@ describe('provider normalization', () => {
   it('aborts a provider request that does not produce a first token', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal
-          const rejectWithAbort = () => reject(signal?.reason)
-          if (signal?.aborted) rejectWithAbort()
-          else signal?.addEventListener('abort', rejectWithAbort, {once: true})
-        }),
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal
+            const rejectWithAbort = () => reject(signal?.reason)
+            if (signal?.aborted) rejectWithAbort()
+            else
+              signal?.addEventListener('abort', rejectWithAbort, {once: true})
+          }),
       ),
     )
     const adapter = new LlmPlayerAdapter(

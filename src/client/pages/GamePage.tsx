@@ -510,7 +510,9 @@ export function GamePage() {
             </span>
           )}
           <ErrorBanner
-            error={reviewState.status === 'error' ? reviewState.error : undefined}
+            error={
+              reviewState.status === 'error' ? reviewState.error : undefined
+            }
           />
           <div className="player-strip black-player">
             <i className="stone black-stone" />
@@ -705,6 +707,9 @@ export function GamePage() {
             {game.providerErrors?.length && (
               <ProviderErrorHistory errors={game.providerErrors} />
             )}
+            {game.rejectedModelActions?.length && (
+              <RejectedModelActionHistory actions={game.rejectedModelActions} />
+            )}
             <div className="move-list">
               {game.moves.length ? (
                 [...game.moves].reverse().map((move) => (
@@ -750,6 +755,39 @@ function ProviderErrorHistory({errors}: {errors: string[]}) {
       <ol>
         {errors.map((error, index) => (
           <li key={`${index}-${error}`}>{error}</li>
+        ))}
+      </ol>
+    </details>
+  )
+}
+
+function RejectedModelActionHistory({
+  actions,
+}: {
+  actions: NonNullable<Game['rejectedModelActions']>
+}) {
+  const {t} = useTranslation()
+  const ordered = [...actions].sort(
+    (left, right) => left.turn - right.turn || left.attempt - right.attempt,
+  )
+  return (
+    <details className="rejected-action-history">
+      <summary>{t('illegalActionHistory', {count: actions.length})}</summary>
+      <ol>
+        {ordered.map((action, index) => (
+          <li key={`${action.turn}-${action.attempt}-${index}`}>
+            <strong>
+              {t('rejectedTurnAttempt', {
+                turn: action.turn,
+                attempt: action.attempt,
+              })}
+            </strong>
+            <span>{t('rejectionReason')}</span>
+            <p>{action.reason}</p>
+            <span>{t('rejectedResponse')}</span>
+            <pre>{action.responseContent || t('emptyRejectedResponse')}</pre>
+            {action.truncated && <small>{t('truncatedResponse')}</small>}
+          </li>
         ))}
       </ol>
     </details>

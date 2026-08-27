@@ -10,7 +10,11 @@ export class AnalysisService {
   private jobs = new Map<string, AbortController>()
   private queued = new Set<string>()
 
-  constructor(private store: Store, private games: GameService, readonly engine: KataGoAnalyzer) {
+  constructor(
+    private store: Store,
+    private games: GameService,
+    readonly engine: KataGoAnalyzer,
+  ) {
     games.events.on('changed', (id: string) => this.onGameChanged(id))
     for (const game of games.list()) {
       if (!game.benchmarkRunId)
@@ -34,9 +38,9 @@ export class AnalysisService {
       enabled: true,
       shareWithLlm: Boolean(
         run?.config.includeTrainingWinRates &&
-          gameIndex !== undefined &&
-          gameIndex >= 0 &&
-          gameIndex < 10,
+        gameIndex !== undefined &&
+        gameIndex >= 0 &&
+        gameIndex < (run?.config.trainingGameCount ?? 10),
       ),
       managedByBenchmark: true,
     }
@@ -55,14 +59,13 @@ export class AnalysisService {
     return this.get(gameId)
   }
 
-  update(
-    gameId: string,
-    values: {enabled?: boolean; shareWithLlm?: boolean},
-  ) {
+  update(gameId: string, values: {enabled?: boolean; shareWithLlm?: boolean}) {
     const game = this.games.get(gameId)
     if (!game) throw new Error('Game not found')
     if (game.benchmarkRunId)
-      throw new Error('Benchmark analysis settings are controlled by the benchmark run')
+      throw new Error(
+        'Benchmark analysis settings are controlled by the benchmark run',
+      )
     const current = this.get(gameId)
     const shareWithLlm =
       values.enabled === false
@@ -91,7 +94,8 @@ export class AnalysisService {
       const latest = this.get(game.id)
       const current = latest.positions.find(
         (value) =>
-          value.turn === game.moves.length && value.positionHash === expectedHash,
+          value.turn === game.moves.length &&
+          value.positionHash === expectedHash,
       )
       if (current) return formatLlmHistory(latest, game.toMove)
       if (latest.status === 'error') return undefined
@@ -102,7 +106,11 @@ export class AnalysisService {
   backfill(gameId: string) {
     const game = this.games.get(gameId)
     if (!game) throw new Error('Game not found')
-    this.store.setGameAnalysisState(gameId, {enabled: true, status: 'running', error: null})
+    this.store.setGameAnalysisState(gameId, {
+      enabled: true,
+      status: 'running',
+      error: null,
+    })
     this.run(game, [...Array(game.moves.length + 1).keys()])
     return this.get(gameId)
   }
@@ -138,7 +146,9 @@ export class AnalysisService {
     }
     const game = this.games.get(gameId)
     if (!game) return
-    const existing = this.get(gameId).positions.find((value) => value.turn === game.moves.length)
+    const existing = this.get(gameId).positions.find(
+      (value) => value.turn === game.moves.length,
+    )
     const expectedHash = positionHash(game, game.moves.length)
     if (existing?.positionHash === expectedHash) return
     this.run(game, [game.moves.length])
@@ -157,7 +167,10 @@ export class AnalysisService {
           if (controller.signal.aborted) return
           const latest = this.games.get(game.id)
           if (!latest || turn > latest.moves.length) continue
-          const result = await this.engine.analyze({...gamePosition(latest, turn), visits}, controller.signal)
+          const result = await this.engine.analyze(
+            {...gamePosition(latest, turn), visits},
+            controller.signal,
+          )
           this.store.savePositionAnalysis({
             gameId: game.id,
             turn,
@@ -167,10 +180,16 @@ export class AnalysisService {
           })
           this.emit(game.id)
         }
-        this.store.setGameAnalysisState(game.id, {status: 'complete', error: null})
+        this.store.setGameAnalysisState(game.id, {
+          status: 'complete',
+          error: null,
+        })
       } catch (error) {
         if (!controller.signal.aborted)
-          this.store.setGameAnalysisState(game.id, {status: 'error', error: error instanceof Error ? error.message : 'Analysis failed'})
+          this.store.setGameAnalysisState(game.id, {
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Analysis failed',
+          })
       } finally {
         this.jobs.delete(game.id)
         this.emit(game.id)

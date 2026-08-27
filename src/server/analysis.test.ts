@@ -10,7 +10,10 @@ afterEach(() => store?.close())
 
 const engine: KataGoAnalyzer = {
   async analyze(input) {
-    return {id: 'a', rootInfo: {winrate: 0.6, scoreLead: 1.5, visits: input.visits}}
+    return {
+      id: 'a',
+      rootInfo: {winrate: 0.6, scoreLead: 1.5, visits: input.visits},
+    }
   },
   async close() {},
 }
@@ -28,14 +31,25 @@ describe('game analysis', () => {
       commentsVisible: true,
       analysisEnabled: false,
     })
-    game = await games.command(game.id, {expectedVersion: game.version, type: 'play', coordinate: 'D4'})
+    game = await games.command(game.id, {
+      expectedVersion: game.version,
+      type: 'play',
+      coordinate: 'D4',
+    })
     const version = game.version
     analysis.backfill(game.id)
     await waitFor(() => analysis.get(game.id).status === 'complete')
     expect(games.get(game.id)!.version).toBe(version)
-    expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([0, 1])
-    game = await games.command(game.id, {expectedVersion: version, type: 'undo'})
-    expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([0])
+    expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([
+      0, 1,
+    ])
+    game = await games.command(game.id, {
+      expectedVersion: version,
+      type: 'undo',
+    })
+    expect(analysis.get(game.id).positions.map((value) => value.turn)).toEqual([
+      0,
+    ])
     await analysis.close()
   })
 
@@ -59,13 +73,11 @@ describe('game analysis', () => {
       game,
       new AbortController().signal,
     )
-    expect(history).toBe(
-      'Turn 0: your win rate 60.00%; opponent 40.00%',
-    )
+    expect(history).toBe('Turn 0: your win rate 60.00%; opponent 40.00%')
     expect(games.get(game.id)!.version).toBe(version)
-    expect(
-      formatLlmHistory(analysis.get(game.id), 'W'),
-    ).toContain('your win rate 40.00%')
+    expect(formatLlmHistory(analysis.get(game.id), 'W')).toContain(
+      'your win rate 40.00%',
+    )
     expect(analysis.update(game.id, {enabled: false})).toMatchObject({
       enabled: false,
       shareWithLlm: false,
@@ -88,7 +100,8 @@ describe('game analysis', () => {
         finalColor: 'B',
         visits: 25,
         includeTrainingWinRates: true,
-        notebookMode: 'reset',
+        trainingGameCount: 10,
+        notebookId: 'default',
       },
       profileSnapshot: profile,
       modelFingerprint: 'fingerprint',

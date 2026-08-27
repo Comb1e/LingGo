@@ -514,6 +514,71 @@ describe('game API', () => {
     ).toBe(400)
   })
 
+  it('manages named notebooks and protects one selected by a live benchmark', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/profiles/builtin-fake-profile/notebooks',
+      payload: {name: '  Fuseki  '},
+    })
+    expect(created.statusCode).toBe(201)
+    const notebook = created.json()
+    expect(notebook.name).toBe('Fuseki')
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/profiles/builtin-fake-profile/notebooks',
+      payload: {name: 'fUsEkI'},
+    })
+    expect(duplicate.statusCode).toBe(400)
+    expect(duplicate.json().error).toContain('already exists')
+
+    const renamed = await app.inject({
+      method: 'PATCH',
+      url: `/api/profiles/builtin-fake-profile/notebooks/${notebook.id}`,
+      payload: {name: 'Opening'},
+    })
+    expect(renamed.json().name).toBe('Opening')
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/profiles/builtin-fake-profile/notebooks/${notebook.id}.md`,
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    const now = new Date().toISOString()
+    const profile = store.getProfile('builtin-fake-profile')!
+    store.saveBenchmark({
+      id: 'notebook-user',
+      status: 'paused',
+      phase: 'training',
+      config: {
+        profileId: profile.id,
+        finalColor: 'B',
+        visits: 25,
+        includeTrainingWinRates: false,
+        trainingGameCount: 1,
+        notebookId: notebook.id,
+      },
+      profileSnapshot: profile,
+      modelFingerprint: 'test',
+      currentGame: 0,
+      currentTurn: 0,
+      gameIds: [],
+      usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+      notebook: {profileId: profile.id, notebookId: notebook.id},
+      createdAt: now,
+      updatedAt: now,
+    })
+    const conflict = await app.inject({
+      method: 'DELETE',
+      url: `/api/profiles/builtin-fake-profile/notebooks/${notebook.id}`,
+    })
+    expect(conflict.statusCode).toBe(409)
+    expect(conflict.json().error).toContain('active benchmark')
+  })
+
   it('returns conflict for another live benchmark on the same profile', async () => {
     const now = new Date().toISOString()
     const profile = store.getProfile('builtin-fake-profile')!
@@ -526,7 +591,8 @@ describe('game API', () => {
         finalColor: 'B',
         visits: 25,
         includeTrainingWinRates: false,
-        notebookMode: 'continue',
+        trainingGameCount: 10,
+        notebookId: 'default',
       },
       profileSnapshot: profile,
       modelFingerprint: 'test',

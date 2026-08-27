@@ -124,22 +124,38 @@ test('retains the displayed board while another historical turn loads', async ({
 
   await previous.click()
   await expect(page.getByText('Move 2 / 3')).toBeVisible()
-  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
-  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_-1/)
-  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(/shudan-sign_0/)
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(
+    /shudan-sign_1/,
+  )
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(
+    /shudan-sign_-1/,
+  )
+  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(
+    /shudan-sign_0/,
+  )
 
   await previous.click()
   await expect.poll(() => positionRequestStarted).toBe(true)
   await expect(previous).toBeDisabled()
   await expect(page.getByText('Move 2 / 3')).toBeVisible()
-  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
-  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_-1/)
-  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(/shudan-sign_0/)
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(
+    /shudan-sign_1/,
+  )
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(
+    /shudan-sign_-1/,
+  )
+  await expect(board.locator('.shudan-vertex').nth(2)).toHaveClass(
+    /shudan-sign_0/,
+  )
 
   releasePosition?.()
   await expect(page.getByText('Move 1 / 3')).toBeVisible()
-  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(/shudan-sign_1/)
-  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(/shudan-sign_0/)
+  await expect(board.locator('.shudan-vertex').nth(0)).toHaveClass(
+    /shudan-sign_1/,
+  )
+  await expect(board.locator('.shudan-vertex').nth(1)).toHaveClass(
+    /shudan-sign_0/,
+  )
   await request.delete(`/api/games/${game.id}`)
 })
 
@@ -156,11 +172,21 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
     page.getByRole('heading', {name: 'Benchmark', exact: true}),
   ).toBeVisible()
   await expect(page.getByLabel('KataGo visits')).toHaveValue('2000')
+  page.once('dialog', (dialog) => dialog.accept('E2E notebook'))
+  await page.getByRole('button', {name: 'Create notebook'}).click()
+  await expect(page.getByLabel('Technique notebook')).toHaveValue(/.+/)
+  page.once('dialog', (dialog) => dialog.accept('E2E renamed'))
+  await page.getByRole('button', {name: 'Rename notebook'}).click()
+  await expect(page.getByLabel('Technique notebook')).toContainText(
+    'E2E renamed',
+  )
+  await page.getByLabel('Training games').fill('1')
   await page.getByRole('button', {name: 'Start benchmark'}).click()
   await expect(page).toHaveURL(/\/benchmarks\//)
+  const benchmarkUrl = page.url()
   await expect(page.getByText('Completed')).toBeVisible()
   await expect(page.getByText('LingGo score')).toBeVisible()
-  await expect(page.locator('.benchmark-games a')).toHaveCount(11)
+  await expect(page.locator('.benchmark-games a')).toHaveCount(2)
   await expect(
     page.getByText('Check liberties before every move.'),
   ).toBeVisible()
@@ -191,15 +217,41 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   if (!chartPanel || !reflectionPanel)
     throw new Error('Benchmark analysis panels are not visible')
   if (testInfo.project.name === 'desktop')
-    expect(reflectionPanel.x).toBeGreaterThan(chartPanel.x + chartPanel.width - 2)
+    expect(reflectionPanel.x).toBeGreaterThan(
+      chartPanel.x + chartPanel.width - 2,
+    )
   else
-    expect(reflectionPanel.y).toBeGreaterThan(chartPanel.y + chartPanel.height - 2)
+    expect(reflectionPanel.y).toBeGreaterThan(
+      chartPanel.y + chartPanel.height - 2,
+    )
   await page.screenshot({
     path: testInfo.outputPath('benchmark-game-reflections.png'),
     fullPage: true,
   })
   await page.goBack()
   await expect(page.getByText('Completed')).toBeVisible()
+
+  await page.goto('/settings')
+  await page
+    .getByRole('button', {name: 'Technique notebook Local learner'})
+    .click()
+  const notebookManager = page.locator(
+    '.profile-notebook-panel .notebook-manager',
+  )
+  const notebookSelect = notebookManager.getByRole('combobox')
+  await notebookSelect.selectOption({label: 'E2E renamed'})
+  await notebookManager.getByRole('button', {name: 'Preview notebook'}).click()
+  await expect(
+    page.getByText('Check liberties before every move.'),
+  ).toBeVisible()
+  page.once('dialog', (dialog) => dialog.accept())
+  await notebookManager.getByRole('button', {name: 'Delete notebook'}).click()
+  await expect(notebookSelect).not.toContainText('E2E renamed')
+
+  await page.goto(benchmarkUrl)
+  await expect(
+    page.getByText('Check liberties before every move.'),
+  ).toBeVisible()
 
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByTitle('Delete').click()
@@ -286,7 +338,9 @@ test('adds, tests, and saves custom profile request options', async ({
   await page.getByLabel('Content').fill('{"effort":"high"}')
 
   await page.getByRole('button', {name: 'Test profile'}).click()
-  await expect(page.getByText(/deterministic-v1 replied in \d+ ms/)).toBeVisible()
+  await expect(
+    page.getByText(/deterministic-v1 replied in \d+ ms/),
+  ).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('request-options.png'),
     fullPage: true,
@@ -346,7 +400,9 @@ test('saves disabled reasoning for a DeepSeek profile', async ({
   })
   await page.getByRole('button', {name: 'Save profile'}).click()
 
-  const profileRow = page.locator('.existing-row').filter({hasText: profileName})
+  const profileRow = page
+    .locator('.existing-row')
+    .filter({hasText: profileName})
   await profileRow.getByRole('button', {name: `Edit ${profileName}`}).click()
   await expect(reasoning).not.toBeChecked()
 
@@ -436,7 +492,9 @@ test('keeps DeepSeek reasoning together under its move-history control', async (
   )
 
   await page.goto(`/games/${game.id}`)
-  await expect(page.locator('.move-row').getByText('Take the open corner.')).toBeVisible()
+  await expect(
+    page.locator('.move-row').getByText('Take the open corner.'),
+  ).toBeVisible()
   const toggle = page.getByRole('button', {name: 'Model reasoning'})
   await expect(toggle).toBeVisible()
   await toggle.click()

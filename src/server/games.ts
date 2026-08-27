@@ -241,6 +241,18 @@ export class GameService {
     this.emit(id)
   }
 
+  recordRejectedModelAction(
+    id: string,
+    value: Omit<NonNullable<Game['rejectedModelActions']>[number], 'timestamp'>,
+  ) {
+    const game = this.requireGame(id)
+    ;(game.rejectedModelActions ??= []).push({
+      ...value,
+      timestamp: new Date().toISOString(),
+    })
+    return this.commit(game)
+  }
+
   reportAutomatedError(id: string, error: string) {
     const game = this.requireGame(id)
     this.modelTurns.delete(id)

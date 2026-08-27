@@ -7,6 +7,7 @@ import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
 import type {BenchmarkRun, Color} from '../../shared/types'
 import {api} from '../api'
 import {hasLiveBenchmarkForProfile} from '../benchmarkAvailability'
+import {NotebookManager} from '../NotebookManager'
 import {
   Button,
   ErrorBanner,
@@ -25,9 +26,8 @@ export function BenchmarksPage() {
   const [finalColor, setFinalColor] = useState<Color>('B')
   const [visits, setVisits] = useState(DEFAULT_KATAGO_VISITS)
   const [feedback, setFeedback] = useState(true)
-  const [notebookMode, setNotebookMode] = useState<'reset' | 'continue'>(
-    'reset',
-  )
+  const [trainingGameCount, setTrainingGameCount] = useState(10)
+  const [notebookId, setNotebookId] = useState('')
   const create = useMutation({
     mutationFn: () =>
       api.createBenchmark({
@@ -35,7 +35,8 @@ export function BenchmarksPage() {
         finalColor,
         visits,
         includeTrainingWinRates: feedback,
-        notebookMode,
+        trainingGameCount,
+        notebookId,
       }),
     onSuccess: (run) => {
       void queryClient.invalidateQueries({queryKey: ['benchmarks']})
@@ -118,7 +119,10 @@ export function BenchmarksPage() {
             <span>{t('profile')}</span>
             <select
               value={profileId}
-              onChange={(event) => setProfileId(event.target.value)}
+              onChange={(event) => {
+                setProfileId(event.target.value)
+                setNotebookId('')
+              }}
             >
               {profiles.data?.map((profile) => (
                 <option key={profile.id} value={profile.id}>
@@ -155,21 +159,24 @@ export function BenchmarksPage() {
               onChange={(event) => setVisits(Number(event.target.value))}
             />
           </label>
-          <div className="field-group">
-            <label>{t('notebookStart')}</label>
-            <div className="segmented">
-              {(['reset', 'continue'] as const).map((mode) => (
-                <button
-                  type="button"
-                  className={notebookMode === mode ? 'selected' : ''}
-                  key={mode}
-                  onClick={() => setNotebookMode(mode)}
-                >
-                  {t(mode)}
-                </button>
-              ))}
-            </div>
-          </div>
+          <label className="field">
+            <span>{t('trainingGames')}</span>
+            <input
+              type="number"
+              min="1"
+              max="1000"
+              required
+              value={trainingGameCount}
+              onChange={(event) =>
+                setTrainingGameCount(Number(event.target.value))
+              }
+            />
+          </label>
+          <NotebookManager
+            profileId={profileId}
+            selectedId={notebookId}
+            onSelect={setNotebookId}
+          />
           <label className="switch-field">
             <input
               type="checkbox"
@@ -181,7 +188,7 @@ export function BenchmarksPage() {
           </label>
           <Button
             className="primary"
-            disabled={create.isPending || profileIsLive}
+            disabled={create.isPending || profileIsLive || !notebookId}
           >
             <Play />
             {t('startBenchmark')}
@@ -207,7 +214,7 @@ export function BenchmarksPage() {
                 <b>
                   {run.status === 'completed'
                     ? run.metrics?.score.toFixed(1)
-                    : `${Math.min(run.currentGame, 10)}/10`}
+                    : `${Math.min(run.currentGame, run.config.trainingGameCount)}/${run.config.trainingGameCount}`}
                 </b>
                 <ArrowRight />
               </Link>

@@ -123,8 +123,18 @@ export interface Game {
   benchmarkRunId?: string
   benchmarkGameIndex?: number
   inGameReflections?: InGameReflection[]
+  rejectedModelActions?: RejectedModelAction[]
   createdAt: string
   updatedAt: string
+}
+
+export interface RejectedModelAction {
+  turn: number
+  attempt: number
+  responseContent: string
+  reason: string
+  timestamp: string
+  truncated: boolean
 }
 
 export const seatSchema = z.discriminatedUnion('type', [
@@ -209,6 +219,7 @@ export interface InGameReflection {
 
 export interface LlmActionResult {
   action: PlayerAction
+  responseContent?: string
   reasoning?: string
   inGameReflections?: InGameReflection[]
   latencyMs: number
@@ -257,21 +268,18 @@ export interface GameAnalysis {
 }
 
 export type BenchmarkStatus =
-  | 'queued'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'cancelled'
-  | 'invalid'
+  'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'invalid'
 export type BenchmarkPhase = 'training' | 'reflection' | 'final' | 'complete'
 
-export interface BenchmarkConfig {
-  profileId: string
-  finalColor: Color
-  visits: number
-  includeTrainingWinRates: boolean
-  notebookMode: 'reset' | 'continue'
-}
+export const benchmarkConfigSchema = z.object({
+  profileId: z.string().min(1),
+  finalColor: z.enum(['B', 'W']),
+  visits: z.number().int().min(25).max(10_000),
+  includeTrainingWinRates: z.boolean(),
+  trainingGameCount: z.number().int().min(1).max(1000),
+  notebookId: z.string().min(1),
+})
+export type BenchmarkConfig = z.infer<typeof benchmarkConfigSchema>
 
 export interface BenchmarkUsage {
   calls: number
@@ -292,9 +300,23 @@ export interface BenchmarkMetrics {
 
 export interface NotebookMetadata {
   profileId: string
+  notebookId?: string
+  name?: string
   currentUrl?: string
   snapshotUrl?: string
   updatedAt?: string
+}
+
+export interface TechniqueNotebookSummary {
+  id: string
+  profileId: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TechniqueNotebook extends TechniqueNotebookSummary {
+  content: string
 }
 
 export interface BenchmarkRun {

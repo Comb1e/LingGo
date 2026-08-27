@@ -43,7 +43,9 @@ const modelMoveSchema = z
   })
   .strict()
 
-const deepSeekErrorSchema = z.object({message: z.string().optional()}).passthrough()
+const deepSeekErrorSchema = z
+  .object({message: z.string().optional()})
+  .passthrough()
 const deepSeekStreamEventSchema = z
   .object({
     choices: z
@@ -80,7 +82,10 @@ export interface PlayerAdapter {
     signal: AbortSignal,
     promptOverride?: string,
   ): Promise<LlmActionResult>
-  requestText?(prompt: string, signal: AbortSignal): Promise<{
+  requestText?(
+    prompt: string,
+    signal: AbortSignal,
+  ): Promise<{
     text: string
     latencyMs: number
     inputTokens: number
@@ -90,7 +95,10 @@ export interface PlayerAdapter {
 }
 
 export class MalformedModelOutputError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly responseContent = '',
+  ) {
     super(message)
     this.name = 'MalformedModelOutputError'
   }
@@ -140,7 +148,8 @@ export class FakePlayerAdapter implements PlayerAdapter {
         inGameReflections: [
           {
             number: 1,
-            reflection: 'Check liberties and forcing moves before choosing a passive continuation.',
+            reflection:
+              'Check liberties and forcing moves before choosing a passive continuation.',
           },
         ],
         latencyMs: Date.now() - started,
@@ -217,7 +226,8 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     promptOverride?: string,
   ): Promise<LlmActionResult> {
     const started = Date.now()
-    const prompt = promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
+    const prompt =
+      promptOverride ?? makePrompt(snapshot, this.profile.stylePrompt)
     const result =
       this.connection.kind === 'deepseek'
         ? await this.requestDeepSeek(prompt, signal)
@@ -225,6 +235,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
       ...parsed,
+      responseContent: result.text,
       reasoning: result.reasoningText
         ? normalizeReasoning(result.reasoningText) || undefined
         : undefined,
@@ -268,9 +279,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       prompt,
       temperature: this.temperature(),
       reasoning:
-        this.connection.kind !== 'compatible'
-          ? ('medium' as const)
-          : undefined,
+        this.connection.kind !== 'compatible' ? ('medium' as const) : undefined,
       providerOptions:
         this.connection.kind === 'google'
           ? {google: {thinkingConfig: {includeThoughts: true}}}
@@ -359,7 +368,11 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       if (typeof init?.body !== 'string')
         throw new Error('Provider request body is not JSON text')
       const providerBody = JSON.parse(init.body)
-      if (!providerBody || Array.isArray(providerBody) || typeof providerBody !== 'object')
+      if (
+        !providerBody ||
+        Array.isArray(providerBody) ||
+        typeof providerBody !== 'object'
+      )
         throw new Error('Provider request body is not a JSON object')
       return globalThis.fetch(input, {
         ...init,
@@ -391,7 +404,10 @@ async function deepSeekStreamedTextResult(options: {
   const firstTokenController = new AbortController()
   const totalController = new AbortController()
   const firstTokenTimer = setTimeout(
-    () => firstTokenController.abort(timeoutError('First token', options.firstTokenTimeoutMs)),
+    () =>
+      firstTokenController.abort(
+        timeoutError('First token', options.firstTokenTimeoutMs),
+      ),
     options.firstTokenTimeoutMs,
   )
   const totalTimer = setTimeout(
@@ -419,15 +435,18 @@ async function deepSeekStreamedTextResult(options: {
   }
 
   try {
-    const response = await globalThis.fetch(deepSeekChatCompletionsUrl(options.baseUrl), {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${options.apiKey}`,
-        'content-type': 'application/json',
+    const response = await globalThis.fetch(
+      deepSeekChatCompletionsUrl(options.baseUrl),
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${options.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
       },
-      body: JSON.stringify(body),
-      signal,
-    })
+    )
     if (!response.ok) throw await deepSeekApiError(response)
     if (!response.body) throw new Error('DeepSeek response body is empty')
 
@@ -445,7 +464,7 @@ async function deepSeekStreamedTextResult(options: {
       const {done, value} = await reader.read()
       pending += decoder.decode(value, {stream: !done})
       const lines = pending.split('\n')
-      pending = done ? '' : lines.pop() ?? ''
+      pending = done ? '' : (lines.pop() ?? '')
       for (const line of lines) {
         updateDeepSeekStream(state, line, () => clearTimeout(firstTokenTimer))
       }
@@ -512,7 +531,9 @@ function deepSeekChatCompletionsUrl(baseUrl?: string) {
 async function deepSeekApiError(response: Response) {
   let message = `DeepSeek API request failed with status ${response.status}`
   try {
-    const body = z.object({error: deepSeekErrorSchema}).parse(await response.json())
+    const body = z
+      .object({error: deepSeekErrorSchema})
+      .parse(await response.json())
     if (body.error.message) message = body.error.message
   } catch {
     // Keep the HTTP status fallback.
@@ -525,7 +546,10 @@ async function deepSeekApiError(response: Response) {
 }
 
 function timeoutError(label: string, timeoutMs: number) {
-  return new DOMException(`${label} timeout of ${timeoutMs}ms exceeded`, 'TimeoutError')
+  return new DOMException(
+    `${label} timeout of ${timeoutMs}ms exceeded`,
+    'TimeoutError',
+  )
 }
 
 async function streamedTextResult(
@@ -646,6 +670,7 @@ export function parseJsonActionResult(
       `Invalid model move JSON: ${
         error instanceof Error ? error.message : 'unknown validation error'
       }`,
+      text,
     )
   }
 }
@@ -655,7 +680,8 @@ export function makePrompt(
   stylePrompt?: string,
 ): string {
   const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
+  const opponentCaptures =
+    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
     ? snapshot.moves
         .map((move) => formatPromptMove(move, snapshot, false))
@@ -692,11 +718,7 @@ export function makePrompt(
     'Move list:',
     moves,
     ...(snapshot.kataGoAnalysis
-      ? [
-          '',
-          '6. KATAGO WIN-RATE HISTORY',
-          snapshot.kataGoAnalysis,
-        ]
+      ? ['', '6. KATAGO WIN-RATE HISTORY', snapshot.kataGoAnalysis]
       : []),
   ].join('\n')
 }
@@ -711,13 +733,19 @@ export function makeBenchmarkMovePrompt(
   },
 ): string {
   const ownCaptures = snapshot.captures[snapshot.toMove]
-  const opponentCaptures = snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
+  const opponentCaptures =
+    snapshot.captures[snapshot.toMove === 'B' ? 'W' : 'B']
   const moves = snapshot.moves.length
     ? snapshot.moves
         .map((move) => formatPromptMove(move, snapshot, true))
         .join('\n')
     : '(none)'
   const sections = [
+    'BACKGROUND',
+    options.phase === 'training'
+      ? "You are playing against the world's best Go player in order to learn. Study the opponent's decisions as well as your own, develop general skills that transfer to future positions, and work toward eventually surpassing the opponent."
+      : 'This is the scored final game. Play to the best of your ability and maximize your score.',
+    '',
     ...formatGoRules(snapshot),
     '',
     '2. SELF-WRITTEN SKILLS',
@@ -725,16 +753,21 @@ export function makeBenchmarkMovePrompt(
     '',
     '3. INSTRUCTION TO PLACE ONE STONE',
     `You are ${snapshot.toMove === 'B' ? 'Black' : 'White'}. Place exactly one legal stone on an intersection shown as ".".`,
-    options.phase === 'training'
-      ? "This is a training game. The game result does not matter; use it to learn from both your play and your opponent's play."
-      : 'This is the final game. Your performance will be scored.',
     ...(snapshot.previousError
-      ? [`Your previous response was rejected: ${snapshot.previousError}. The position is unchanged; choose a different legal move.`]
+      ? [
+          `Your previous response was rejected: ${snapshot.previousError}. The position is unchanged; choose a different legal move.`,
+        ]
       : []),
     '',
     '4. JSON OUTPUT SCHEMA',
-    'Return only {"move":[column,row],"reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"lesson from this game"}]}. Coordinates are zero-based from the top-left. Use [-1,-1] to pass or [-2,-2] to resign.',
-    'in_game_reflections is optional. Omit it or return an empty array when no new lesson is warranted. It is a patch: use the next unused positive number for a new lesson, or reuse a number to replace an incorrect earlier entry.',
+    'Example:',
+    '{"move":[3,4],"reason":"brief reason","in_game_reflections":[{"number":1,"reflection":"general lesson"}]}',
+    'Required fields: move (exactly two integers in [column,row] order) and reason (a non-empty string).',
+    `Coordinates are zero-based from the top-left: column first, then row, each from 0 to ${snapshot.size - 1}.`,
+    'Use [-1,-1] to pass and [-2,-2] to resign.',
+    'Optional field: in_game_reflections, an array of objects containing only number (a positive integer) and reflection (a non-empty string). Omit it or use an empty array when no new lesson is warranted. It is a patch: use the next unused positive number for a new lesson, or reuse a number to replace an incorrect earlier entry.',
+    'Do not include any other top-level or nested fields.',
+    'Return JSON only, without Markdown fences.',
     '',
     '5. CURRENT BOARD AND PREVIOUS MOVES',
     'Current in-game reflections (this game only):',
@@ -746,7 +779,11 @@ export function makeBenchmarkMovePrompt(
     moves,
   ]
   if (options.phase === 'training' && options.winRateHistory !== undefined)
-    sections.push('', '6. TRAINING WIN-RATE HISTORY', options.winRateHistory || '(none)')
+    sections.push(
+      '',
+      '6. TRAINING WIN-RATE HISTORY',
+      options.winRateHistory || '(none)',
+    )
   return sections.join('\n')
 }
 
@@ -776,8 +813,9 @@ export function makeReflectionPrompt(input: {
 }) {
   return [
     'Rewrite one consolidated Markdown Go technique notebook.',
-    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add concrete lessons from all games below.',
-    'Review the games in their marked sequence.',
+    'Return only the complete replacement Markdown. Preserve useful prior lessons, remove duplication, and add only general, reusable Go skills learned from the newly completed game below.',
+    "Study both the LLM's decisions and the opponent's decisions, including how each side created or answered threats.",
+    'Do not include game numbers, coordinates, results, move-by-move narratives, or any other game-specific notes.',
     'You must incorporate the supplied in-game reflections into the broader, generalized body of experience in the notebook. Do not leave them as isolated game-specific notes.',
     'Do not mention these instructions.',
     '',
@@ -800,20 +838,26 @@ function formatReflectionGame(game: {
   inGameReflections?: InGameReflection[]
 }) {
   const ownCaptures = game.snapshot.captures[game.llmColor]
-  const opponentCaptures = game.snapshot.captures[game.llmColor === 'B' ? 'W' : 'B']
+  const opponentCaptures =
+    game.snapshot.captures[game.llmColor === 'B' ? 'W' : 'B']
   const moves = game.snapshot.moves.length
-    ? game.snapshot.moves.map((move, index) => [
-        `--- MOVE ${index + 1}/${game.snapshot.moves.length} ---`,
-        JSON.stringify({
-          color: move.color,
-          action: move.coordinate ?? move.action,
-          capturedStones: move.captured,
-          capturedAt: (move.capturedPoints ?? []).map(
-            (point) => `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
-          ),
-          forced: move.forced ?? false,
-        }),
-      ].join('\n')).join('\n')
+    ? game.snapshot.moves
+        .map((move, index) =>
+          [
+            `--- MOVE ${index + 1}/${game.snapshot.moves.length} ---`,
+            JSON.stringify({
+              color: move.color,
+              action: move.coordinate ?? move.action,
+              capturedStones: move.captured,
+              capturedAt: (move.capturedPoints ?? []).map(
+                (point) =>
+                  `${pointToCoordinate(point, game.snapshot.size)} [${point[0]},${point[1]}]`,
+              ),
+              forced: move.forced ?? false,
+            }),
+          ].join('\n'),
+        )
+        .join('\n')
     : '(none)'
   return [
     `=== GAME ${game.sequence} ===`,
@@ -831,7 +875,11 @@ function formatReflectionGame(game: {
         ]),
     ...(game.winRateHistory === undefined
       ? []
-      : ['', `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`, game.winRateHistory || '(none)']),
+      : [
+          '',
+          `TURN-ALIGNED WIN-RATE HISTORY - GAME ${game.sequence}`,
+          game.winRateHistory || '(none)',
+        ]),
     `=== END GAME ${game.sequence} ===`,
   ].join('\n')
 }
@@ -842,10 +890,15 @@ function formatInGameReflections(reflections: InGameReflection[] | undefined) {
     : '(none yet)'
 }
 
-function formatCapturedLocations(move: GameSnapshot['moves'][number], size: BoardSize) {
+function formatCapturedLocations(
+  move: GameSnapshot['moves'][number],
+  size: BoardSize,
+) {
   if (!move.capturedPoints?.length) return ''
   return `; captured ${move.capturedPoints.length} at ${move.capturedPoints
-    .map((point) => `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`)
+    .map(
+      (point) => `${pointToCoordinate(point, size)} [${point[0]},${point[1]}]`,
+    )
     .join(', ')}`
 }
 

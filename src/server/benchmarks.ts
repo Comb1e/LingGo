@@ -9,12 +9,18 @@ import type {
   Game,
   PlayerAction,
   PositionAnalysis,
+  TechniqueNotebook,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
 import {boardHash, IllegalMoveError, makeSnapshot, replay} from './go'
 import {GameService} from './games'
-import {gamePosition, rootFromBlack, selectedMove, type KataGoAnalyzer} from './katago'
+import {
+  gamePosition,
+  rootFromBlack,
+  selectedMove,
+  type KataGoAnalyzer,
+} from './katago'
 import {NotebookStore} from './notebooks'
 import {
   MAX_PROVIDER_API_ATTEMPTS,
@@ -40,7 +46,9 @@ class KataGoUnavailableError extends Error {}
 
 export class BenchmarkConflictError extends Error {
   constructor() {
-    super('This player profile already has a queued, running, or paused benchmark')
+    super(
+      'This player profile already has a queued, running, or paused benchmark',
+    )
     this.name = 'BenchmarkConflictError'
   }
 }
@@ -57,12 +65,13 @@ export class BenchmarkService {
     readonly store: Store,
     readonly games: GameService,
     readonly engine: KataGoAnalyzer,
-    readonly notebooks = new NotebookStore(),
+    readonly notebooks = new NotebookStore(store),
     private readonly adapterFactory: typeof createPlayerAdapter = createPlayerAdapter,
     private readonly retryWait: ProviderRetryWait = waitForProviderRetry,
   ) {
     for (const run of this.store.listBenchmarks())
-      if (run.status === 'queued' || run.status === 'running') this.schedule(run.id)
+      if (run.status === 'queued' || run.status === 'running')
+        this.schedule(run.id)
   }
 
   list() {
@@ -76,42 +85,59 @@ export class BenchmarkService {
   async create(config: BenchmarkConfig) {
     if (
       this.reservedProfiles.has(config.profileId) ||
-      this.list().some((run) =>
-        run.config.profileId === config.profileId &&
-        ['queued', 'running', 'paused'].includes(run.status))
-    ) throw new BenchmarkConflictError()
+      this.list().some(
+        (run) =>
+          run.config.profileId === config.profileId &&
+          ['queued', 'running', 'paused'].includes(run.status),
+      )
+    )
+      throw new BenchmarkConflictError()
     this.reservedProfiles.add(config.profileId)
     try {
       const profile = this.store.getProfile(config.profileId)
       if (!profile) throw new Error('Player profile not found')
       const connection = this.store.getConnection(profile.connectionId)
       if (!connection) throw new Error('Provider connection not found')
+      const notebook = await this.selectedNotebook(config)
       const health = this.engine.healthCheck
         ? await this.engine.healthCheck()
         : await healthFromAnalysis(this.engine)
-      if (!health.ok) throw new Error(`KataGo is unavailable: ${health.message}`)
+      if (!health.ok)
+        throw new Error(`KataGo is unavailable: ${health.message}`)
       const now = new Date().toISOString()
       const id = randomUUID()
-      if (config.notebookMode === 'reset') await this.notebooks.deleteCurrent(profile.id)
       const run: InternalRun = {
         id,
         status: 'queued',
         phase: 'training',
         config,
         profileSnapshot: {...profile},
-        modelFingerprint: createHash('sha256').update(JSON.stringify({profile, connection})).digest('hex'),
+        modelFingerprint: createHash('sha256')
+          .update(JSON.stringify({profile, connection}))
+          .digest('hex'),
         currentGame: 0,
         currentTurn: 0,
         gameIds: [],
         usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
-        notebook: {profileId: profile.id, currentUrl: `/api/profiles/${profile.id}/notebook.md`, snapshotUrl: `/api/benchmarks/${id}/notebook.md`},
+        notebook: {
+          profileId: profile.id,
+          notebookId: notebook.id,
+          name: notebook.name,
+          currentUrl: `/api/profiles/${profile.id}/notebooks/${notebook.id}.md`,
+          snapshotUrl: `/api/benchmarks/${id}/notebook.md`,
+        },
         pointLosses: [],
         winRateLosses: [],
         createdAt: now,
         updatedAt: now,
       }
       try {
-        this.save(run)
+        if (this.notebooks.store) {
+          run.updatedAt = new Date().toISOString()
+          this.store.saveBenchmarkWithSnapshot(run, notebook)
+          this.events.emit(run.id, run)
+          this.events.emit('changed', run.id)
+        } else this.save(run)
       } catch (error) {
         if (isUniqueConstraintError(error)) throw new BenchmarkConflictError()
         throw error
@@ -125,7 +151,8 @@ export class BenchmarkService {
 
   pause(id: string) {
     const run = this.require(id)
-    if (!['queued', 'running'].includes(run.status)) throw new Error('Benchmark is not running')
+    if (!['queued', 'running'].includes(run.status))
+      throw new Error('Benchmark is not running')
     this.controllers.get(id)?.abort()
     run.status = 'paused'
     run.waitingFor = undefined
@@ -136,7 +163,8 @@ export class BenchmarkService {
 
   resume(id: string) {
     const run = this.require(id)
-    if (run.status !== 'paused' && run.status !== 'running') throw new Error('Benchmark cannot be resumed')
+    if (run.status !== 'paused' && run.status !== 'running')
+      throw new Error('Benchmark cannot be resumed')
     run.status = 'running'
     run.error = undefined
     run.waitingFor = undefined
@@ -151,16 +179,16 @@ export class BenchmarkService {
   }
 
   resumeWaiting() {
-    for (const run of this.list()) if (run.status === 'running' && run.waitingFor) this.schedule(run.id)
+    for (const run of this.list())
+      if (run.status === 'running' && run.waitingFor) this.schedule(run.id)
   }
 
   nextMoveAndPause(id: string) {
     const saved = this.require(id)
     if (!['queued', 'running', 'paused'].includes(saved.status))
       throw new Error('Benchmark cannot play another move')
-    const run = saved.status === 'running'
-      ? (this.activeRuns.get(id) ?? saved)
-      : saved
+    const run =
+      saved.status === 'running' ? (this.activeRuns.get(id) ?? saved) : saved
     run.status = 'running'
     run.error = undefined
     run.waitingFor = undefined
@@ -176,7 +204,8 @@ export class BenchmarkService {
 
   cancel(id: string) {
     const run = this.require(id)
-    if (!['queued', 'running', 'paused'].includes(run.status)) throw new Error('Benchmark has already ended')
+    if (!['queued', 'running', 'paused'].includes(run.status))
+      throw new Error('Benchmark has already ended')
     this.controllers.get(id)?.abort()
     run.status = 'cancelled'
     run.waitingFor = undefined
@@ -187,12 +216,13 @@ export class BenchmarkService {
 
   async force(id: string, action: PlayerAction) {
     const run = this.require(id)
-    if (run.status !== 'paused') throw new Error('Pause the benchmark before forcing a move')
+    if (run.status !== 'paused')
+      throw new Error('Pause the benchmark before forcing a move')
     const game = this.currentGame(run)
     if (!game) throw new Error('Benchmark game not found')
     if (game.error) this.games.clearAutomatedError(game.id)
     this.games.acceptAutomated(game.id, action, undefined, true)
-    if (run.currentGame === 10) {
+    if (run.currentGame === run.config.trainingGameCount) {
       run.status = 'invalid'
       run.error = 'A forced final-game move invalidated this benchmark.'
       run.metrics = undefined
@@ -209,7 +239,8 @@ export class BenchmarkService {
 
   async delete(id: string) {
     const run = this.require(id)
-    if (['queued', 'running'].includes(run.status)) this.controllers.get(id)?.abort()
+    if (['queued', 'running'].includes(run.status))
+      this.controllers.get(id)?.abort()
     const deleted = this.store.deleteBenchmark(id)
     await this.notebooks.deleteSnapshot(id)
     this.events.emit(id, null)
@@ -245,18 +276,27 @@ export class BenchmarkService {
       run.waitingFor = undefined
       run.error = undefined
       this.save(run)
-      while (run.currentGame < 11 && run.status === 'running') {
-        run.phase = run.currentGame < 10 ? 'training' : 'final'
-        const llmColor = run.currentGame < 10
-          ? (run.currentGame % 2 === 0 ? 'B' : 'W')
-          : run.config.finalColor
+      const trainingGameCount = run.config.trainingGameCount
+      while (run.currentGame <= trainingGameCount && run.status === 'running') {
+        run.phase = run.currentGame < trainingGameCount ? 'training' : 'final'
+        const llmColor =
+          run.currentGame < trainingGameCount
+            ? run.currentGame % 2 === 0
+              ? 'B'
+              : 'W'
+            : run.config.finalColor
         const game = this.ensureGame(run, llmColor)
-        const completed = await this.playGame(run, game, llmColor, controller.signal)
+        const completed = await this.playGame(
+          run,
+          game,
+          llmColor,
+          controller.signal,
+        )
         if (!completed) {
           retry = Boolean(run.waitingFor)
           return
         }
-        if (run.currentGame < 10) {
+        if (run.currentGame < trainingGameCount) {
           run.phase = 'reflection'
           this.save(run)
           const reflected = await this.reflect(run, controller.signal)
@@ -264,16 +304,17 @@ export class BenchmarkService {
             retry = Boolean(run.waitingFor)
             return
           }
+        } else {
+          run.currentGame += 1
+          run.currentTurn = 0
+          this.save(run)
         }
-        run.currentGame += 1
-        run.currentTurn = 0
-        this.save(run)
       }
       if (run.status === 'running') {
         run.phase = 'complete'
         run.status = 'completed'
         run.metrics = calculateMetrics(
-          this.games.get(run.gameIds[10])?.result ?? 'Void',
+          this.games.get(run.gameIds[trainingGameCount])?.result ?? 'Void',
           run.config.finalColor,
           run.pointLosses ?? [],
           run.winRateLosses ?? [],
@@ -348,7 +389,7 @@ export class BenchmarkService {
           this.save(run)
           return false
         }
-        const notebook = await this.notebooks.readCurrent(run.config.profileId)
+        const notebook = (await this.selectedNotebook(run.config)).content
         let feedback = ''
         let outputFailures = 0
         let apiFailures = 0
@@ -363,19 +404,26 @@ export class BenchmarkService {
             const snapshot = makeSnapshot(game.size, game.komi, game.moves)
             if (feedback) snapshot.previousError = feedback
             const prompt = makeBenchmarkMovePrompt(snapshot, notebook, {
-              phase: run.currentGame < 10 ? 'training' : 'final',
+              phase:
+                run.currentGame < run.config.trainingGameCount
+                  ? 'training'
+                  : 'final',
               winRateHistory:
-                run.currentGame < 10 && run.config.includeTrainingWinRates
+                run.currentGame < run.config.trainingGameCount &&
+                run.config.includeTrainingWinRates
                   ? this.winRateHistory(game.id, llmColor)
                   : undefined,
               inGameReflections: game.inGameReflections,
             })
+            let responseContent = ''
             try {
               const response = await adapter.requestAction(
                 snapshot,
                 signal,
                 prompt,
               )
+              responseContent =
+                response.responseContent ?? JSON.stringify(response.action)
               addUsage(run, response)
               response.retries = outputFailures + apiFailures
               response.retryErrors = retryErrors.length
@@ -413,6 +461,18 @@ export class BenchmarkService {
                 await this.retryWait(apiFailures, signal, error)
                 continue
               }
+              const content =
+                error instanceof MalformedModelOutputError
+                  ? error.responseContent
+                  : responseContent
+              const retained = content.slice(0, 32_000)
+              game = this.games.recordRejectedModelAction(game.id, {
+                turn: game.moves.length + 1,
+                attempt: outputFailures + 1,
+                responseContent: retained,
+                reason: publicProviderError(error, 'Invalid action'),
+                truncated: retained.length < content.length,
+              })
               outputFailures += 1
               feedback = publicProviderError(error, 'Invalid action')
               if (outputFailures >= 3)
@@ -426,28 +486,38 @@ export class BenchmarkService {
           this.games.clearAutomatedTurnState(game.id)
         }
         const afterResult = await this.analyze(game, run.config.visits, signal)
-        if (run.currentGame === 10) {
+        if (run.currentGame === run.config.trainingGameCount) {
           const after = rootFromBlack(afterResult)
-          const beforeScore = llmColor === 'B' ? before.blackScoreLead : -before.blackScoreLead
-          const afterScore = llmColor === 'B' ? after.blackScoreLead : -after.blackScoreLead
-          const beforeWin = llmColor === 'B' ? before.blackWinRate : before.whiteWinRate
-          const afterWin = llmColor === 'B' ? after.blackWinRate : after.whiteWinRate
+          const beforeScore =
+            llmColor === 'B' ? before.blackScoreLead : -before.blackScoreLead
+          const afterScore =
+            llmColor === 'B' ? after.blackScoreLead : -after.blackScoreLead
+          const beforeWin =
+            llmColor === 'B' ? before.blackWinRate : before.whiteWinRate
+          const afterWin =
+            llmColor === 'B' ? after.blackWinRate : after.whiteWinRate
           ;(run.pointLosses ??= []).push(Math.max(0, beforeScore - afterScore))
           ;(run.winRateLosses ??= []).push(Math.max(0, beforeWin - afterWin))
         }
       } else {
         const move = selectedMove(beforeResult)
-        const action: PlayerAction = move === 'pass'
-          ? {action: 'pass', comment: 'KataGo passed.'}
-          : {action: 'play', coordinate: move, comment: 'KataGo move.'}
-        if (action.action === 'play') coordinateToPoint(action.coordinate, game.size)
+        const action: PlayerAction =
+          move === 'pass'
+            ? {action: 'pass', comment: 'KataGo passed.'}
+            : {action: 'play', coordinate: move, comment: 'KataGo move.'}
+        if (action.action === 'play')
+          coordinateToPoint(action.coordinate, game.size)
         game = this.games.acceptAutomated(game.id, action)
       }
       run.currentTurn = game.moves.length
       this.save(run)
       const endedWithoutResignation =
         game.status === 'finished' && game.moves.at(-1)?.action !== 'resign'
-      if (game.status === 'scoring' || endedWithoutResignation || (game.status === 'paused' && game.moves.length >= 722)) {
+      if (
+        game.status === 'scoring' ||
+        endedWithoutResignation ||
+        (game.status === 'paused' && game.moves.length >= 722)
+      ) {
         const final = await this.analyze(game, run.config.visits, signal)
         const lead = rootFromBlack(final).blackScoreLead
         game = this.games.finishAutomated(game.id, scoreLeadResult(lead))
@@ -469,28 +539,26 @@ export class BenchmarkService {
       this.save(run)
       return false
     }
-    const notebook = await this.notebooks.readCurrent(run.config.profileId)
+    const notebook = await this.selectedNotebook(run.config)
     const game = this.currentGame(run)
     if (!game) throw new Error('Benchmark game not found')
     const prompt = makeReflectionPrompt({
-      notebook,
-      games: run.gameIds.slice(0, run.currentGame + 1).map((gameId, index) => {
-        const game = this.games.get(gameId)
-        if (!game) throw new Error(`Training game ${index + 1} is missing`)
-        const llmColor: Color = index % 2 === 0 ? 'B' : 'W'
-        return {
-          sequence: index + 1,
+      notebook: notebook.content,
+      games: [
+        {
+          sequence: run.currentGame + 1,
           snapshot: makeSnapshot(game.size, game.komi, game.moves),
           result: game.result ?? 'Unknown',
-          llmColor,
+          llmColor: run.currentGame % 2 === 0 ? 'B' : 'W',
           winRateHistory: run.config.includeTrainingWinRates
-            ? this.winRateHistory(game.id, llmColor)
+            ? this.winRateHistory(
+                game.id,
+                run.currentGame % 2 === 0 ? 'B' : 'W',
+              )
             : undefined,
-          inGameReflections: index === run.currentGame
-            ? game.inGameReflections ?? []
-            : undefined,
-        }
-      }),
+          inGameReflections: game.inGameReflections ?? [],
+        },
+      ],
     })
     const response = await this.requestReflection(
       game.id,
@@ -499,17 +567,51 @@ export class BenchmarkService {
       signal,
     )
     addUsage(run, response)
-    await this.notebooks.write(run.config.profileId, run.id, response.text.trim())
     run.notebook.updatedAt = new Date().toISOString()
-    this.save(run)
+    run.currentGame += 1
+    run.currentTurn = 0
+    run.phase =
+      run.currentGame < run.config.trainingGameCount ? 'training' : 'final'
+    run.updatedAt = run.notebook.updatedAt
+    await this.notebooks.saveReflection(notebook, run, response.text.trim())
+    if (!this.notebooks.store) this.store.saveBenchmark(run)
+    this.events.emit(run.id, run)
+    this.events.emit('changed', run.id)
     return true
   }
 
+  private async selectedNotebook(
+    config: BenchmarkConfig,
+  ): Promise<TechniqueNotebook> {
+    const notebook = this.notebooks.get(config.profileId, config.notebookId)
+    if (notebook) return notebook
+    if (!this.notebooks.store) {
+      const content = await this.notebooks.readCurrent(config.profileId)
+      return {
+        id: config.notebookId,
+        profileId: config.profileId,
+        name: 'Default',
+        content,
+        createdAt: '',
+        updatedAt: '',
+      }
+    }
+    throw new Error('Technique notebook not found for this player profile')
+  }
+
   private adapter(run: InternalRun) {
-    const connection = this.store.getConnection(run.profileSnapshot.connectionId)
-    if (!connection) throw new Error('The benchmark provider connection no longer exists')
-    if (connection.kind !== 'fake' && !this.games.vault.get(connection)) return undefined
-    return this.adapterFactory(connection, run.profileSnapshot, this.games.vault)
+    const connection = this.store.getConnection(
+      run.profileSnapshot.connectionId,
+    )
+    if (!connection)
+      throw new Error('The benchmark provider connection no longer exists')
+    if (connection.kind !== 'fake' && !this.games.vault.get(connection))
+      return undefined
+    return this.adapterFactory(
+      connection,
+      run.profileSnapshot,
+      this.games.vault,
+    )
   }
 
   private async requestReflection(
@@ -561,7 +663,10 @@ export class BenchmarkService {
   private async analyze(game: Game, visits: number, signal: AbortSignal) {
     let result
     try {
-      result = await this.engine.analyze({...gamePosition(game), visits, priority: 50}, signal)
+      result = await this.engine.analyze(
+        {...gamePosition(game), visits, priority: 50},
+        signal,
+      )
     } catch (error) {
       if (signal.aborted) throw error
       throw new KataGoUnavailableError(publicError(error))
@@ -580,10 +685,13 @@ export class BenchmarkService {
   }
 
   private winRateHistory(gameId: string, color: Color) {
-    return this.store.getGameAnalysis(gameId).positions.map((value) => {
-      const rate = color === 'B' ? value.blackWinRate : value.whiteWinRate
-      return `Turn ${value.turn}: ${(rate * 100).toFixed(2)}%`
-    }).join('\n')
+    return this.store
+      .getGameAnalysis(gameId)
+      .positions.map((value) => {
+        const rate = color === 'B' ? value.blackWinRate : value.whiteWinRate
+        return `Turn ${value.turn}: ${(rate * 100).toFixed(2)}%`
+      })
+      .join('\n')
   }
 
   private currentGame(run: InternalRun) {
@@ -606,14 +714,20 @@ export class BenchmarkService {
 }
 
 function isRepairableMoveError(error: unknown) {
-  return error instanceof IllegalMoveError ||
+  return (
+    error instanceof IllegalMoveError ||
     error instanceof MalformedModelOutputError ||
     error instanceof NoOutputGeneratedError
+  )
 }
 
 function isUniqueConstraintError(error: unknown) {
-  return typeof error === 'object' && error !== null && 'code' in error &&
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
     error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+  )
 }
 
 export function pointLossQuality(loss: number) {
@@ -625,8 +739,17 @@ export function pointLossQuality(loss: number) {
   return 0
 }
 
-export function calculateMetrics(result: string, color: Color, pointLosses: number[], winRateLosses: number[]): BenchmarkMetrics {
-  const winner = result.startsWith('B+') ? 'B' : result.startsWith('W+') ? 'W' : undefined
+export function calculateMetrics(
+  result: string,
+  color: Color,
+  pointLosses: number[],
+  winRateLosses: number[],
+): BenchmarkMetrics {
+  const winner = result.startsWith('B+')
+    ? 'B'
+    : result.startsWith('W+')
+      ? 'W'
+      : undefined
   const resultScore = winner ? (winner === color ? 100 : 0) : 50
   const moveQuality = average(pointLosses.map(pointLossQuality))
   return {
@@ -641,10 +764,15 @@ export function calculateMetrics(result: string, color: Color, pointLosses: numb
 }
 
 function average(values: number[]) {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : 0
 }
 
-function addUsage(run: InternalRun, value: {inputTokens: number; outputTokens: number; latencyMs: number}) {
+function addUsage(
+  run: InternalRun,
+  value: {inputTokens: number; outputTokens: number; latencyMs: number},
+) {
   run.usage.calls += 1
   run.usage.inputTokens += value.inputTokens
   run.usage.outputTokens += value.outputTokens
@@ -658,13 +786,25 @@ function scoreLeadResult(lead: number) {
 
 async function healthFromAnalysis(engine: KataGoAnalyzer) {
   try {
-    const result = await engine.analyze({size: 9, komi: 7.5, moves: [], visits: 25})
-    return {ok: true, message: 'KataGo is ready', winRate: result.rootInfo.winrate, scoreLead: result.rootInfo.scoreLead}
+    const result = await engine.analyze({
+      size: 9,
+      komi: 7.5,
+      moves: [],
+      visits: 25,
+    })
+    return {
+      ok: true,
+      message: 'KataGo is ready',
+      winRate: result.rootInfo.winrate,
+      scoreLead: result.rootInfo.scoreLead,
+    }
   } catch (error) {
     return {ok: false, message: publicError(error)}
   }
 }
 
 function publicError(error: unknown) {
-  return error instanceof Error ? error.message.replace(/(?:sk-|AIza)[A-Za-z0-9_-]+/g, '[redacted]') : 'Benchmark operation failed'
+  return error instanceof Error
+    ? error.message.replace(/(?:sk-|AIza)[A-Za-z0-9_-]+/g, '[redacted]')
+    : 'Benchmark operation failed'
 }

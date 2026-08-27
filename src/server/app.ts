@@ -6,6 +6,7 @@ import {z, ZodError} from 'zod'
 import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
 import {requestOptionsBody} from '../shared/requestOptions'
 import {
+  benchmarkConfigSchema,
   newGameSchema,
   playerActionSchema,
   providerKindSchema,
@@ -85,17 +86,14 @@ const kataGoSettingsSchema = z.object({
   analysisVisits: z.number().int().min(25).max(10_000),
 })
 
-const benchmarkSchema = z.object({
-  profileId: z.string().min(1),
-  finalColor: z.enum(['B', 'W']),
-  visits: z
-    .number()
-    .int()
-    .min(25)
-    .max(10_000)
-    .default(DEFAULT_KATAGO_VISITS),
-  includeTrainingWinRates: z.boolean().default(true),
-  notebookMode: z.enum(['reset', 'continue']).default('reset'),
+const benchmarkSchema = benchmarkConfigSchema.extend({
+  visits: benchmarkConfigSchema.shape.visits.default(DEFAULT_KATAGO_VISITS),
+  includeTrainingWinRates:
+    benchmarkConfigSchema.shape.includeTrainingWinRates.default(true),
+})
+
+const notebookSchema = z.object({
+  name: z.string().trim().min(1).max(120),
 })
 
 export function createApp(
@@ -118,7 +116,12 @@ export function createApp(
   games.setLlmAnalysisProvider((game, signal) =>
     analysis.contextForLlm(game, signal),
   )
-  const benchmarks = new BenchmarkService(store, games, kataGo, options.notebookStore)
+  const benchmarks = new BenchmarkService(
+    store,
+    games,
+    kataGo,
+    options.notebookStore,
+  )
 
   app.get('/api/health', async () => ({ok: true}))
   app.get('/api/games', async () => games.list())
@@ -152,17 +155,32 @@ export function createApp(
 
   app.get('/api/katago/settings', async () => store.getKataGoSettings())
   app.put('/api/katago/settings', async (request) => {
-    const settings = store.saveKataGoSettings(kataGoSettingsSchema.parse(request.body))
+    const settings = store.saveKataGoSettings(
+      kataGoSettingsSchema.parse(request.body),
+    )
     await kataGo.updateSettings?.(settings)
     return settings
   })
   app.post('/api/katago/test', async () => {
     if (kataGo.healthCheck) return kataGo.healthCheck()
     try {
-      const result = await kataGo.analyze({size: 9, komi: 7.5, moves: [], visits: 25})
-      return {ok: true, message: 'KataGo analyzed a 9x9 position.', winRate: result.rootInfo.winrate, scoreLead: result.rootInfo.scoreLead}
+      const result = await kataGo.analyze({
+        size: 9,
+        komi: 7.5,
+        moves: [],
+        visits: 25,
+      })
+      return {
+        ok: true,
+        message: 'KataGo analyzed a 9x9 position.',
+        winRate: result.rootInfo.winrate,
+        scoreLead: result.rootInfo.scoreLead,
+      }
     } catch (error) {
-      return {ok: false, message: error instanceof Error ? error.message : 'KataGo failed'}
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'KataGo failed',
+      }
     }
   })
   app.get('/api/games/:id/analysis', async (request) => {
@@ -193,10 +211,18 @@ export function createApp(
     if (!games.get(id)) return notFound()
     reply.hijack()
     const response = reply.raw
-    response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive'})
-    const send = (value: unknown) => response.write(`data: ${JSON.stringify(value)}\n\n`)
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = (value: unknown) =>
+      response.write(`data: ${JSON.stringify(value)}\n\n`)
     send(analysis.open(id))
-    const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 15_000)
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
     analysis.events.on(id, send)
     request.raw.on('close', () => {
       clearInterval(keepAlive)
@@ -320,7 +346,6 @@ export function createApp(
         error:
           'This connection has a player profile used by an unfinished game',
       })
-    await Promise.all([...profileIds].map((profileId) => benchmarks.notebooks.deleteCurrent(profileId)))
     store.deleteConnection(id)
     games.vault.delete(id)
     return {ok: true}
@@ -344,14 +369,85 @@ export function createApp(
     )
     return {ok: true, ...result}
   })
-  app.get('/api/profiles/:id/notebook.md', async (request, reply) => {
+  app.get('/api/profiles/:id/notebooks', async (request, reply) => {
     const {id} = request.params as {id: string}
-    if (!store.getProfile(id)) return reply.code(404).send({error: 'Player profile not found'})
-    const markdown = await benchmarks.notebooks.readCurrent(id)
-    reply.type('text/markdown; charset=utf-8')
-    reply.header('Content-Disposition', `inline; filename="linggo-techniques-${id}.md"`)
-    return markdown
+    if (!store.getProfile(id))
+      return reply.code(404).send({error: 'Player profile not found'})
+    return benchmarks.notebooks.list(id)
   })
+  app.post('/api/profiles/:id/notebooks', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!store.getProfile(id))
+      return reply.code(404).send({error: 'Player profile not found'})
+    return reply
+      .code(201)
+      .send(
+        benchmarks.notebooks.create(
+          id,
+          notebookSchema.parse(request.body).name,
+        ),
+      )
+  })
+  app.patch(
+    '/api/profiles/:id/notebooks/:notebookId',
+    async (request, reply) => {
+      const {id, notebookId} = request.params as {
+        id: string
+        notebookId: string
+      }
+      const notebook = benchmarks.notebooks.rename(
+        id,
+        notebookId,
+        notebookSchema.parse(request.body).name,
+      )
+      return (
+        notebook ??
+        reply.code(404).send({error: 'Technique notebook not found'})
+      )
+    },
+  )
+  app.delete(
+    '/api/profiles/:id/notebooks/:notebookId',
+    async (request, reply) => {
+      const {id, notebookId} = request.params as {
+        id: string
+        notebookId: string
+      }
+      if (
+        store
+          .listBenchmarks()
+          .some(
+            (run) =>
+              run.config.notebookId === notebookId &&
+              ['queued', 'running', 'paused'].includes(run.status),
+          )
+      )
+        return reply
+          .code(409)
+          .send({error: 'This notebook is used by an active benchmark'})
+      return benchmarks.notebooks.delete(id, notebookId)
+        ? {ok: true}
+        : reply.code(404).send({error: 'Technique notebook not found'})
+    },
+  )
+  app.get(
+    '/api/profiles/:id/notebooks/:notebookId.md',
+    async (request, reply) => {
+      const {id, notebookId} = request.params as {
+        id: string
+        notebookId: string
+      }
+      const notebook = benchmarks.notebooks.get(id, notebookId)
+      if (!notebook)
+        return reply.code(404).send({error: 'Technique notebook not found'})
+      reply.type('text/markdown; charset=utf-8')
+      reply.header(
+        'Content-Disposition',
+        `attachment; filename="${downloadName(notebook.name)}.md"`,
+      )
+      return notebook.content
+    },
+  )
   app.post('/api/profiles', async (request, reply) => {
     const input = profileSchema.parse(request.body)
     if (!store.getConnection(input.connectionId))
@@ -386,10 +482,19 @@ export function createApp(
       return reply
         .code(409)
         .send({error: 'This player profile is used by an unfinished game'})
-    if (store.listBenchmarks().some((run) => run.config.profileId === id && ['queued', 'running', 'paused'].includes(run.status)))
-      return reply.code(409).send({error: 'This player profile is used by an active benchmark'})
+    if (
+      store
+        .listBenchmarks()
+        .some(
+          (run) =>
+            run.config.profileId === id &&
+            ['queued', 'running', 'paused'].includes(run.status),
+        )
+    )
+      return reply
+        .code(409)
+        .send({error: 'This player profile is used by an active benchmark'})
     store.deleteProfile(id)
-    await benchmarks.notebooks.deleteCurrent(id)
     return {ok: true}
   })
 
@@ -397,10 +502,18 @@ export function createApp(
   app.get('/api/benchmarks/events', async (request, reply) => {
     reply.hijack()
     const response = reply.raw
-    response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive'})
-    const send = () => response.write(`data: ${JSON.stringify(benchmarks.list())}\n\n`)
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = () =>
+      response.write(`data: ${JSON.stringify(benchmarks.list())}\n\n`)
     send()
-    const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 15_000)
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
     benchmarks.events.on('changed', send)
     request.raw.on('close', () => {
       clearInterval(keepAlive)
@@ -408,42 +521,74 @@ export function createApp(
     })
   })
   app.post('/api/benchmarks', async (request, reply) =>
-    reply.code(201).send(await benchmarks.create(benchmarkSchema.parse(request.body))),
+    reply
+      .code(201)
+      .send(await benchmarks.create(benchmarkSchema.parse(request.body))),
   )
-  app.get('/api/benchmarks/:id', async (request, reply) =>
-    benchmarks.get((request.params as {id: string}).id) ?? reply.code(404).send({error: 'Benchmark not found'}),
+  app.get(
+    '/api/benchmarks/:id',
+    async (request, reply) =>
+      benchmarks.get((request.params as {id: string}).id) ??
+      reply.code(404).send({error: 'Benchmark not found'}),
   )
   app.post('/api/benchmarks/:id/commands', async (request) => {
     const {id} = request.params as {id: string}
-    const command = z.object({type: z.enum(['pause', 'resume', 'nextMoveAndPause', 'cancel', 'force']), action: playerActionSchema.optional()}).parse(request.body)
+    const command = z
+      .object({
+        type: z.enum([
+          'pause',
+          'resume',
+          'nextMoveAndPause',
+          'cancel',
+          'force',
+        ]),
+        action: playerActionSchema.optional(),
+      })
+      .parse(request.body)
     if (command.type === 'pause') return benchmarks.pause(id)
     if (command.type === 'resume') return benchmarks.resume(id)
-    if (command.type === 'nextMoveAndPause') return benchmarks.nextMoveAndPause(id)
+    if (command.type === 'nextMoveAndPause')
+      return benchmarks.nextMoveAndPause(id)
     if (command.type === 'cancel') return benchmarks.cancel(id)
     if (!command.action) throw new Error('A forced action is required')
     return benchmarks.force(id, command.action)
   })
   app.delete('/api/benchmarks/:id', async (request, reply) => {
     const deleted = await benchmarks.delete((request.params as {id: string}).id)
-    return deleted ? {ok: true} : reply.code(404).send({error: 'Benchmark not found'})
+    return deleted
+      ? {ok: true}
+      : reply.code(404).send({error: 'Benchmark not found'})
   })
   app.get('/api/benchmarks/:id/notebook.md', async (request, reply) => {
     const {id} = request.params as {id: string}
-    if (!benchmarks.get(id)) return reply.code(404).send({error: 'Benchmark not found'})
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
     const markdown = await benchmarks.notebooks.readSnapshot(id)
     reply.type('text/markdown; charset=utf-8')
-    reply.header('Content-Disposition', `inline; filename="linggo-benchmark-${id}.md"`)
+    reply.header(
+      'Content-Disposition',
+      `inline; filename="linggo-benchmark-${id}.md"`,
+    )
     return markdown
   })
   app.get('/api/benchmarks/:id/events', async (request, reply) => {
     const {id} = request.params as {id: string}
-    if (!benchmarks.get(id)) return reply.code(404).send({error: 'Benchmark not found'})
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
     reply.hijack()
     const response = reply.raw
-    response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive'})
-    const send = (value: unknown) => response.write(`data: ${JSON.stringify(value)}\n\n`)
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = (value: unknown) =>
+      response.write(`data: ${JSON.stringify(value)}\n\n`)
     send(benchmarks.get(id))
-    const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 15_000)
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
     benchmarks.events.on(id, send)
     request.raw.on('close', () => {
       clearInterval(keepAlive)
@@ -452,7 +597,10 @@ export function createApp(
   })
 
   app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof StaleVersionError || error instanceof BenchmarkConflictError)
+    if (
+      error instanceof StaleVersionError ||
+      error instanceof BenchmarkConflictError
+    )
       return reply.code(409).send({error: error.message})
     if (error instanceof ZodError)
       return reply
@@ -501,4 +649,10 @@ function unfinishedGameUsesProfile(store: Store, profileIds: Set<string>) {
           (seat) => seat.type === 'llm' && profileIds.has(seat.profileId),
         ),
     )
+}
+
+function downloadName(name: string) {
+  return (
+    name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'notebook'
+  )
 }

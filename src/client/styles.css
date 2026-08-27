@@ -645,6 +645,30 @@ svg {
   display: flex;
   gap: 7px;
 }
+.notebook-manager {
+  min-width: 0;
+}
+.notebook-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.notebook-actions {
+  display: flex;
+  gap: 6px;
+}
+.notebook-actions .disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.notebook-preview {
+  max-height: 420px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  overflow: auto;
+}
 .markdown {
   line-height: 1.65;
   overflow-wrap: anywhere;
@@ -1078,6 +1102,51 @@ svg {
 .benchmark-form-grid .switch-field {
   grid-column: span 2;
   min-height: 40px;
+}
+.benchmark-form-grid .notebook-manager {
+  grid-column: span 2;
+}
+.rejected-action-history {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.rejected-action-history summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.rejected-action-history ol {
+  margin: 0;
+  padding: 0 12px 12px;
+  list-style: none;
+}
+.rejected-action-history li {
+  display: grid;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.rejected-action-history li > span,
+.rejected-action-history li > small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.rejected-action-history p {
+  margin: 0;
+}
+.rejected-action-history pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 4px;
+  background: #171b19;
+  color: #eef3ef;
+  font-size: 12px;
 }
 .benchmark-list {
   margin-top: 30px;
@@ -1559,6 +1628,7 @@ svg {
     grid-template-columns: 1fr 1fr;
   }
   .benchmark-form-grid .switch-field,
+  .benchmark-form-grid .notebook-manager,
   .benchmark-detail-grid > *,
   .rating {
     grid-column: 1 / -1;
@@ -1620,6 +1690,12 @@ svg {
     flex: 1;
     justify-content: center;
     padding: 7px;
+  }
+  .notebook-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .notebook-actions {
+    flex-wrap: wrap;
   }
   .request-option-row {
     grid-template-columns: 1fr auto;

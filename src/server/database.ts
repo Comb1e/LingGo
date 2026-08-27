@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
-import {mkdirSync, readFileSync, readdirSync} from 'node:fs'
+import {existsSync, mkdirSync, readFileSync, readdirSync} from 'node:fs'
+import {randomUUID} from 'node:crypto'
 import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import type {
@@ -10,6 +11,8 @@ import type {
   PlayerProfile,
   PositionAnalysis,
   ProviderConnection,
+  TechniqueNotebook,
+  TechniqueNotebookSummary,
 } from '../shared/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -27,6 +30,86 @@ export class Store {
     this.db.pragma('foreign_keys = ON')
     this.migrate()
     this.seedFakeProvider()
+    this.importLegacyNotebooks()
+    this.upgradeActiveLegacyBenchmarks()
+  }
+
+  private importLegacyNotebooks() {
+    const key = 'named_notebooks_legacy_imported'
+    if (this.db.prepare('SELECT 1 FROM app_metadata WHERE key = ?').get(key))
+      return
+    const root =
+      process.env.LINGGO_TECHNIQUES_DIR ??
+      join(process.cwd(), 'data', 'techniques')
+    const importNotebook = this.db.transaction(() => {
+      for (const profile of this.listProfiles()) {
+        const path = join(root, `${profile.id}.md`)
+        if (!existsSync(path)) continue
+        const now = new Date().toISOString()
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO technique_notebooks
+             (id, profile_id, name, name_key, content, created_at, updated_at)
+             VALUES (?, ?, 'Default', 'default', ?, ?, ?)`,
+          )
+          .run(randomUUID(), profile.id, readFileSync(path, 'utf8'), now, now)
+      }
+      for (const run of this.listBenchmarks()) {
+        const path = join(root, 'runs', `${run.id}.md`)
+        if (!existsSync(path)) continue
+        const notebook = this.listNotebooks(run.config.profileId).find(
+          ({name}) => name.toLocaleLowerCase() === 'default',
+        )
+        const now = new Date().toISOString()
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO benchmark_notebook_snapshots
+             (run_id, notebook_id, notebook_name, content, updated_at)
+             VALUES (?, ?, 'Default', ?, ?)`,
+          )
+          .run(
+            run.id,
+            notebook?.id ?? null,
+            readFileSync(path, 'utf8'),
+            now,
+          )
+      }
+      this.db
+        .prepare('INSERT INTO app_metadata (key, value) VALUES (?, ?)')
+        .run(key, new Date().toISOString())
+    })
+    importNotebook()
+  }
+
+  private upgradeActiveLegacyBenchmarks() {
+    const rows = this.db
+      .prepare(
+        `SELECT run_json FROM benchmark_runs
+         WHERE status IN ('queued', 'running', 'paused')`,
+      )
+      .all() as Array<{run_json: string}>
+    for (const row of rows) {
+      const run = JSON.parse(row.run_json) as BenchmarkRun
+      if (run.config.trainingGameCount && run.config.notebookId) continue
+      let notebook = this.listNotebooks(run.config.profileId).find(
+        ({name}) => name.toLocaleLowerCase() === 'default',
+      )
+      notebook ??= this.createNotebook(run.config.profileId, 'Default')
+      run.config = {
+        ...run.config,
+        trainingGameCount: 10,
+        notebookId: notebook.id,
+      }
+      delete (run.config as BenchmarkRun['config'] & {notebookMode?: string})
+        .notebookMode
+      run.notebook = {
+        ...run.notebook,
+        notebookId: notebook.id,
+        name: notebook.name,
+        currentUrl: `/api/profiles/${run.config.profileId}/notebooks/${notebook.id}.md`,
+      }
+      this.saveBenchmark(run)
+    }
   }
 
   private migrate() {
@@ -122,12 +205,14 @@ export class Store {
 
   deleteAllForTests() {
     this.db.exec(
-      'DELETE FROM benchmark_runs; DELETE FROM games; DELETE FROM player_profiles; DELETE FROM provider_connections;',
+      'DELETE FROM benchmark_runs; DELETE FROM games; DELETE FROM technique_notebooks; DELETE FROM player_profiles; DELETE FROM provider_connections;',
     )
   }
 
   getKataGoSettings(): KataGoSettings {
-    const row = this.db.prepare('SELECT * FROM katago_settings WHERE singleton = 1').get() as any
+    const row = this.db
+      .prepare('SELECT * FROM katago_settings WHERE singleton = 1')
+      .get() as any
     return {
       executablePath: row.executable_path,
       modelPath: row.model_path,
@@ -137,57 +222,82 @@ export class Store {
     }
   }
 
-  saveKataGoSettings(settings: Omit<KataGoSettings, 'updatedAt'>): KataGoSettings {
+  saveKataGoSettings(
+    settings: Omit<KataGoSettings, 'updatedAt'>,
+  ): KataGoSettings {
     const updatedAt = new Date().toISOString()
-    this.db.prepare(
-      `UPDATE katago_settings SET executable_path = ?, model_path = ?, config_path = ?,
+    this.db
+      .prepare(
+        `UPDATE katago_settings SET executable_path = ?, model_path = ?, config_path = ?,
        analysis_visits = ?, updated_at = ? WHERE singleton = 1`,
-    ).run(settings.executablePath, settings.modelPath, settings.configPath, settings.analysisVisits, updatedAt)
+      )
+      .run(
+        settings.executablePath,
+        settings.modelPath,
+        settings.configPath,
+        settings.analysisVisits,
+        updatedAt,
+      )
     return this.getKataGoSettings()
   }
 
   ensureGameAnalysis(gameId: string, enabled: boolean, shareWithLlm = false) {
-    this.db.prepare(
-      `INSERT INTO game_analysis_state (game_id, enabled, share_with_llm, status, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO game_analysis_state (game_id, enabled, share_with_llm, status, updated_at)
        VALUES (?, ?, ?, 'idle', ?) ON CONFLICT(game_id) DO NOTHING`,
-    ).run(
-      gameId,
-      enabled ? 1 : 0,
-      shareWithLlm ? 1 : 0,
-      new Date().toISOString(),
-    )
+      )
+      .run(
+        gameId,
+        enabled ? 1 : 0,
+        shareWithLlm ? 1 : 0,
+        new Date().toISOString(),
+      )
   }
 
-  setGameAnalysisState(gameId: string, values: {
-    enabled?: boolean
-    shareWithLlm?: boolean
-    status?: string
-    error?: string | null
-  }) {
+  setGameAnalysisState(
+    gameId: string,
+    values: {
+      enabled?: boolean
+      shareWithLlm?: boolean
+      status?: string
+      error?: string | null
+    },
+  ) {
     this.ensureGameAnalysis(gameId, values.enabled ?? false)
-    const current = this.db.prepare('SELECT * FROM game_analysis_state WHERE game_id = ?').get(gameId) as any
-    this.db.prepare(
-      `UPDATE game_analysis_state SET enabled = ?, share_with_llm = ?, status = ?,
+    const current = this.db
+      .prepare('SELECT * FROM game_analysis_state WHERE game_id = ?')
+      .get(gameId) as any
+    this.db
+      .prepare(
+        `UPDATE game_analysis_state SET enabled = ?, share_with_llm = ?, status = ?,
        error = ?, updated_at = ? WHERE game_id = ?`,
-    ).run(
-      values.enabled === undefined ? current.enabled : values.enabled ? 1 : 0,
-      values.shareWithLlm === undefined
-        ? current.share_with_llm
-        : values.shareWithLlm
-          ? 1
-          : 0,
-      values.status ?? current.status,
-      values.error === undefined ? current.error : values.error,
-      new Date().toISOString(),
-      gameId,
-    )
+      )
+      .run(
+        values.enabled === undefined ? current.enabled : values.enabled ? 1 : 0,
+        values.shareWithLlm === undefined
+          ? current.share_with_llm
+          : values.shareWithLlm
+            ? 1
+            : 0,
+        values.status ?? current.status,
+        values.error === undefined ? current.error : values.error,
+        new Date().toISOString(),
+        gameId,
+      )
   }
 
   getGameAnalysis(gameId: string): GameAnalysis {
-    const state = this.db.prepare('SELECT * FROM game_analysis_state WHERE game_id = ?').get(gameId) as any
-    const positions = (this.db.prepare(
-      'SELECT * FROM position_analyses WHERE game_id = ? ORDER BY turn',
-    ).all(gameId) as any[]).map(mapPositionAnalysis)
+    const state = this.db
+      .prepare('SELECT * FROM game_analysis_state WHERE game_id = ?')
+      .get(gameId) as any
+    const positions = (
+      this.db
+        .prepare(
+          'SELECT * FROM position_analyses WHERE game_id = ? ORDER BY turn',
+        )
+        .all(gameId) as any[]
+    ).map(mapPositionAnalysis)
     return {
       enabled: Boolean(state?.enabled),
       shareWithLlm: Boolean(state?.share_with_llm),
@@ -198,50 +308,230 @@ export class Store {
   }
 
   savePositionAnalysis(value: PositionAnalysis) {
-    this.db.prepare(
-      `INSERT INTO position_analyses
+    this.db
+      .prepare(
+        `INSERT INTO position_analyses
        (game_id, turn, black_win_rate, white_win_rate, black_score_lead, visits, position_hash, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id, turn) DO UPDATE SET black_win_rate = excluded.black_win_rate,
        white_win_rate = excluded.white_win_rate, black_score_lead = excluded.black_score_lead,
        visits = excluded.visits, position_hash = excluded.position_hash, created_at = excluded.created_at`,
-    ).run(value.gameId, value.turn, value.blackWinRate, value.whiteWinRate, value.blackScoreLead,
-      value.visits, value.positionHash, value.createdAt)
+      )
+      .run(
+        value.gameId,
+        value.turn,
+        value.blackWinRate,
+        value.whiteWinRate,
+        value.blackScoreLead,
+        value.visits,
+        value.positionHash,
+        value.createdAt,
+      )
   }
 
   deleteAnalysisAfter(gameId: string, turn: number) {
-    this.db.prepare('DELETE FROM position_analyses WHERE game_id = ? AND turn > ?').run(gameId, turn)
+    this.db
+      .prepare('DELETE FROM position_analyses WHERE game_id = ? AND turn > ?')
+      .run(gameId, turn)
   }
 
   listBenchmarks(): BenchmarkRun[] {
-    return (this.db.prepare('SELECT run_json FROM benchmark_runs ORDER BY created_at DESC').all() as Array<{run_json: string}>)
-      .map(({run_json}) => JSON.parse(run_json))
+    return (
+      this.db
+        .prepare('SELECT run_json FROM benchmark_runs ORDER BY created_at DESC')
+        .all() as Array<{run_json: string}>
+    ).map(({run_json}) => normalizeBenchmark(JSON.parse(run_json)))
   }
 
   getBenchmark(id: string): BenchmarkRun | undefined {
-    const row = this.db.prepare('SELECT run_json FROM benchmark_runs WHERE id = ?').get(id) as {run_json: string} | undefined
-    return row ? JSON.parse(row.run_json) : undefined
+    const row = this.db
+      .prepare('SELECT run_json FROM benchmark_runs WHERE id = ?')
+      .get(id) as {run_json: string} | undefined
+    return row ? normalizeBenchmark(JSON.parse(row.run_json)) : undefined
   }
 
   saveBenchmark(run: BenchmarkRun) {
-    this.db.prepare(
-      `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET status = excluded.status, phase = excluded.phase,
        run_json = excluded.run_json, updated_at = excluded.updated_at`,
-    ).run(run.id, run.status, run.phase, run.config.profileId, JSON.stringify(run), run.createdAt, run.updatedAt)
+      )
+      .run(
+        run.id,
+        run.status,
+        run.phase,
+        run.config.profileId,
+        JSON.stringify(run),
+        run.createdAt,
+        run.updatedAt,
+      )
+  }
+
+  saveBenchmarkWithSnapshot(run: BenchmarkRun, notebook: TechniqueNotebook) {
+    this.db.transaction(() => {
+      this.saveBenchmark(run)
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_snapshots
+           (run_id, notebook_id, notebook_name, content, updated_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          run.id,
+          notebook.id,
+          notebook.name,
+          notebook.content,
+          run.updatedAt,
+        )
+    })()
   }
 
   linkBenchmarkGame(runId: string, gameId: string, gameIndex: number) {
-    this.db.prepare('INSERT INTO benchmark_games (run_id, game_id, game_index) VALUES (?, ?, ?)').run(runId, gameId, gameIndex)
+    this.db
+      .prepare(
+        'INSERT INTO benchmark_games (run_id, game_id, game_index) VALUES (?, ?, ?)',
+      )
+      .run(runId, gameId, gameIndex)
   }
 
   deleteBenchmark(id: string) {
     const transaction = this.db.transaction(() => {
-      this.db.prepare('DELETE FROM games WHERE id IN (SELECT game_id FROM benchmark_games WHERE run_id = ?)').run(id)
-      return this.db.prepare('DELETE FROM benchmark_runs WHERE id = ?').run(id).changes > 0
+      this.db
+        .prepare(
+          'DELETE FROM games WHERE id IN (SELECT game_id FROM benchmark_games WHERE run_id = ?)',
+        )
+        .run(id)
+      return (
+        this.db.prepare('DELETE FROM benchmark_runs WHERE id = ?').run(id)
+          .changes > 0
+      )
     })
     return transaction()
+  }
+
+  listNotebooks(profileId: string): TechniqueNotebookSummary[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id, profile_id, name, created_at, updated_at
+           FROM technique_notebooks WHERE profile_id = ? ORDER BY name COLLATE NOCASE, created_at`,
+        )
+        .all(profileId) as Array<any>
+    ).map(mapNotebookSummary)
+  }
+
+  getNotebook(profileId: string, id: string): TechniqueNotebook | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, profile_id, name, content, created_at, updated_at
+         FROM technique_notebooks WHERE profile_id = ? AND id = ?`,
+      )
+      .get(profileId, id) as any
+    return row ? {...mapNotebookSummary(row), content: row.content} : undefined
+  }
+
+  createNotebook(profileId: string, name: string): TechniqueNotebook {
+    const normalized = normalizeNotebookName(name)
+    const value: TechniqueNotebook = {
+      id: randomUUID(),
+      profileId,
+      name: normalized,
+      content: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO technique_notebooks
+           (id, profile_id, name, name_key, content, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          value.id,
+          value.profileId,
+          value.name,
+          value.name.toLocaleLowerCase(),
+          value.content,
+          value.createdAt,
+          value.updatedAt,
+        )
+    } catch (error) {
+      throw notebookConstraintError(error)
+    }
+    return value
+  }
+
+  renameNotebook(profileId: string, id: string, name: string) {
+    const normalized = normalizeNotebookName(name)
+    const updatedAt = new Date().toISOString()
+    let result
+    try {
+      result = this.db
+        .prepare(
+          `UPDATE technique_notebooks SET name = ?, name_key = ?, updated_at = ?
+           WHERE profile_id = ? AND id = ?`,
+        )
+        .run(
+          normalized,
+          normalized.toLocaleLowerCase(),
+          updatedAt,
+          profileId,
+          id,
+        )
+    } catch (error) {
+      throw notebookConstraintError(error)
+    }
+    if (!result.changes) return undefined
+    return this.getNotebook(profileId, id)
+  }
+
+  deleteNotebook(profileId: string, id: string) {
+    return (
+      this.db
+        .prepare(
+          'DELETE FROM technique_notebooks WHERE profile_id = ? AND id = ?',
+        )
+        .run(profileId, id).changes > 0
+    )
+  }
+
+  getNotebookSnapshot(runId: string) {
+    return this.db
+      .prepare(
+        'SELECT content FROM benchmark_notebook_snapshots WHERE run_id = ?',
+      )
+      .get(runId) as {content: string} | undefined
+  }
+
+  saveReflection(
+    notebook: TechniqueNotebook,
+    run: BenchmarkRun,
+    content: string,
+  ) {
+    const updatedAt = run.notebook.updatedAt ?? new Date().toISOString()
+    this.db.transaction(() => {
+      const notebookResult = this.db
+        .prepare(
+          `UPDATE technique_notebooks SET content = ?, updated_at = ?
+           WHERE profile_id = ? AND id = ?`,
+        )
+        .run(content, updatedAt, notebook.profileId, notebook.id)
+      if (!notebookResult.changes)
+        throw new Error('The selected technique notebook no longer exists')
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_snapshots
+           (run_id, notebook_id, notebook_name, content, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
+           updated_at = excluded.updated_at`,
+        )
+        .run(run.id, notebook.id, notebook.name, content, updatedAt)
+      this.saveBenchmark(run)
+    })()
   }
 
   listConnections(): ProviderConnection[] {
@@ -381,4 +671,45 @@ function mapProfile(row: any): PlayerProfile {
       : undefined,
     stylePrompt: row.style_prompt ?? undefined,
   }
+}
+
+function mapNotebookSummary(row: any): TechniqueNotebookSummary {
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function normalizeNotebookName(name: string) {
+  const normalized = name.trim()
+  if (!normalized || normalized.length > 120)
+    throw new Error('Notebook name must contain 1 to 120 characters')
+  return normalized
+}
+
+function normalizeBenchmark(run: BenchmarkRun): BenchmarkRun {
+  return {
+    ...run,
+    config: {
+      ...run.config,
+      trainingGameCount: run.config.trainingGameCount ?? 10,
+      notebookId: run.config.notebookId ?? run.notebook?.notebookId ?? '',
+    },
+  }
+}
+
+function notebookConstraintError(error: unknown) {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+  )
+    return new Error(
+      'A notebook with this name already exists for this profile',
+    )
+  return error
 }

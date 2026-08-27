@@ -1,19 +1,72 @@
 import {mkdir, readFile, rename, unlink, writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
+import type {
+  BenchmarkRun,
+  TechniqueNotebook,
+  TechniqueNotebookSummary,
+} from '../shared/types'
+import {Store} from './database'
 
 export class NotebookStore {
-  constructor(readonly root = process.env.LINGGO_TECHNIQUES_DIR ?? join(process.cwd(), 'data', 'techniques')) {}
+  readonly store?: Store
+  readonly root?: string
 
-  async readCurrent(profileId: string) {
+  constructor(storeOrRoot: Store | string = new Store()) {
+    if (storeOrRoot instanceof Store) this.store = storeOrRoot
+    else this.root = storeOrRoot
+  }
+
+  list(profileId: string): TechniqueNotebookSummary[] {
+    return this.store?.listNotebooks(profileId) ?? []
+  }
+
+  get(profileId: string, notebookId: string): TechniqueNotebook | undefined {
+    return this.store?.getNotebook(profileId, notebookId)
+  }
+
+  create(profileId: string, name: string) {
+    if (!this.store) throw new Error('Named notebooks require SQLite storage')
+    return this.store.createNotebook(profileId, name)
+  }
+
+  rename(profileId: string, notebookId: string, name: string) {
+    if (!this.store) throw new Error('Named notebooks require SQLite storage')
+    return this.store.renameNotebook(profileId, notebookId, name)
+  }
+
+  delete(profileId: string, notebookId: string) {
+    if (!this.store) throw new Error('Named notebooks require SQLite storage')
+    return this.store.deleteNotebook(profileId, notebookId)
+  }
+
+  async readCurrent(profileId: string, notebookId?: string) {
+    if (this.store)
+      return notebookId
+        ? (this.store.getNotebook(profileId, notebookId)?.content ?? '')
+        : ''
     return this.read(this.currentPath(profileId))
   }
 
   async readSnapshot(runId: string) {
+    if (this.store) return this.store.getNotebookSnapshot(runId)?.content ?? ''
     return this.read(this.snapshotPath(runId))
   }
 
+  async saveReflection(
+    notebook: TechniqueNotebook,
+    run: BenchmarkRun,
+    markdown: string,
+  ) {
+    if (this.store) {
+      this.store.saveReflection(notebook, run, markdown)
+      return
+    }
+    await this.write(notebook.profileId, run.id, markdown)
+  }
+
   async write(profileId: string, runId: string, markdown: string) {
-    await mkdir(join(this.root, 'runs'), {recursive: true})
+    if (this.store) throw new Error('Use saveReflection for named notebooks')
+    await mkdir(join(this.root!, 'runs'), {recursive: true})
     await Promise.all([
       this.atomicWrite(this.currentPath(profileId), markdown),
       this.atomicWrite(this.snapshotPath(runId), markdown),
@@ -21,23 +74,29 @@ export class NotebookStore {
   }
 
   async deleteCurrent(profileId: string) {
-    await unlink(this.currentPath(profileId)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error
-    })
+    if (this.store) return
+    await unlink(this.currentPath(profileId)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      },
+    )
   }
 
   async deleteSnapshot(runId: string) {
-    await unlink(this.snapshotPath(runId)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error
-    })
+    if (this.store) return
+    await unlink(this.snapshotPath(runId)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      },
+    )
   }
 
   private currentPath(id: string) {
-    return join(this.root, `${safeId(id)}.md`)
+    return join(this.root!, `${safeId(id)}.md`)
   }
 
   private snapshotPath(id: string) {
-    return join(this.root, 'runs', `${safeId(id)}.md`)
+    return join(this.root!, 'runs', `${safeId(id)}.md`)
   }
 
   private async atomicWrite(path: string, contents: string) {
@@ -57,6 +116,7 @@ export class NotebookStore {
 }
 
 function safeId(id: string) {
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('Invalid notebook identifier')
+  if (!/^[A-Za-z0-9_-]+$/.test(id))
+    throw new Error('Invalid notebook identifier')
   return id
 }
