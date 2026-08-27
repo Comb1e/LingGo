@@ -23,6 +23,35 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect(page.getByText('Move 2 / 2')).toBeVisible()
   await page.getByRole('button', {name: 'Previous board position'}).click()
   await expect(page.getByText('Move 1 / 2')).toBeVisible()
+  await page.route('**/positions/1/katago', async (route) => {
+    await route.fulfill({
+      json: {
+        gameId: 'reviewed-game',
+        turn: 1,
+        toMove: 'W',
+        visits: 5000,
+        candidates: [
+          {move: 'D4', point: [3, 15], winRate: 0.634, visits: 1500},
+          {move: 'Q16', point: [15, 3], winRate: 0.621, visits: 1200},
+          {move: 'D16', point: [3, 3], winRate: 0.61, visits: 900},
+          {move: 'Q4', point: [15, 15], winRate: 0.598, visits: 700},
+          {move: 'K6', point: [9, 13], winRate: 0.587, visits: 500},
+        ],
+      },
+    })
+  })
+  await page
+    .getByRole('button', {name: 'Analyze current position with KataGo'})
+    .click()
+  const topChoice = board.locator('[data-x="3"][data-y="15"]')
+  await expect(topChoice).toHaveClass(/shudan-sign_-1/)
+  await expect(topChoice.locator('.shudan-marker')).toHaveText('63%')
+  await expect(topChoice).toHaveAttribute('title', /#1 D4: 63\.4% win rate/)
+  await expect(board.locator('.shudan-marker_label')).toHaveCount(5)
+  await page.screenshot({
+    path: testInfo.outputPath('katago-review.png'),
+    fullPage: true,
+  })
   await board.locator('.shudan-vertex').nth(182).click()
   await expect(page.locator('.move-row')).toHaveCount(2)
   await page.getByRole('button', {name: 'Latest board position'}).click()
@@ -163,7 +192,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   page,
 }, testInfo) => {
   await page.goto('/settings')
-  await expect(page.getByLabel('Ordinary-game visits')).toHaveValue('2000')
+  await expect(page.getByLabel('Ordinary-game visits')).toHaveValue('5000')
   await page.getByRole('button', {name: 'Test KataGo'}).click()
   await expect(page.getByText('Deterministic KataGo is ready.')).toBeVisible()
 
@@ -171,7 +200,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByRole('heading', {name: 'Benchmark', exact: true}),
   ).toBeVisible()
-  await expect(page.getByLabel('KataGo visits')).toHaveValue('2000')
+  await expect(page.getByLabel('KataGo visits')).toHaveValue('5000')
   page.once('dialog', (dialog) => dialog.accept('E2E notebook'))
   await page.getByRole('button', {name: 'Create notebook'}).click()
   await expect(page.getByLabel('Technique notebook')).toHaveValue(/.+/)

@@ -14,7 +14,13 @@ import {
 import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
 import {AnalysisService} from './analysis'
-import {DeterministicKataGo, KataGoEngine, type KataGoAnalyzer} from './katago'
+import {
+  DeterministicKataGo,
+  gamePosition,
+  KataGoEngine,
+  reviewCandidates,
+  type KataGoAnalyzer,
+} from './katago'
 import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
@@ -83,7 +89,7 @@ const kataGoSettingsSchema = z.object({
   executablePath: z.string().min(1),
   modelPath: z.string().min(1),
   configPath: z.string().min(1),
-  analysisVisits: z.number().int().min(25).max(10_000),
+  analysisVisits: z.number().int().min(25).max(100_000),
 })
 
 const benchmarkSchema = benchmarkConfigSchema.extend({
@@ -136,6 +142,24 @@ export function createApp(
   app.get('/api/games/:id/positions/:turn', async (request) => {
     const {id, turn} = request.params as {id: string; turn: string}
     return games.position(id, Number(turn))
+  })
+  app.post('/api/games/:id/positions/:turn/katago', async (request) => {
+    const {id, turn: rawTurn} = request.params as {id: string; turn: string}
+    const turn = Number(rawTurn)
+    const position = games.position(id, turn)
+    const game = games.get(id)!
+    const result = await kataGo.analyze({
+      ...gamePosition(game, turn),
+      visits: store.getKataGoSettings().analysisVisits,
+      priority: 75,
+    })
+    return {
+      gameId: id,
+      turn,
+      toMove: position.toMove,
+      visits: result.rootInfo.visits,
+      candidates: reviewCandidates(result, game.size, position.toMove),
+    }
   })
   app.delete('/api/games/:id', async (request, reply) => {
     const {id} = request.params as {id: string}

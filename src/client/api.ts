@@ -5,6 +5,7 @@ import type {
   GameAnalysis,
   GamePosition,
   KataGoHealth,
+  KataGoPositionReview,
   KataGoSettings,
   NewGameInput,
   PlayerProfile,
@@ -79,6 +80,11 @@ export const api = {
   game: (id: string) => request<Game>(`/api/games/${id}`),
   gamePosition: (id: string, turn: number) =>
     request<GamePosition>(`/api/games/${id}/positions/${turn}`),
+  reviewPositionWithKataGo: (id: string, turn: number, signal?: AbortSignal) =>
+    request<KataGoPositionReview>(`/api/games/${id}/positions/${turn}/katago`, {
+      method: 'POST',
+      signal,
+    }),
   createGame: (input: NewGameInput) =>
     request<Game>('/api/games', {method: 'POST', body: JSON.stringify(input)}),
   updateGame: (id: string, input: Record<string, unknown>) =>

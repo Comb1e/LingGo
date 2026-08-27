@@ -40,8 +40,9 @@ describe('database migrations', () => {
       {version: 8},
       {version: 9},
       {version: 10},
+      {version: 11},
     ])
-    expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
+    expect(store.getKataGoSettings().analysisVisits).toBe(5_000)
   })
 
   it('allows one live benchmark per profile', () => {
@@ -209,6 +210,23 @@ describe('database migrations', () => {
     )
 
     expect(store.getKataGoSettings().analysisVisits).toBe(2_000)
+  })
+
+  it('raises the previous KataGo visit default', () => {
+    store = new Store(':memory:')
+    store.db.prepare('UPDATE katago_settings SET analysis_visits = 2000').run()
+
+    store.db.exec(
+      readFileSync(
+        new URL(
+          './migrations/011_raise_katago_visit_default.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    )
+
+    expect(store.getKataGoSettings().analysisVisits).toBe(5_000)
   })
 
   it('owns named notebooks by profile and preserves benchmark snapshots', () => {

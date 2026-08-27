@@ -23,6 +23,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useReducer,
   useRef,
   useState,
 } from 'react'
@@ -35,6 +36,7 @@ import type {
   Game,
   GameAnalysis,
   GamePosition,
+  KataGoPositionReview,
   Point,
 } from '../../shared/types'
 import {api} from '../api'
@@ -52,6 +54,32 @@ type BoardReviewState =
   | {status: 'loading'; position: GamePosition; requestedTurn: number}
   | {status: 'historical'; position: GamePosition}
   | {status: 'error'; position: GamePosition; error: unknown}
+
+type ReviewAnalysisState =
+  | {status: 'idle'}
+  | {status: 'running'; turn: number; requestId: number}
+  | {status: 'complete'; result: KataGoPositionReview}
+  | {status: 'error'; turn: number; error: unknown}
+
+type ReviewAnalysisEvent =
+  | {type: 'clear'}
+  | {type: 'start'; turn: number; requestId: number}
+  | {type: 'resolve'; requestId: number; result: KataGoPositionReview}
+  | {type: 'reject'; requestId: number; error: unknown}
+
+function reviewAnalysisReducer(
+  state: ReviewAnalysisState,
+  event: ReviewAnalysisEvent,
+): ReviewAnalysisState {
+  if (event.type === 'clear') return {status: 'idle'}
+  if (event.type === 'start')
+    return {status: 'running', turn: event.turn, requestId: event.requestId}
+  if (state.status !== 'running' || state.requestId !== event.requestId)
+    return state
+  if (event.type === 'resolve')
+    return {status: 'complete', result: event.result}
+  return {status: 'error', turn: state.turn, error: event.error}
+}
 
 function latestGamePosition(game: Game): GamePosition {
   return {
@@ -85,6 +113,12 @@ export function GamePage() {
   const [reviewState, setReviewState] = useState<BoardReviewState>({
     status: 'latest',
   })
+  const [reviewAnalysis, dispatchReviewAnalysis] = useReducer(
+    reviewAnalysisReducer,
+    {status: 'idle'},
+  )
+  const reviewAnalysisAbort = useRef<AbortController | undefined>(undefined)
+  const nextReviewAnalysisRequest = useRef(1)
   const previousMoveCount = useRef<number | undefined>(undefined)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState({
@@ -170,6 +204,43 @@ export function GamePage() {
     },
   })
   const game = gameQuery.data
+  const displayedTurn = game
+    ? reviewState.status === 'latest'
+      ? game.moves.length
+      : reviewState.position.turn
+    : undefined
+
+  useEffect(() => {
+    reviewAnalysisAbort.current?.abort()
+    reviewAnalysisAbort.current = undefined
+    dispatchReviewAnalysis({type: 'clear'})
+  }, [displayedTurn, id])
+
+  useEffect(
+    () => () => {
+      reviewAnalysisAbort.current?.abort()
+    },
+    [],
+  )
+
+  const analyzeDisplayedPosition = useCallback(() => {
+    if (displayedTurn === undefined) return
+    reviewAnalysisAbort.current?.abort()
+    const controller = new AbortController()
+    reviewAnalysisAbort.current = controller
+    const turn = displayedTurn
+    const requestId = nextReviewAnalysisRequest.current++
+    dispatchReviewAnalysis({type: 'start', turn, requestId})
+    void api
+      .reviewPositionWithKataGo(id, turn, controller.signal)
+      .then((result) =>
+        dispatchReviewAnalysis({type: 'resolve', requestId, result}),
+      )
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        dispatchReviewAnalysis({type: 'reject', requestId, error})
+      })
+  }, [displayedTurn, id])
 
   useEffect(() => {
     if (!game) return
@@ -229,6 +300,8 @@ export function GamePage() {
   const loadReviewTurn = useCallback(
     (turn: number) => {
       if (!game || reviewState.status === 'loading') return
+      reviewAnalysisAbort.current?.abort()
+      dispatchReviewAnalysis({type: 'clear'})
       if (turn >= game.moves.length) {
         setReviewState({status: 'latest'})
         return
@@ -290,6 +363,11 @@ export function GamePage() {
       : reviewState.position
   const reviewing = reviewState.status !== 'latest'
   const reviewLoading = reviewState.status === 'loading'
+  const recommendationResult =
+    reviewAnalysis.status === 'complete' &&
+    reviewAnalysis.result.turn === displayPosition.turn
+      ? reviewAnalysis.result
+      : undefined
   const current = displayPosition.toMove === 'B' ? game.black : game.white
   const usage = game.moves.reduce(
     (total, move) => ({
@@ -465,6 +543,8 @@ export function GamePage() {
             dead={reviewing ? [] : game.dead}
             busy={reviewing ? false : game.pending}
             disabled={reviewing}
+            recommendations={recommendationResult?.candidates}
+            recommendationColor={displayPosition.toMove}
           />
           <div className="position-review" aria-label={t('boardReview')}>
             <Button
@@ -495,6 +575,18 @@ export function GamePage() {
               <ChevronRight />
             </Button>
             <Button
+              className="katago-review-button"
+              title={t('analyzeCurrentPosition')}
+              aria-label={t('analyzeCurrentPosition')}
+              disabled={reviewLoading || reviewAnalysis.status === 'running'}
+              onClick={analyzeDisplayedPosition}
+            >
+              <Activity />
+              {reviewAnalysis.status === 'running'
+                ? t('analyzingCurrentPosition')
+                : t('analyzeWithKataGo')}
+            </Button>
+            <Button
               title={t('latestBoardPosition')}
               aria-label={t('latestBoardPosition')}
               disabled={reviewLoading || reviewState.status === 'latest'}
@@ -512,6 +604,13 @@ export function GamePage() {
           <ErrorBanner
             error={
               reviewState.status === 'error' ? reviewState.error : undefined
+            }
+          />
+          <ErrorBanner
+            error={
+              reviewAnalysis.status === 'error'
+                ? reviewAnalysis.error
+                : undefined
             }
           />
           <div className="player-strip black-player">

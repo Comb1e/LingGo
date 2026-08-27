@@ -5,6 +5,7 @@ import {join} from 'node:path'
 import type {BenchmarkRun} from '../shared/types'
 import {createApp} from './app'
 import {Store} from './database'
+import type {KataGoAnalyzer} from './katago'
 
 let store: Store
 let app: ReturnType<typeof createApp>['app']
@@ -161,6 +162,78 @@ describe('game API', () => {
     ).toBe(400)
   })
 
+  it('analyzes a reviewed position with the configured visits', async () => {
+    const inputs: Parameters<KataGoAnalyzer['analyze']>[0][] = []
+    const kataGo: KataGoAnalyzer = {
+      async analyze(input) {
+        inputs.push(input)
+        return {
+          id: 'review',
+          rootInfo: {winrate: 0.6, scoreLead: 2, visits: input.visits},
+          moveInfos: [
+            {move: 'pass', visits: 100, winrate: 0.6, scoreLead: 2},
+            ...['A9', 'B8', 'C7', 'D6', 'E5', 'F4'].map((move, index) => ({
+              move,
+              visits: 90 - index,
+              winrate: 0.6 - index / 100,
+              scoreLead: 2,
+            })),
+          ],
+        }
+      },
+      async close() {},
+    }
+    const reviewStore = new Store(':memory:')
+    const reviewApp = createApp({store: reviewStore, kataGo}).app
+
+    try {
+      const created = await reviewApp.inject({
+        method: 'POST',
+        url: '/api/games',
+        payload: {
+          size: 9,
+          black: {type: 'human', name: 'Black'},
+          white: {type: 'human', name: 'White'},
+          analysisEnabled: false,
+        },
+      })
+      const game = created.json()
+      await reviewApp.inject({
+        method: 'POST',
+        url: `/api/games/${game.id}/commands`,
+        payload: {
+          expectedVersion: game.version,
+          type: 'play',
+          coordinate: 'D4',
+        },
+      })
+
+      const response = await reviewApp.inject({
+        method: 'POST',
+        url: `/api/games/${game.id}/positions/1/katago`,
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(inputs).toHaveLength(1)
+      expect(inputs[0]).toMatchObject({visits: 5_000, priority: 75})
+      expect(inputs[0].moves).toHaveLength(1)
+      expect(response.json()).toMatchObject({
+        gameId: game.id,
+        turn: 1,
+        toMove: 'W',
+        visits: 5_000,
+      })
+      expect(response.json().candidates).toHaveLength(5)
+      expect(response.json().candidates[0]).toMatchObject({
+        move: 'A9',
+        point: [0, 0],
+        winRate: 0.4,
+      })
+    } finally {
+      await reviewApp.close()
+    }
+  })
+
   it('changes LLM analysis sharing without changing the game version', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -208,6 +281,30 @@ describe('game API', () => {
         })
       ).json(),
     ).toMatchObject({enabled: true, shareWithLlm: true})
+  })
+
+  it('allows KataGo visit settings up to 100,000', async () => {
+    const current = store.getKataGoSettings()
+    const payload = {
+      executablePath: current.executablePath,
+      modelPath: current.modelPath,
+      configPath: current.configPath,
+      analysisVisits: 100_000,
+    }
+    const accepted = await app.inject({
+      method: 'PUT',
+      url: '/api/katago/settings',
+      payload,
+    })
+    expect(accepted.statusCode).toBe(200)
+    expect(accepted.json().analysisVisits).toBe(100_000)
+
+    const rejected = await app.inject({
+      method: 'PUT',
+      url: '/api/katago/settings',
+      payload: {...payload, analysisVisits: 100_001},
+    })
+    expect(rejected.statusCode).toBe(400)
   })
 
   it('never returns an API key', async () => {

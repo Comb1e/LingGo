@@ -1,1 +1,1 @@
-export const DEFAULT_KATAGO_VISITS = 2_000
+export const DEFAULT_KATAGO_VISITS = 5_000

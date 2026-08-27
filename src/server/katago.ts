@@ -1,8 +1,16 @@
 import {EventEmitter} from 'node:events'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {createInterface} from 'node:readline'
-import {pointToCoordinate} from '../shared/coordinates'
-import type {BoardSize, Game, KataGoHealth, KataGoSettings, Move} from '../shared/types'
+import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
+import type {
+  BoardSize,
+  Color,
+  Game,
+  KataGoCandidate,
+  KataGoHealth,
+  KataGoSettings,
+  Move,
+} from '../shared/types'
 
 export interface KataGoRoot {
   /** Win rate and score lead are normalized to Black's perspective. */
@@ -15,11 +23,25 @@ export interface KataGoResult {
   id: string
   turnNumber?: number
   rootInfo: KataGoRoot
-  moveInfos?: Array<{move: string; visits: number; winrate: number; scoreLead: number}>
+  moveInfos?: Array<{
+    move: string
+    visits: number
+    winrate: number
+    scoreLead: number
+  }>
 }
 
 export interface KataGoAnalyzer {
-  analyze(input: {size: BoardSize; komi: number; moves: Move[]; visits: number; priority?: number}, signal?: AbortSignal): Promise<KataGoResult>
+  analyze(
+    input: {
+      size: BoardSize
+      komi: number
+      moves: Move[]
+      visits: number
+      priority?: number
+    },
+    signal?: AbortSignal,
+  ): Promise<KataGoResult>
   close(): Promise<void>
   healthCheck?(): Promise<KataGoHealth>
   updateSettings?(settings: KataGoSettings): Promise<void>
@@ -38,7 +60,10 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
   private nextId = 1
   private closing = false
 
-  constructor(private settings: KataGoSettings, private timeoutMs = 120_000) {
+  constructor(
+    private settings: KataGoSettings,
+    private timeoutMs = 120_000,
+  ) {
     super()
   }
 
@@ -47,7 +72,16 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
     return this.restart()
   }
 
-  async analyze(input: {size: BoardSize; komi: number; moves: Move[]; visits: number; priority?: number}, signal?: AbortSignal) {
+  async analyze(
+    input: {
+      size: BoardSize
+      komi: number
+      moves: Move[]
+      visits: number
+      priority?: number
+    },
+    signal?: AbortSignal,
+  ) {
     const id = `linggo-${this.nextId++}`
     const request = {
       id,
@@ -55,21 +89,42 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
       komi: input.komi,
       boardXSize: input.size,
       boardYSize: input.size,
-      moves: input.moves.map((move) => [move.color, kataGoMove(move, input.size)]),
+      moves: input.moves.map((move) => [
+        move.color,
+        kataGoMove(move, input.size),
+      ]),
       maxVisits: input.visits,
       includeOwnership: false,
       includePolicy: false,
       priority: input.priority ?? 0,
     }
-    return this.send(request, signal)
+    return this.send(
+      request,
+      signal,
+      Math.max(this.timeoutMs, input.visits * 15),
+    )
   }
 
   async healthCheck(): Promise<KataGoHealth> {
     try {
-      const result = await this.analyze({size: 9, komi: 7.5, moves: [], visits: 25, priority: 100})
-      return {ok: true, message: 'KataGo analyzed a 9x9 position.', winRate: result.rootInfo.winrate, scoreLead: result.rootInfo.scoreLead}
+      const result = await this.analyze({
+        size: 9,
+        komi: 7.5,
+        moves: [],
+        visits: 25,
+        priority: 100,
+      })
+      return {
+        ok: true,
+        message: 'KataGo analyzed a 9x9 position.',
+        winRate: result.rootInfo.winrate,
+        scoreLead: result.rootInfo.scoreLead,
+      }
     } catch (error) {
-      return {ok: false, message: error instanceof Error ? error.message : 'KataGo failed'}
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'KataGo failed',
+      }
     }
   }
 
@@ -118,15 +173,26 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
     const lines = createInterface({input: child.stdout})
     lines.on('line', (line) => this.receiveLine(line))
     child.stderr.on('data', (chunk) => this.emit('stderr', String(chunk)))
-    child.once('error', (error) => this.rejectAll(new Error(`Unable to launch KataGo: ${error.message}`)))
+    child.once('error', (error) =>
+      this.rejectAll(new Error(`Unable to launch KataGo: ${error.message}`)),
+    )
     child.once('exit', (code, signal) => {
       if (this.child === child) this.child = undefined
-      if (!this.closing) this.rejectAll(new Error(`KataGo exited unexpectedly (${signal ?? code ?? 'unknown'})`))
+      if (!this.closing)
+        this.rejectAll(
+          new Error(
+            `KataGo exited unexpectedly (${signal ?? code ?? 'unknown'})`,
+          ),
+        )
     })
     return child
   }
 
-  private send(request: Record<string, unknown>, signal?: AbortSignal): Promise<KataGoResult> {
+  private send(
+    request: Record<string, unknown>,
+    signal?: AbortSignal,
+    timeoutMs = this.timeoutMs,
+  ): Promise<KataGoResult> {
     signal?.throwIfAborted()
     const child = this.ensureProcess()
     return new Promise((resolve, reject) => {
@@ -134,8 +200,8 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         this.terminate(id)
-        reject(new Error(`KataGo request timed out after ${this.timeoutMs}ms`))
-      }, this.timeoutMs)
+        reject(new Error(`KataGo request timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
       const abort = signal
         ? () => {
             const pending = this.pending.get(id)
@@ -149,7 +215,11 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
       if (abort) signal!.addEventListener('abort', abort, {once: true})
       this.pending.set(id, {resolve, reject, timer, abort})
       child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
-        if (error) this.fail(id, new Error(`Unable to write to KataGo: ${error.message}`))
+        if (error)
+          this.fail(
+            id,
+            new Error(`Unable to write to KataGo: ${error.message}`),
+          )
       })
     })
   }
@@ -177,7 +247,9 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
 
   private terminate(id: string) {
     if (this.child?.exitCode === null)
-      this.child.stdin.write(`${JSON.stringify({action: 'terminate', terminateId: id})}\n`)
+      this.child.stdin.write(
+        `${JSON.stringify({action: 'terminate', terminateId: id})}\n`,
+      )
   }
 
   private fail(id: string, error: Error) {
@@ -194,16 +266,28 @@ export class KataGoEngine extends EventEmitter implements KataGoAnalyzer {
 }
 
 export class DeterministicKataGo implements KataGoAnalyzer {
-  async analyze(input: {size: BoardSize; komi: number; moves: Move[]; visits: number}) {
+  async analyze(input: {
+    size: BoardSize
+    komi: number
+    moves: Move[]
+    visits: number
+  }) {
     return {
       id: `fake-${input.moves.length}`,
       rootInfo: {winrate: 0.5, scoreLead: 0, visits: input.visits},
-      moveInfos: [{move: 'pass', visits: input.visits, winrate: 0.5, scoreLead: 0}],
+      moveInfos: [
+        {move: 'pass', visits: input.visits, winrate: 0.5, scoreLead: 0},
+      ],
     }
   }
 
   async healthCheck(): Promise<KataGoHealth> {
-    return {ok: true, message: 'Deterministic KataGo is ready.', winRate: 0.5, scoreLead: 0}
+    return {
+      ok: true,
+      message: 'Deterministic KataGo is ready.',
+      winRate: 0.5,
+      scoreLead: 0,
+    }
   }
 
   async close() {}
@@ -231,6 +315,32 @@ export function selectedMove(result: KataGoResult): string {
   return move.toLowerCase() === 'pass' ? 'pass' : move
 }
 
-export function gamePosition(game: Pick<Game, 'size' | 'komi' | 'moves'>, turn = game.moves.length) {
+export function reviewCandidates(
+  result: KataGoResult,
+  size: BoardSize,
+  toMove: Color,
+): KataGoCandidate[] {
+  const candidates: KataGoCandidate[] = []
+  for (const candidate of result.moveInfos ?? []) {
+    if (candidate.move.toLowerCase() === 'pass') continue
+    try {
+      candidates.push({
+        move: candidate.move.toUpperCase(),
+        point: coordinateToPoint(candidate.move, size),
+        winRate: toMove === 'B' ? candidate.winrate : 1 - candidate.winrate,
+        visits: candidate.visits,
+      })
+    } catch {
+      continue
+    }
+    if (candidates.length === 5) break
+  }
+  return candidates
+}
+
+export function gamePosition(
+  game: Pick<Game, 'size' | 'komi' | 'moves'>,
+  turn = game.moves.length,
+) {
   return {size: game.size, komi: game.komi, moves: game.moves.slice(0, turn)}
 }

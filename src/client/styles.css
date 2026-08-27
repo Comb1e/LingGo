@@ -837,6 +837,11 @@ svg {
 .board-host > div {
   margin: auto;
 }
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label
+  .shudan-stone-image {
+  opacity: 0.78;
+}
 .player-strip {
   width: min(100%, calc(100vh - 225px));
   min-height: 52px;
@@ -875,6 +880,9 @@ svg {
   min-width: 116px;
   text-align: center;
   font-size: 13px;
+}
+.position-review .katago-review-button {
+  white-space: nowrap;
 }
 .position-loading {
   color: var(--muted);

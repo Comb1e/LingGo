@@ -662,7 +662,7 @@ export function SettingsPage() {
                 <input
                   type="number"
                   min="25"
-                  max="10000"
+                  max="100000"
                   required
                   value={kataValues.analysisVisits}
                   onChange={(event) => {

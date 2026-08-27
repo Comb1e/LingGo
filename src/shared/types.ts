@@ -246,6 +246,21 @@ export interface KataGoHealth {
   scoreLead?: number
 }
 
+export interface KataGoCandidate {
+  move: string
+  point: Point
+  winRate: number
+  visits: number
+}
+
+export interface KataGoPositionReview {
+  gameId: string
+  turn: number
+  toMove: Color
+  visits: number
+  candidates: KataGoCandidate[]
+}
+
 export interface PositionAnalysis {
   gameId: string
   turn: number
@@ -274,7 +289,7 @@ export type BenchmarkPhase = 'training' | 'reflection' | 'final' | 'complete'
 export const benchmarkConfigSchema = z.object({
   profileId: z.string().min(1),
   finalColor: z.enum(['B', 'W']),
-  visits: z.number().int().min(25).max(10_000),
+  visits: z.number().int().min(25).max(100_000),
   includeTrainingWinRates: z.boolean(),
   trainingGameCount: z.number().int().min(1).max(1000),
   notebookId: z.string().min(1),

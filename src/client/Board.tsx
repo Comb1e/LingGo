@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react'
 import {createElement, render} from 'preact'
 import {BoundedGoban} from '@sabaki/shudan'
-import type {Game, Move, Point} from '../shared/types'
+import type {Color, Game, KataGoCandidate, Move, Point} from '../shared/types'
 
 export function Board({
   game,
@@ -11,6 +11,8 @@ export function Board({
   dead = game.dead,
   busy = game.pending,
   disabled = false,
+  recommendations = [],
+  recommendationColor = game.toMove,
 }: {
   game: Game
   onPoint: (point: Point) => void
@@ -19,6 +21,8 @@ export function Board({
   dead?: Point[]
   busy?: boolean
   disabled?: boolean
+  recommendations?: KataGoCandidate[]
+  recommendationColor?: Color
 }) {
   const host = useRef<HTMLDivElement>(null)
   const [dimension, setDimension] = useState(0)
@@ -46,6 +50,16 @@ export function Board({
     if (lastMove?.point && lastMove.action === 'play')
       markerMap[lastMove.point[1]][lastMove.point[0]] = {type: 'circle'}
     for (const [x, y] of dead) markerMap[y][x] = {type: 'cross'}
+    recommendations.forEach((candidate, index) => {
+      const [x, y] = candidate.point
+      if (board[y]?.[x] !== 0) return
+      signMap[y][x] = recommendationColor === 'B' ? 1 : -1
+      markerMap[y][x] = {
+        type: 'label',
+        label: `${Math.round(candidate.winRate * 100)}%`,
+        tooltip: `#${index + 1} ${candidate.move}: ${(candidate.winRate * 100).toFixed(1)}% win rate`,
+      }
+    })
     render(
       createElement(BoundedGoban, {
         maxWidth: dimension,
@@ -65,10 +79,21 @@ export function Board({
       container,
     )
     return () => render(null, container)
-  }, [board, busy, dead, dimension, disabled, game.size, lastMove, onPoint])
+  }, [
+    board,
+    busy,
+    dead,
+    dimension,
+    disabled,
+    game.size,
+    lastMove,
+    onPoint,
+    recommendationColor,
+    recommendations,
+  ])
   return (
     <div
-      className="board-host"
+      className={`board-host${recommendations.length ? ' has-katago-recommendations' : ''}`}
       ref={host}
       aria-label={`${game.size} by ${game.size} Go board`}
     />

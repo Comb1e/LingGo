@@ -154,7 +154,7 @@ export function BenchmarksPage() {
             <input
               type="number"
               min="25"
-              max="10000"
+              max="100000"
               value={visits}
               onChange={(event) => setVisits(Number(event.target.value))}
             />
