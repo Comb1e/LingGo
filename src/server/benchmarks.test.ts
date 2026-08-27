@@ -589,7 +589,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('retries an occupied benchmark move on the unchanged position', async () => {
+  it('invalidates immediately when a benchmark move targets an occupied intersection', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
     const games = new GameService(store)
@@ -598,15 +598,12 @@ describe('benchmark scoring and prompts', () => {
       async requestAction(snapshot, signal, prompt) {
         signal.throwIfAborted()
         prompts.push(prompt ?? '')
-        const repeatsOccupiedPoint =
-          snapshot.toMove === 'B' &&
-          snapshot.moves.length === 2 &&
-          prompt !== 'Intersection is occupied'
         const opensAtA19 =
           snapshot.toMove === 'B' && snapshot.moves.length === 0
         return {
           action:
-            opensAtA19 || repeatsOccupiedPoint
+            opensAtA19 ||
+            (snapshot.toMove === 'B' && snapshot.moves.length === 2)
               ? {
                   action: 'play' as const,
                   coordinate: 'A19',
@@ -648,19 +645,81 @@ describe('benchmark scoring and prompts', () => {
     })
 
     expect(
-      await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
+      await waitFor(() => service.get(run.id)?.status === 'invalid', 2_000),
     ).toBe(true)
-    const correction = prompts.find((prompt) =>
-      prompt.includes('Intersection is occupied'),
-    )
-    expect(correction).toBe('Intersection is occupied')
+    expect(
+      prompts.some((prompt) => prompt === 'Intersection is occupied'),
+    ).toBe(false)
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
       .find(({reason}) => reason.includes('Intersection is occupied'))
     expect(rejection).toMatchObject({turn: 3, attempt: 1, truncated: false})
     expect(rejection?.responseContent).toContain('A19')
-    expect(service.get(run.id)?.error).toBeUndefined()
+    expect(
+      games.list().find((game) => game.benchmarkRunId === run.id),
+    ).toMatchObject({status: 'finished', result: 'Invalid'})
+    expect(service.get(run.id)?.error).toContain('occupied intersection')
+    await service.close()
+  })
+
+  it('allows five invalid benchmark outputs and records their actual attempts', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-output-retry-'))
+    const games = new GameService(store)
+    let requests = 0
+    const adapter = {
+      async requestTurn(request, signal) {
+        signal.throwIfAborted()
+        requests += 1
+        return {
+          text: '{"move":"A19"}',
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          providerKind: 'fake' as const,
+        }
+      },
+      async requestAction() {
+        throw new Error('Legacy request path should not be used')
+      },
+      async requestText(_prompt, signal) {
+        signal.throwIfAborted()
+        return {
+          text: '# Lessons',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const run = await service.create({
+      profileId: 'builtin-fake-profile',
+      finalColor: 'W',
+      visits: 25,
+      includeTrainingWinRates: true,
+      trainingGameCount: 10,
+      notebookId: 'default',
+    })
+
+    expect(
+      await waitFor(() => service.get(run.id)?.status === 'paused', 2_000),
+    ).toBe(true)
+    expect(requests).toBe(5)
+    const rejected = games
+      .list()
+      .flatMap((game) => game.rejectedModelActions ?? [])
+      .filter(({reason}) => reason.includes('Invalid model move JSON'))
+    expect(rejected.map(({attempt}) => attempt)).toEqual([1, 2, 3, 4, 5])
     await service.close()
   })
 

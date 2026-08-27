@@ -550,7 +550,7 @@ export class BenchmarkService {
           maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
         })
         try {
-          while (outputFailures < 3) {
+          while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
             let responseContent = ''
             let turnResponse: LlmTurnResponse | undefined
             try {
@@ -679,6 +679,18 @@ export class BenchmarkService {
               run.outputAttempts = (run.outputAttempts ?? 0) + 1
               run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
+              if (isOccupiedMoveError(error)) {
+                this.games.finishAutomated(game.id, 'Invalid')
+                this.games.completeLlmContexts(game.id)
+                run.status = 'invalid'
+                run.error =
+                  'The model attempted to play on an occupied intersection. The benchmark was invalidated.'
+                run.waitingFor = undefined
+                run.pauseAfterLlmMove = false
+                run.substate = {kind: 'ready'}
+                this.save(run)
+                return false
+              }
               if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS)
                 throw new Error(
                   `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`,
@@ -1140,6 +1152,13 @@ function isRepairableMoveError(error: unknown) {
     error instanceof IllegalMoveError ||
     error instanceof MalformedModelOutputError ||
     error instanceof NoOutputGeneratedError
+  )
+}
+
+function isOccupiedMoveError(error: unknown) {
+  return (
+    error instanceof IllegalMoveError &&
+    error.message === 'Intersection is occupied'
   )
 }
 
