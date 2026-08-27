@@ -33,6 +33,7 @@ import {
 } from './katago'
 import {NotebookStore} from './notebooks'
 import {formatCanonicalGoRules} from './movePrompt'
+import type {VisibleLlmMessage} from './llmGameContext'
 import {perspectiveOutcome} from './llmGameContext'
 import {
   MAX_PROVIDER_API_ATTEMPTS,
@@ -54,6 +55,9 @@ type InternalRun = BenchmarkRun & {
   winRateLosses?: number[]
   outputAttempts?: number
   outputRepairs?: number
+  initializationContext?: {
+    transcript: VisibleLlmMessage[]
+  }
 }
 
 type LegacyBenchmarkConfig = {
@@ -359,6 +363,17 @@ export class BenchmarkService {
               : 'W'
             : run.config.finalColor
         const game = this.ensureGame(run, llmColor)
+        if (run.currentGame === 0 && run.initializationContext) {
+          this.games.seedLlmContext({
+            gameId: game.id,
+            color: llmColor,
+            profile: run.profileSnapshot,
+            connection: this.connection(run),
+            transcript: run.initializationContext.transcript,
+          })
+          run.initializationContext = undefined
+          this.save(run)
+        }
         const completed = await this.playGame(
           run,
           game,
@@ -804,6 +819,12 @@ export class BenchmarkService {
     run.notebookVersion = version.version
     run.notebookEstimatedTokens = version.estimatedTokens
     run.notebook.updatedAt = version.createdAt
+    run.initializationContext = {
+      transcript: [
+        {role: 'user', content: prompt},
+        {role: 'assistant', content},
+      ],
+    }
     run.phase = 'training_game'
     run.substate = {kind: 'ready'}
     run.updatedAt = version.createdAt

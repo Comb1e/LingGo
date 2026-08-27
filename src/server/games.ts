@@ -305,7 +305,15 @@ export class GameService {
       context.lastObservedMove < game.moves.length &&
       unseen.length === 1 &&
       unseen[0].color !== input.color
-    const rebase = !continuationValid
+    // A benchmark can seed game 0 with the notebook-initialization transcript
+    // before any moves exist. Keep that transcript for the first move prompt.
+    const seededInitialContext =
+      context?.status === 'active' &&
+      !identityChanged &&
+      game.moves.length === 0 &&
+      context.lastObservedMove === 0 &&
+      context.transcript.length > 0
+    const rebase = !continuationValid && !seededInitialContext
     const now = new Date().toISOString()
     const content = continuationValid
       ? makeContinuationLlmPrompt(snapshot, unseen[0], input.latestWinRate)
@@ -336,6 +344,35 @@ export class GameService {
     }
     this.store.saveLlmGameContext(context)
     return this.preparedTurn(context, snapshot, context.pendingTurn!)
+  }
+
+  seedLlmContext(input: {
+    gameId: string
+    color: Color
+    profile: PlayerProfile
+    connection: ProviderConnection
+    transcript: LlmGameContext['transcript']
+    providerContinuationId?: string
+  }) {
+    if (this.store.getLlmGameContext(input.gameId, input.color)) return false
+    const now = new Date().toISOString()
+    this.store.saveLlmGameContext({
+      gameId: input.gameId,
+      color: input.color,
+      status: 'active',
+      profileId: input.profile.id,
+      providerKind: input.connection.kind,
+      modelFingerprint: modelFingerprint(input.profile, input.connection),
+      lastObservedMove: 0,
+      transcript: input.transcript,
+      providerContinuationId: input.providerContinuationId,
+      managedContinuation:
+        input.connection.kind === 'openai' &&
+        Boolean(input.providerContinuationId),
+      createdAt: now,
+      updatedAt: now,
+    })
+    return true
   }
 
   repairLlmActionTurn(

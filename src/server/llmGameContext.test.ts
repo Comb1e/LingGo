@@ -40,6 +40,39 @@ describe('persistent LLM game context', () => {
     expect(restored.request).toEqual(first.request)
   })
 
+  it('continues the notebook initialization context into the first game turn', () => {
+    const {games, game, profile, connection} = setupGame()
+    const transcript = [
+      {role: 'user' as const, content: 'Write the technique notebook.'},
+      {role: 'assistant' as const, content: '# Initialized notebook'},
+    ]
+    expect(
+      games.seedLlmContext({
+        gameId: game.id,
+        color: 'B',
+        profile,
+        connection,
+        transcript,
+      }),
+    ).toBe(true)
+
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      mode: {
+        kind: 'benchmark',
+        phase: 'training',
+        notebook: '# Initialized notebook',
+      },
+    })
+
+    expect(prepared.request.kind).toBe('initial')
+    expect(prepared.request.transcript).toEqual(transcript)
+    expect(prepared.request.content).toContain('SELF-WRITTEN SKILLS')
+  })
+
   it('advances atomically and sends only the newly observed opponent move', async () => {
     const {games, game, profile, connection} = setupGame()
     const prepared = games.prepareLlmActionTurn({
