@@ -489,7 +489,7 @@ describe('provider normalization', () => {
 
     await expect(
       adapter.requestAction(emptySnapshot(), new AbortController().signal),
-    ).rejects.toThrow('test stop')
+    ).rejects.toThrow()
 
     const body = JSON.parse(requestBody)
     expect(body.thinking).toEqual({type: 'disabled'})
@@ -525,7 +525,81 @@ describe('provider normalization', () => {
 
     await expect(
       adapter.requestAction(emptySnapshot(), new AbortController().signal),
-    ).rejects.toThrow('test stop')
+    ).rejects.toThrow()
+
+    const body = JSON.parse(requestBody)
+    expect(body).not.toHaveProperty('thinking')
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('applies opt-in DeepSeek-style reasoning control to compatible models', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {status: 500})
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'compatible',
+        name: 'Compatible',
+        kind: 'compatible',
+        baseUrl: 'https://models.example.test/v1',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'compatible-profile',
+        name: 'Compatible player',
+        connectionId: 'compatible',
+        modelId: 'qwen3',
+        temperature: 0,
+        reasoningEnabled: false,
+        reasoningControl: 'extra_body',
+      },
+      'test-key',
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow()
+
+    const body = JSON.parse(requestBody)
+    expect(body.thinking).toEqual({type: 'disabled'})
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('does not add extra-body reasoning controls in automatic mode', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {status: 500})
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'compatible-auto',
+        name: 'Compatible',
+        kind: 'compatible',
+        baseUrl: 'https://models.example.test/v1',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'compatible-auto-profile',
+        name: 'Compatible player',
+        connectionId: 'compatible-auto',
+        modelId: 'qwen3',
+        temperature: 0,
+      },
+      'test-key',
+    )
+
+    await expect(
+      adapter.requestAction(emptySnapshot(), new AbortController().signal),
+    ).rejects.toThrow()
 
     const body = JSON.parse(requestBody)
     expect(body).not.toHaveProperty('thinking')

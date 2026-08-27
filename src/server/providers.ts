@@ -394,6 +394,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       modelId: this.profile.modelId,
       messages,
       reasoningEnabled: this.profile.reasoningEnabled !== false,
+      reasoningControl: this.profile.reasoningControl,
       requestOptions: this.profile.requestOptions,
       signal,
       timeoutMs: this.timeoutMs,
@@ -457,7 +458,9 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   }
 
   private customRequestFetch() {
-    if (!this.profile.requestOptions?.length) return undefined
+    const useExtraBodyControl = this.profile.reasoningControl === 'extra_body'
+    if (!this.profile.requestOptions?.length && !useExtraBodyControl)
+      return undefined
     const requestOptions = this.profile.requestOptions
 
     return async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -470,9 +473,15 @@ export class LlmPlayerAdapter implements PlayerAdapter {
         typeof providerBody !== 'object'
       )
         throw new Error('Provider request body is not a JSON object')
+      const body = mergeRequestOptions(providerBody, requestOptions)
+      if (useExtraBodyControl)
+        applyExtraBodyReasoningControl(
+          body,
+          this.profile.reasoningEnabled !== false,
+        )
       return globalThis.fetch(input, {
         ...init,
-        body: JSON.stringify(mergeRequestOptions(providerBody, requestOptions)),
+        body: JSON.stringify(body),
       })
     }
   }
@@ -492,6 +501,7 @@ async function deepSeekStreamedTextResult(options: {
   modelId: string
   messages: ModelMessage[]
   reasoningEnabled: boolean
+  reasoningControl?: PlayerProfile['reasoningControl']
   requestOptions?: PlayerProfile['requestOptions']
   signal: AbortSignal
   timeoutMs: number
@@ -524,11 +534,11 @@ async function deepSeekStreamedTextResult(options: {
     },
     options.requestOptions,
   )
-  if (supportsDeepSeekReasoningControl(options.modelId)) {
-    body.thinking = {type: options.reasoningEnabled ? 'enabled' : 'disabled'}
-    if (options.reasoningEnabled) body.reasoning_effort ??= 'high'
-    else delete body.reasoning_effort
-  }
+  if (
+    supportsDeepSeekReasoningControl(options.modelId) ||
+    options.reasoningControl === 'extra_body'
+  )
+    applyExtraBodyReasoningControl(body, options.reasoningEnabled)
 
   try {
     const response = await globalThis.fetch(
@@ -581,6 +591,16 @@ async function deepSeekStreamedTextResult(options: {
     clearTimeout(firstTokenTimer)
     clearTimeout(totalTimer)
   }
+}
+
+function applyExtraBodyReasoningControl(
+  body: Record<string, unknown>,
+  reasoningEnabled: boolean,
+) {
+  body.thinking = {type: reasoningEnabled ? 'enabled' : 'disabled'}
+  delete body.reasoning
+  if (reasoningEnabled) body.reasoning_effort ??= 'high'
+  else delete body.reasoning_effort
 }
 
 function updateDeepSeekStream(

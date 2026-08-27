@@ -151,8 +151,8 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO player_profiles
-         (id, name, connection_id, model_id, temperature, style_prompt, created_at, updated_at)
-         VALUES ('builtin-fake-profile', 'Local learner', 'builtin-fake', 'deterministic-v1', 0, 'Play simple legal moves.', ?, ?)`,
+         (id, name, connection_id, model_id, temperature, style_prompt, reasoning_control, created_at, updated_at)
+         VALUES ('builtin-fake-profile', 'Local learner', 'builtin-fake', 'deterministic-v1', 0, 'Play simple legal moves.', 'automatic', ?, ?)`,
       )
       .run(now, now)
   }
@@ -762,7 +762,7 @@ export class Store {
     return (
       this.db
         .prepare(
-          `SELECT id, name, connection_id, model_id, temperature, reasoning_enabled, request_options_json, style_prompt
+          `SELECT id, name, connection_id, model_id, temperature, reasoning_enabled, reasoning_control, request_options_json, style_prompt
            FROM player_profiles ORDER BY name COLLATE NOCASE, name, id`,
         )
         .all() as Array<any>
@@ -772,7 +772,7 @@ export class Store {
   getProfile(id: string): PlayerProfile | undefined {
     const row = this.db
       .prepare(
-        'SELECT id, name, connection_id, model_id, temperature, reasoning_enabled, request_options_json, style_prompt FROM player_profiles WHERE id = ?',
+        'SELECT id, name, connection_id, model_id, temperature, reasoning_enabled, reasoning_control, request_options_json, style_prompt FROM player_profiles WHERE id = ?',
       )
       .get(id) as any
     return row ? mapProfile(row) : undefined
@@ -782,10 +782,11 @@ export class Store {
     const now = new Date().toISOString()
     this.db
       .prepare(
-        `INSERT INTO player_profiles (id, name, connection_id, model_id, temperature, reasoning_enabled, request_options_json, style_prompt, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO player_profiles (id, name, connection_id, model_id, temperature, reasoning_enabled, reasoning_control, request_options_json, style_prompt, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, connection_id = excluded.connection_id,
          model_id = excluded.model_id, temperature = excluded.temperature, reasoning_enabled = excluded.reasoning_enabled,
+         reasoning_control = excluded.reasoning_control,
          request_options_json = excluded.request_options_json,
          style_prompt = excluded.style_prompt, updated_at = excluded.updated_at`,
       )
@@ -796,6 +797,7 @@ export class Store {
         profile.modelId,
         profile.temperature,
         profile.reasoningEnabled === false ? 0 : 1,
+        profile.reasoningControl ?? 'automatic',
         profile.requestOptions?.length
           ? JSON.stringify(profile.requestOptions)
           : null,
@@ -844,6 +846,8 @@ function mapProfile(row: any): PlayerProfile {
     modelId: row.model_id,
     temperature: row.temperature,
     reasoningEnabled: Boolean(row.reasoning_enabled),
+    reasoningControl:
+      row.reasoning_control === 'extra_body' ? 'extra_body' : 'automatic',
     requestOptions: row.request_options_json
       ? JSON.parse(row.request_options_json)
       : undefined,

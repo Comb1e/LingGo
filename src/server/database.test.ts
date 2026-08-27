@@ -43,6 +43,7 @@ describe('database migrations', () => {
       {version: 11},
       {version: 12},
       {version: 13},
+      {version: 14},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(5_000)
   })

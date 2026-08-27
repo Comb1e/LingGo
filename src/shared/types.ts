@@ -52,6 +52,8 @@ export interface PlayerProfile {
   modelId: string
   temperature: number
   reasoningEnabled?: boolean
+  /** Optional extra-body control for APIs that implement DeepSeek-style thinking. */
+  reasoningControl?: 'automatic' | 'extra_body'
   requestOptions?: RequestOption[]
   stylePrompt?: string
 }

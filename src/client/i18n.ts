@@ -87,6 +87,11 @@ const resources = {
       modelId: 'Model ID',
       temperature: 'Temperature',
       deepSeekReasoning: 'DeepSeek reasoning',
+      reasoningControl: 'Reasoning request format',
+      reasoningControlAutomatic: 'Automatic (provider default)',
+      reasoningControlExtraBody: 'Extra-body thinking control',
+      reasoningControlNotice:
+        'Optional: adds thinking.type and removes reasoning_effort when disabled. Use only for compatible models.',
       requestOptions: 'Request options (optional)',
       requestOptionsNotice:
         'Add top-level provider request fields. JSON objects, arrays, numbers, and booleans are parsed; other content is sent as text.',
@@ -290,6 +295,11 @@ const resources = {
       modelId: '模型 ID',
       temperature: '温度',
       deepSeekReasoning: 'DeepSeek 推理',
+      reasoningControl: '推理请求格式',
+      reasoningControlAutomatic: '自动（服务商默认）',
+      reasoningControlExtraBody: '使用 extra body 控制 thinking',
+      reasoningControlNotice:
+        '可选：关闭时添加 thinking.type 并移除 reasoning_effort。仅用于兼容的模型。',
       requestOptions: '请求选项（可选）',
       requestOptionsNotice:
         '添加服务商请求体的顶层字段。JSON 对象、数组、数字和布尔值会被解析，其他内容按文本发送。',

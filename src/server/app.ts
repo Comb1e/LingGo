@@ -53,6 +53,7 @@ const profileSchema = z
     modelId: z.string().min(1),
     temperature: z.number().min(0).max(2).default(0.7),
     reasoningEnabled: z.boolean().default(true),
+    reasoningControl: z.enum(['automatic', 'extra_body']).default('automatic'),
     requestOptions: z
       .array(
         z.object({

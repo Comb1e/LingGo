@@ -43,6 +43,9 @@ export function SettingsPage() {
   const [modelId, setModelId] = useState('')
   const [temperature, setTemperature] = useState(0.7)
   const [reasoningEnabled, setReasoningEnabled] = useState(true)
+  const [reasoningControl, setReasoningControl] = useState<
+    'automatic' | 'extra_body'
+  >('automatic')
   const [requestOptions, setRequestOptions] = useState<RequestOption[]>([])
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
@@ -86,6 +89,7 @@ export function SettingsPage() {
     setModelId('')
     setTemperature(0.7)
     setReasoningEnabled(true)
+    setReasoningControl('automatic')
     setRequestOptions([])
     setStylePrompt('')
     setProfileTestResult('')
@@ -123,6 +127,7 @@ export function SettingsPage() {
         modelId,
         temperature,
         reasoningEnabled,
+        reasoningControl,
         requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       }
@@ -155,6 +160,7 @@ export function SettingsPage() {
     setModelId(item.modelId)
     setTemperature(item.temperature)
     setReasoningEnabled(item.reasoningEnabled !== false)
+    setReasoningControl(item.reasoningControl ?? 'automatic')
     setRequestOptions(item.requestOptions?.map((option) => ({...option})) ?? [])
     setStylePrompt(item.stylePrompt ?? '')
     setError(undefined)
@@ -184,6 +190,7 @@ export function SettingsPage() {
         modelId,
         temperature,
         reasoningEnabled,
+        reasoningControl,
         requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       })
@@ -482,21 +489,44 @@ export function SettingsPage() {
                   onChange={(event) => setModelId(event.target.value)}
                 />
               </label>
-              {selectedConnection?.kind === 'deepseek' &&
-                supportsDeepSeekReasoningControl(modelId) && (
-                  <label className="switch-field">
-                    <input
-                      type="checkbox"
-                      checked={reasoningEnabled}
-                      onChange={(event) => {
-                        setReasoningEnabled(event.target.checked)
-                        setProfileTestResult('')
-                      }}
-                    />
-                    <span className="switch" />
-                    <span>{t('deepSeekReasoning')}</span>
-                  </label>
-                )}
+              <label className="field">
+                <span>{t('reasoningControl')}</span>
+                <select
+                  value={reasoningControl}
+                  onChange={(event) => {
+                    setReasoningControl(
+                      event.target.value as 'automatic' | 'extra_body',
+                    )
+                    setProfileTestResult('')
+                  }}
+                >
+                  <option value="automatic">
+                    {t('reasoningControlAutomatic')}
+                  </option>
+                  <option value="extra_body">
+                    {t('reasoningControlExtraBody')}
+                  </option>
+                </select>
+                <small className="field-note">
+                  {t('reasoningControlNotice')}
+                </small>
+              </label>
+              {(reasoningControl === 'extra_body' ||
+                (selectedConnection?.kind === 'deepseek' &&
+                  supportsDeepSeekReasoningControl(modelId))) && (
+                <label className="switch-field">
+                  <input
+                    type="checkbox"
+                    checked={reasoningEnabled}
+                    onChange={(event) => {
+                      setReasoningEnabled(event.target.checked)
+                      setProfileTestResult('')
+                    }}
+                  />
+                  <span className="switch" />
+                  <span>{t('deepSeekReasoning')}</span>
+                </label>
+              )}
               <div className="field request-options-field">
                 <span>{t('requestOptions')}</span>
                 <small className="field-note">
