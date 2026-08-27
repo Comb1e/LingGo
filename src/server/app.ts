@@ -3,7 +3,6 @@ import fastifyStatic from '@fastify/static'
 import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {z, ZodError} from 'zod'
-import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
 import {requestOptionsBody} from '../shared/requestOptions'
 import {
   benchmarkConfigSchema,
@@ -93,15 +92,19 @@ const kataGoSettingsSchema = z.object({
   analysisVisits: z.number().int().min(25).max(100_000),
 })
 
-const benchmarkSchema = benchmarkConfigSchema.extend({
-  visits: benchmarkConfigSchema.shape.visits.default(DEFAULT_KATAGO_VISITS),
-  includeTrainingWinRates:
-    benchmarkConfigSchema.shape.includeTrainingWinRates.default(true),
-})
+const benchmarkSchema = benchmarkConfigSchema
 
 const notebookSchema = z.object({
   name: z.string().trim().min(1).max(120),
 })
+
+const publishBenchmarkNotebookSchema = z.discriminatedUnion('mode', [
+  z.object({mode: z.literal('replace_source')}),
+  z.object({
+    mode: z.literal('save_new'),
+    name: z.string().trim().min(1).max(120),
+  }),
+])
 
 export function createApp(
   options: {
@@ -446,7 +449,8 @@ export function createApp(
           .listBenchmarks()
           .some(
             (run) =>
-              run.config.notebookId === notebookId &&
+              run.config.notebookSeed.mode === 'refine_existing' &&
+              run.config.notebookSeed.notebookId === notebookId &&
               ['queued', 'running', 'paused'].includes(run.status),
           )
       )
@@ -598,6 +602,32 @@ export function createApp(
       `inline; filename="linggo-benchmark-${id}.md"`,
     )
     return markdown
+  })
+  app.get('/api/benchmarks/:id/notebook-versions', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
+    return store.listBenchmarkNotebookVersions(id)
+  })
+  app.get('/api/benchmarks/:id/move-reviews', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
+    return store.listBenchmarkMoveReviews(id)
+  })
+  app.post('/api/benchmarks/:id/publish', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    try {
+      return benchmarks.publishNotebook(
+        id,
+        publishBenchmarkNotebookSchema.parse(request.body),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Publish failed'
+      return reply
+        .code(message.includes('not found') ? 404 : 409)
+        .send({error: message})
+    }
   })
   app.get('/api/benchmarks/:id/events', async (request, reply) => {
     const {id} = request.params as {id: string}

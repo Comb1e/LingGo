@@ -1,5 +1,14 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
-import {Download, Pause, Play, SkipForward, Trash2, XCircle} from 'lucide-react'
+import {
+  CopyPlus,
+  Download,
+  Pause,
+  Play,
+  RefreshCw,
+  SkipForward,
+  Trash2,
+  XCircle,
+} from 'lucide-react'
 import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
@@ -34,6 +43,15 @@ export function BenchmarkPage() {
       api.benchmarkCommand(id, input),
     onSuccess: (run) => queryClient.setQueryData(['benchmark', id], run),
   })
+  const publish = useMutation({
+    mutationFn: (
+      input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
+    ) => api.publishBenchmarkNotebook(id, input),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['notebooks', query.data?.config.profileId],
+      }),
+  })
   const remove = useMutation({
     mutationFn: () => api.deleteBenchmark(id),
     onSuccess: () => {
@@ -66,10 +84,8 @@ export function BenchmarkPage() {
       </div>
     )
   const run = query.data
-  const trainingProgress = Math.min(
-    run.currentGame,
-    run.config.trainingGameCount,
-  )
+  const trainingGameCount = run.config.trainingGameCount ?? 10
+  const trainingProgress = Math.min(run.currentGame, trainingGameCount)
   return (
     <div className="page benchmark-detail">
       <PageHeader
@@ -122,19 +138,22 @@ export function BenchmarkPage() {
           </>
         }
       />
-      <ErrorBanner error={command.error ?? remove.error ?? query.error} />
+      <ErrorBanner
+        error={command.error ?? publish.error ?? remove.error ?? query.error}
+      />
       {run.error && <div className="banner warning-banner">{run.error}</div>}
       <section className="benchmark-progress">
         <div>
           <span>{t('trainingGames')}</span>
           <strong>
-            {trainingProgress} / {run.config.trainingGameCount}
+            {trainingProgress} / {trainingGameCount}
           </strong>
         </div>
-        <progress max={run.config.trainingGameCount} value={trainingProgress} />
+        <progress max={trainingGameCount} value={trainingProgress} />
         <div>
           <span>{t('phase')}</span>
           <strong>{t(run.phase)}</strong>
+          <small>{t(run.substate?.kind ?? 'ready')}</small>
         </div>
         <div>
           <span>{t('currentTurn')}</span>
@@ -149,27 +168,66 @@ export function BenchmarkPage() {
             {(run.usage.cachedInputTokens ?? 0).toLocaleString()} {t('cached')}
           </strong>
         </div>
-      </section>
-
-      {run.status === 'paused' &&
-        run.currentGame < run.config.trainingGameCount && (
-          <div className="benchmark-force">
-            <Button
-              onClick={() =>
-                command.mutate({
-                  type: 'force',
-                  action: {
-                    action: 'pass',
-                    comment: 'Operator forced training pass.',
-                  },
-                })
-              }
-            >
-              <SkipForward />
-              {t('forcePass')}
-            </Button>
+        <div>
+          <span>{t('notebookVersion')}</span>
+          <strong>v{run.notebookVersion ?? 0}</strong>
+        </div>
+        <div>
+          <span>{t('notebookBudgetUsage')}</span>
+          <strong>
+            {(run.notebookEstimatedTokens ?? 0).toLocaleString()} /{' '}
+            {(run.config.notebookTokenBudget ?? 0).toLocaleString()}
+          </strong>
+        </div>
+        <div>
+          <span>{t('trainingFeedbackMode')}</span>
+          <strong>
+            {t(
+              run.config.trainingFeedback ??
+                ((run.config as unknown as {includeTrainingWinRates?: boolean})
+                  .includeTrainingWinRates
+                  ? 'structured'
+                  : 'none'),
+            )}
+          </strong>
+        </div>
+        {(run.sourceRunId || run.successorRunId) && (
+          <div>
+            <span>{t('migrationLineage')}</span>
+            <strong>
+              {run.sourceRunId && (
+                <Link to={`/benchmarks/${run.sourceRunId}`}>
+                  {t('sourceRun')}
+                </Link>
+              )}
+              {run.successorRunId && (
+                <Link to={`/benchmarks/${run.successorRunId}`}>
+                  {t('successorRun')}
+                </Link>
+              )}
+            </strong>
           </div>
         )}
+      </section>
+
+      {run.status === 'paused' && run.currentGame < trainingGameCount && (
+        <div className="benchmark-force">
+          <Button
+            onClick={() =>
+              command.mutate({
+                type: 'force',
+                action: {
+                  action: 'pass',
+                  comment: 'Operator forced training pass.',
+                },
+              })
+            }
+          >
+            <SkipForward />
+            {t('forcePass')}
+          </Button>
+        </div>
+      )}
 
       {run.metrics && (
         <section className="metrics-band">
@@ -195,6 +253,18 @@ export function BenchmarkPage() {
             label={t('moveCount')}
             value={String(run.metrics.moveCount)}
           />
+          <Metric
+            label={t('outputRepairRate')}
+            value={`${((run.metrics.outputRepairRate ?? 0) * 100).toFixed(1)}%`}
+          />
+          <Metric
+            label={t('trainingReviewCount')}
+            value={String(run.metrics.trainingReviewCount ?? 0)}
+          />
+          <Metric
+            label={t('notebookGrowth')}
+            value={String(run.metrics.notebookGrowthCharacters ?? 0)}
+          />
         </section>
       )}
 
@@ -204,12 +274,12 @@ export function BenchmarkPage() {
           {run.gameIds.map((gameId, index) => (
             <Link key={gameId} to={`/games/${gameId}`}>
               <span>
-                {index < run.config.trainingGameCount
+                {index < trainingGameCount
                   ? `${t('training')} ${index + 1}`
                   : t('finalGame')}
               </span>
               <small>
-                {index < run.config.trainingGameCount
+                {index < trainingGameCount
                   ? index % 2 === 0
                     ? t('black')
                     : t('white')
@@ -223,14 +293,44 @@ export function BenchmarkPage() {
         <section className="notebook-panel">
           <header>
             <h2>{t('techniqueNotebook')}</h2>
-            <a
-              className="button icon-button"
-              href={`/api/benchmarks/${run.id}/notebook.md`}
-              download
-              title={t('downloadNotebook')}
-            >
-              <Download />
-            </a>
+            <div className="notebook-actions">
+              {run.status === 'completed' &&
+                run.config.notebookSeed?.mode === 'refine_existing' && (
+                  <Button
+                    title={t('replaceSourceNotebook')}
+                    disabled={publish.isPending}
+                    onClick={() => {
+                      if (window.confirm(t('replaceSourceNotebookConfirm')))
+                        publish.mutate({mode: 'replace_source'})
+                    }}
+                  >
+                    <RefreshCw />
+                    {t('replaceSource')}
+                  </Button>
+                )}
+              {run.status === 'completed' && (
+                <Button
+                  title={t('saveNotebookAsNew')}
+                  disabled={publish.isPending}
+                  onClick={() => {
+                    const name = window.prompt(t('publishedNotebookName'))
+                    if (name?.trim())
+                      publish.mutate({mode: 'save_new', name: name.trim()})
+                  }}
+                >
+                  <CopyPlus />
+                  {t('saveAsNew')}
+                </Button>
+              )}
+              <a
+                className="button icon-button"
+                href={`/api/benchmarks/${run.id}/notebook.md`}
+                download
+                title={t('downloadNotebook')}
+              >
+                <Download />
+              </a>
+            </div>
           </header>
           <Markdown source={notebook.data ?? ''} />
         </section>

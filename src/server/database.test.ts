@@ -44,6 +44,8 @@ describe('database migrations', () => {
       {version: 12},
       {version: 13},
       {version: 14},
+      {version: 15},
+      {version: 16},
     ])
     expect(store.getKataGoSettings().analysisVisits).toBe(5_000)
   })
@@ -299,7 +301,7 @@ describe('database migrations', () => {
     }
   })
 
-  it('upgrades active legacy benchmarks and imports their snapshots', () => {
+  it('invalidates active V1 benchmarks and creates one resumable V2 successor', () => {
     temporaryDirectory = mkdtempSync(join(tmpdir(), 'linggo-run-upgrade-'))
     const notebookDirectory = join(temporaryDirectory, 'techniques')
     const filename = join(temporaryDirectory, 'linggo.db')
@@ -308,16 +310,22 @@ describe('database migrations', () => {
     process.env.LINGGO_TECHNIQUES_DIR = notebookDirectory
     try {
       store = new Store(filename)
-      const legacy = benchmarkRun('') as BenchmarkRun & {
-        config: BenchmarkRun['config'] & {notebookMode?: string}
-      }
+      const legacy = benchmarkRun('') as any
       legacy.id = 'legacy-active-run'
       legacy.status = 'paused'
       legacy.phase = 'reflection'
-      delete (legacy.config as Partial<BenchmarkRun['config']>)
-        .trainingGameCount
-      delete (legacy.config as Partial<BenchmarkRun['config']>).notebookId
-      legacy.config.notebookMode = 'continue'
+      delete legacy.protocolVersion
+      delete legacy.substate
+      delete legacy.notebookVersion
+      delete legacy.notebookEstimatedTokens
+      delete legacy.kataGoFingerprint
+      legacy.config = {
+        profileId: 'builtin-fake-profile',
+        finalColor: 'B',
+        visits: 250,
+        includeTrainingWinRates: true,
+        notebookMode: 'continue',
+      }
       store.saveBenchmark(legacy)
       store.db
         .prepare(
@@ -332,15 +340,37 @@ describe('database migrations', () => {
       store.close()
 
       store = new Store(filename)
-      const upgraded = store.getBenchmark(legacy.id)!
-      expect(upgraded.config.trainingGameCount).toBe(10)
-      expect(upgraded.config.notebookId).not.toBe('')
-      expect(
-        store.listNotebooks('builtin-fake-profile').map(({name}) => name),
-      ).toEqual(['Default'])
+      const historical = store.getBenchmark(legacy.id)!
+      expect(historical).toMatchObject({
+        protocolVersion: 1,
+        status: 'invalid',
+      })
+      const successor = store.getBenchmark(historical.successorRunId!)!
+      expect(successor).toMatchObject({
+        protocolVersion: 2,
+        status: 'paused',
+        phase: 'initializing_notebook',
+        sourceRunId: legacy.id,
+        config: {
+          notebookSeed: {mode: 'rules_only'},
+          notebookTokenBudget: 8000,
+          trainingFeedback: 'structured',
+          trainingVisits: 250,
+          evaluationVisits: 250,
+        },
+      })
       expect(store.getNotebookSnapshot(legacy.id)?.content).toBe(
         '# Legacy snapshot',
       )
+      const successorId = successor.id
+      store.close()
+      store = new Store(filename)
+      expect(
+        store
+          .listBenchmarks()
+          .filter(({sourceRunId}) => sourceRunId === legacy.id),
+      ).toHaveLength(1)
+      expect(store.getBenchmark(successorId)?.id).toBe(successorId)
     } finally {
       if (previous === undefined) delete process.env.LINGGO_TECHNIQUES_DIR
       else process.env.LINGGO_TECHNIQUES_DIR = previous
@@ -352,15 +382,19 @@ function benchmarkRun(notebookId: string): BenchmarkRun {
   const now = new Date().toISOString()
   return {
     id: 'notebook-run',
+    protocolVersion: 2,
     status: 'completed',
     phase: 'complete',
+    substate: {kind: 'ready'},
     config: {
       profileId: 'builtin-fake-profile',
       finalColor: 'B',
-      visits: 25,
-      includeTrainingWinRates: false,
       trainingGameCount: 1,
-      notebookId,
+      notebookSeed: {mode: 'refine_existing', notebookId},
+      trainingFeedback: 'none',
+      notebookTokenBudget: 8000,
+      trainingVisits: 25,
+      evaluationVisits: 25,
     },
     profileSnapshot: {
       id: 'builtin-fake-profile',
@@ -370,11 +404,14 @@ function benchmarkRun(notebookId: string): BenchmarkRun {
       temperature: 0,
     },
     modelFingerprint: 'test',
+    kataGoFingerprint: 'katago',
     currentGame: 2,
     currentTurn: 0,
     gameIds: [],
     usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
     notebook: {profileId: 'builtin-fake-profile', notebookId},
+    notebookVersion: 1,
+    notebookEstimatedTokens: 1,
     createdAt: now,
     updatedAt: now,
   }

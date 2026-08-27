@@ -200,7 +200,9 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByRole('heading', {name: 'Benchmark', exact: true}),
   ).toBeVisible()
-  await expect(page.getByLabel('KataGo visits')).toHaveValue('5000')
+  await expect(page.getByLabel('Training visits')).toHaveValue('5000')
+  await expect(page.getByLabel('Evaluation visits')).toHaveValue('10000')
+  await page.getByRole('button', {name: 'Rules + existing notebook'}).click()
   page.once('dialog', (dialog) => dialog.accept('E2E notebook'))
   await page.getByRole('button', {name: 'Create notebook'}).click()
   await expect(page.getByLabel('Technique notebook')).toHaveValue(/.+/)
@@ -219,6 +221,9 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     page.getByText('Check liberties before every move.'),
   ).toBeVisible()
+  await expect(page.getByText('Training reviews')).toBeVisible()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', {name: 'Replace source'}).click()
   await page.screenshot({
     path: testInfo.outputPath('benchmark-complete.png'),
     fullPage: true,
@@ -235,7 +240,7 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
   await expect(
     trainingMessages.getByText('Assistant', {exact: true}).first(),
   ).toBeVisible()
-  await expect(trainingMessages).toContainText('Outcome:')
+  await expect(trainingMessages).not.toContainText('Outcome:')
   await page.getByRole('button', {name: 'Previous board position'}).click()
   await expect(page.getByText(/Move \d+ \/ \d+/)).toBeVisible()
   await page.getByRole('button', {name: 'Latest board position'}).click()
@@ -409,11 +414,11 @@ test('saves disabled reasoning for a DeepSeek profile', async ({
     .selectOption(connection.id)
   await page.getByLabel('Model ID').fill('deepseek-chat')
   await expect(
-    page.getByRole('checkbox', {name: 'DeepSeek reasoning', exact: true}),
+    page.getByRole('checkbox', {name: 'Model reasoning', exact: true}),
   ).toHaveCount(0)
   await page.getByLabel('Model ID').fill('deepseek-v4-pro')
   const reasoning = page.getByRole('checkbox', {
-    name: 'DeepSeek reasoning',
+    name: 'Model reasoning',
     exact: true,
   })
   await expect(reasoning).toBeChecked()

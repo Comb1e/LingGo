@@ -91,6 +91,12 @@ export class NotebookStore {
     )
   }
 
+  async writeRunSnapshot(runId: string, markdown: string) {
+    if (this.store) return
+    await mkdir(join(this.root!, 'runs'), {recursive: true})
+    await this.atomicWrite(this.snapshotPath(runId), markdown)
+  }
+
   private currentPath(id: string) {
     return join(this.root!, `${safeId(id)}.md`)
   }

@@ -92,11 +92,13 @@ export function makeInitialLlmPrompt(
   }
 
   const values = [
-    'BACKGROUND',
-    mode.phase === 'training'
-      ? "This is a benchmark training game. Your primary goal is to learn, not to win; the result of this training game does not matter. You are playing against the world's best Go player. Study the opponent's decisions as well as your own and develop general skills that transfer to future positions."
-      : 'This is the scored final game. Play to the best of your ability and maximize your score.',
-    '',
+    ...(mode.phase === 'training'
+      ? [
+          'BACKGROUND',
+          "This is a benchmark training game. Your primary goal is to learn, not to win; the result of this training game does not matter. You are playing against the world's best Go player. Study the opponent's decisions as well as your own and develop general skills that transfer to future positions.",
+          '',
+        ]
+      : []),
     ...sections.goRules,
     '',
     '2. SELF-WRITTEN SKILLS',

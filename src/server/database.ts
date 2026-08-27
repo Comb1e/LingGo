@@ -1,10 +1,12 @@
 import Database from 'better-sqlite3'
 import {existsSync, mkdirSync, readFileSync, readdirSync} from 'node:fs'
-import {randomUUID} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import type {
   BenchmarkRun,
+  BenchmarkMoveReview,
+  BenchmarkNotebookVersion,
   Game,
   GameAnalysis,
   KataGoSettings,
@@ -32,7 +34,7 @@ export class Store {
     this.migrate()
     this.seedFakeProvider()
     this.importLegacyNotebooks()
-    this.upgradeActiveLegacyBenchmarks()
+    this.migrateActiveV1Benchmarks()
   }
 
   private importLegacyNotebooks() {
@@ -77,7 +79,7 @@ export class Store {
     importNotebook()
   }
 
-  private upgradeActiveLegacyBenchmarks() {
+  private migrateActiveV1Benchmarks() {
     const rows = this.db
       .prepare(
         `SELECT run_json FROM benchmark_runs
@@ -85,26 +87,63 @@ export class Store {
       )
       .all() as Array<{run_json: string}>
     for (const row of rows) {
-      const run = JSON.parse(row.run_json) as BenchmarkRun
-      if (run.config.trainingGameCount && run.config.notebookId) continue
-      let notebook = this.listNotebooks(run.config.profileId).find(
-        ({name}) => name.toLocaleLowerCase() === 'default',
-      )
-      notebook ??= this.createNotebook(run.config.profileId, 'Default')
-      run.config = {
-        ...run.config,
-        trainingGameCount: 10,
-        notebookId: notebook.id,
+      const legacy = JSON.parse(row.run_json) as any
+      if (legacy.protocolVersion === 2) continue
+      const now = new Date().toISOString()
+      const successorId = randomUUID()
+      const visits = legacy.config.visits ?? 5000
+      const successor: BenchmarkRun = {
+        id: successorId,
+        protocolVersion: 2,
+        status: legacy.status === 'paused' ? 'paused' : 'queued',
+        phase: 'initializing_notebook',
+        substate:
+          legacy.status === 'paused'
+            ? {kind: 'paused', previous: {kind: 'ready'}}
+            : {kind: 'ready'},
+        config: {
+          profileId: legacy.config.profileId,
+          finalColor: legacy.config.finalColor,
+          trainingGameCount: legacy.config.trainingGameCount ?? 10,
+          notebookSeed: {mode: 'rules_only'},
+          trainingFeedback: legacy.config.includeTrainingWinRates
+            ? 'structured'
+            : 'none',
+          notebookTokenBudget: 8000,
+          trainingVisits: visits,
+          evaluationVisits: visits,
+        },
+        profileSnapshot: legacy.profileSnapshot,
+        modelFingerprint: legacy.modelFingerprint,
+        kataGoFingerprint: kataGoFingerprint(this.getKataGoSettings()),
+        currentGame: 0,
+        currentTurn: 0,
+        gameIds: [],
+        usage: emptyBenchmarkUsage(),
+        notebook: {
+          profileId: legacy.config.profileId,
+          snapshotUrl: `/api/benchmarks/${successorId}/notebook.md`,
+        },
+        notebookVersion: 0,
+        notebookEstimatedTokens: 0,
+        sourceRunId: legacy.id,
+        createdAt: now,
+        updatedAt: now,
       }
-      delete (run.config as BenchmarkRun['config'] & {notebookMode?: string})
-        .notebookMode
-      run.notebook = {
-        ...run.notebook,
-        notebookId: notebook.id,
-        name: notebook.name,
-        currentUrl: `/api/profiles/${run.config.profileId}/notebooks/${notebook.id}.md`,
-      }
-      this.saveBenchmark(run)
+      legacy.protocolVersion = 1
+      legacy.status = 'invalid'
+      legacy.successorRunId = successorId
+      legacy.error =
+        'Invalidated by Benchmark Protocol V2; continue with the linked successor run.'
+      legacy.updatedAt = now
+      this.transaction(() => {
+        this.db
+          .prepare(
+            `UPDATE benchmark_runs SET status = 'invalid', run_json = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(JSON.stringify(legacy), now, legacy.id)
+        this.saveBenchmark(successor)
+      })
     }
   }
 
@@ -536,6 +575,178 @@ export class Store {
     })()
   }
 
+  saveBenchmarkWithSeed(run: BenchmarkRun, notebook?: TechniqueNotebook) {
+    this.transaction(() => {
+      this.saveBenchmark(run)
+      const content = notebook?.content ?? ''
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_seeds
+           (run_id, notebook_id, content, digest, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          run.id,
+          notebook?.id ?? null,
+          content,
+          createHash('sha256').update(content).digest('hex'),
+          run.createdAt,
+        )
+    })
+  }
+
+  getBenchmarkNotebookSeed(runId: string) {
+    return this.db
+      .prepare(
+        `SELECT notebook_id AS notebookId, content, digest, created_at AS createdAt
+         FROM benchmark_notebook_seeds WHERE run_id = ?`,
+      )
+      .get(runId) as
+      | {
+          notebookId?: string
+          content: string
+          digest: string
+          createdAt: string
+        }
+      | undefined
+  }
+
+  saveBenchmarkNotebookVersion(
+    run: BenchmarkRun,
+    version: BenchmarkNotebookVersion,
+  ) {
+    this.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_versions
+           (run_id, version, source_phase, content, digest, character_count,
+            byte_count, estimated_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          version.runId,
+          version.version,
+          version.sourcePhase,
+          version.content,
+          version.digest,
+          version.characterCount,
+          version.byteCount,
+          version.estimatedTokens,
+          version.createdAt,
+        )
+      this.db
+        .prepare(
+          `INSERT INTO benchmark_notebook_snapshots
+           (run_id, notebook_id, notebook_name, content, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
+           updated_at = excluded.updated_at`,
+        )
+        .run(
+          run.id,
+          run.notebook.notebookId ?? null,
+          run.notebook.name ?? 'Benchmark notebook',
+          version.content,
+          version.createdAt,
+        )
+      this.saveBenchmark(run)
+    })
+  }
+
+  listBenchmarkNotebookVersions(runId: string): BenchmarkNotebookVersion[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT run_id, version, source_phase, content, digest, character_count,
+                  byte_count, estimated_tokens, created_at
+           FROM benchmark_notebook_versions WHERE run_id = ? ORDER BY version`,
+        )
+        .all(runId) as Array<any>
+    ).map((row) => ({
+      runId: row.run_id,
+      version: row.version,
+      sourcePhase: row.source_phase,
+      content: row.content,
+      digest: row.digest,
+      characterCount: row.character_count,
+      byteCount: row.byte_count,
+      estimatedTokens: row.estimated_tokens,
+      createdAt: row.created_at,
+    }))
+  }
+
+  saveBenchmarkMoveReview(review: BenchmarkMoveReview) {
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_move_reviews
+         (run_id, game_id, game_index, turn, review_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_id, game_id, turn) DO UPDATE SET
+         review_json = excluded.review_json, created_at = excluded.created_at`,
+      )
+      .run(
+        review.runId,
+        review.gameId,
+        review.gameIndex,
+        review.turn,
+        JSON.stringify(review),
+        review.createdAt,
+      )
+  }
+
+  listBenchmarkMoveReviews(runId: string, gameIndex?: number) {
+    const rows = (
+      gameIndex === undefined
+        ? this.db
+            .prepare(
+              `SELECT review_json FROM benchmark_move_reviews
+             WHERE run_id = ? ORDER BY game_index, turn`,
+            )
+            .all(runId)
+        : this.db
+            .prepare(
+              `SELECT review_json FROM benchmark_move_reviews
+             WHERE run_id = ? AND game_index = ? ORDER BY turn`,
+            )
+            .all(runId, gameIndex)
+    ) as Array<{review_json: string}>
+    return rows.map(
+      ({review_json}) => JSON.parse(review_json) as BenchmarkMoveReview,
+    )
+  }
+
+  publishBenchmarkNotebook(
+    run: BenchmarkRun,
+    content: string,
+    input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
+  ) {
+    return this.transaction(() => {
+      if (input.mode === 'replace_source') {
+        const seed = run.config.notebookSeed
+        if (seed.mode !== 'refine_existing')
+          throw new Error('This run does not have a source notebook to replace')
+        const updatedAt = new Date().toISOString()
+        const result = this.db
+          .prepare(
+            `UPDATE technique_notebooks SET content = ?, updated_at = ?
+             WHERE profile_id = ? AND id = ?`,
+          )
+          .run(content, updatedAt, run.config.profileId, seed.notebookId)
+        if (!result.changes)
+          throw new Error('The source notebook no longer exists')
+        return this.getNotebook(run.config.profileId, seed.notebookId)!
+      }
+      const notebook = this.createNotebook(run.config.profileId, input.name)
+      const updatedAt = new Date().toISOString()
+      this.db
+        .prepare(
+          'UPDATE technique_notebooks SET content = ?, updated_at = ? WHERE id = ?',
+        )
+        .run(content, updatedAt, notebook.id)
+      return this.getNotebook(run.config.profileId, notebook.id)!
+    })
+  }
+
   linkBenchmarkGame(runId: string, gameId: string, gameIndex: number) {
     this.db
       .prepare(
@@ -872,15 +1083,41 @@ function normalizeNotebookName(name: string) {
   return normalized
 }
 
-function normalizeBenchmark(run: BenchmarkRun): BenchmarkRun {
+function normalizeBenchmark(value: BenchmarkRun): BenchmarkRun {
+  const run = value as any
+  if (run.protocolVersion !== 2) return run as BenchmarkRun
   return {
     ...run,
-    config: {
-      ...run.config,
-      trainingGameCount: run.config.trainingGameCount ?? 10,
-      notebookId: run.config.notebookId ?? run.notebook?.notebookId ?? '',
-    },
+    substate: run.substate ?? {kind: 'ready'},
+    notebookVersion: run.notebookVersion ?? 0,
+    notebookEstimatedTokens: run.notebookEstimatedTokens ?? 0,
+    kataGoFingerprint:
+      run.kataGoFingerprint ??
+      createHash('sha256').update('unknown').digest('hex'),
   }
+}
+
+function emptyBenchmarkUsage() {
+  return {
+    calls: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    latencyMs: 0,
+    byPhase: {},
+  }
+}
+
+function kataGoFingerprint(settings: KataGoSettings) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        executablePath: settings.executablePath,
+        modelPath: settings.modelPath,
+        configPath: settings.configPath,
+      }),
+    )
+    .digest('hex')
 }
 
 function notebookConstraintError(error: unknown) {

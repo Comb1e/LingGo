@@ -3,7 +3,10 @@ import {EventEmitter} from 'node:events'
 import {NoOutputGeneratedError} from 'ai'
 import type {
   BenchmarkConfig,
+  BenchmarkMoveReview,
   BenchmarkMetrics,
+  BenchmarkNotebookVersion,
+  BenchmarkPhase,
   BenchmarkRun,
   Color,
   Game,
@@ -14,7 +17,13 @@ import type {
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
-import {boardHash, IllegalMoveError, replay} from './go'
+import {
+  asciiBoard,
+  boardHash,
+  IllegalMoveError,
+  makeSnapshot,
+  replay,
+} from './go'
 import {GameService, MAX_MODEL_OUTPUT_ATTEMPTS} from './games'
 import {
   gamePosition,
@@ -23,6 +32,8 @@ import {
   type KataGoAnalyzer,
 } from './katago'
 import {NotebookStore} from './notebooks'
+import {formatCanonicalGoRules} from './movePrompt'
+import {perspectiveOutcome} from './llmGameContext'
 import {
   MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
@@ -41,6 +52,17 @@ import {
 type InternalRun = BenchmarkRun & {
   pointLosses?: number[]
   winRateLosses?: number[]
+  outputAttempts?: number
+  outputRepairs?: number
+}
+
+type LegacyBenchmarkConfig = {
+  profileId: string
+  finalColor: Color
+  visits: number
+  includeTrainingWinRates: boolean
+  trainingGameCount: number
+  notebookId: string
 }
 
 class KataGoUnavailableError extends Error {}
@@ -83,7 +105,8 @@ export class BenchmarkService {
     return this.store.getBenchmark(id)
   }
 
-  async create(config: BenchmarkConfig) {
+  async create(input: BenchmarkConfig | LegacyBenchmarkConfig) {
+    const config = normalizeConfig(input)
     if (
       this.reservedProfiles.has(config.profileId) ||
       this.list().some(
@@ -99,22 +122,28 @@ export class BenchmarkService {
       if (!profile) throw new Error('Player profile not found')
       const connection = this.store.getConnection(profile.connectionId)
       if (!connection) throw new Error('Provider connection not found')
-      const notebook = await this.selectedNotebook(config)
-      const health = this.engine.healthCheck
-        ? await this.engine.healthCheck()
-        : await healthFromAnalysis(this.engine)
-      if (!health.ok)
-        throw new Error(`KataGo is unavailable: ${health.message}`)
+      const sourceNotebook = await this.sourceNotebook(config)
       const now = new Date().toISOString()
       const id = randomUUID()
       const run: InternalRun = {
         id,
+        protocolVersion: 2,
         status: 'queued',
-        phase: 'training',
+        phase: 'initializing_notebook',
+        substate: {kind: 'ready'},
         config,
         profileSnapshot: {...profile},
         modelFingerprint: createHash('sha256')
           .update(JSON.stringify({profile, connection}))
+          .digest('hex'),
+        kataGoFingerprint: createHash('sha256')
+          .update(
+            JSON.stringify({
+              executablePath: this.store.getKataGoSettings().executablePath,
+              modelPath: this.store.getKataGoSettings().modelPath,
+              configPath: this.store.getKataGoSettings().configPath,
+            }),
+          )
           .digest('hex'),
         currentGame: 0,
         currentTurn: 0,
@@ -125,26 +154,28 @@ export class BenchmarkService {
           cachedInputTokens: 0,
           outputTokens: 0,
           latencyMs: 0,
+          byPhase: {},
         },
         notebook: {
           profileId: profile.id,
-          notebookId: notebook.id,
-          name: notebook.name,
-          currentUrl: `/api/profiles/${profile.id}/notebooks/${notebook.id}.md`,
+          notebookId: sourceNotebook?.id,
+          name: sourceNotebook?.name ?? 'Benchmark notebook',
+          currentUrl: sourceNotebook
+            ? `/api/profiles/${profile.id}/notebooks/${sourceNotebook.id}.md`
+            : undefined,
           snapshotUrl: `/api/benchmarks/${id}/notebook.md`,
         },
+        notebookVersion: 0,
+        notebookEstimatedTokens: 0,
         pointLosses: [],
         winRateLosses: [],
         createdAt: now,
         updatedAt: now,
       }
       try {
-        if (this.notebooks.store) {
-          run.updatedAt = new Date().toISOString()
-          this.store.saveBenchmarkWithSnapshot(run, notebook)
-          this.events.emit(run.id, run)
-          this.events.emit('changed', run.id)
-        } else this.save(run)
+        run.updatedAt = new Date().toISOString()
+        this.store.saveBenchmarkWithSeed(run, sourceNotebook)
+        this.emit(run)
       } catch (error) {
         if (isUniqueConstraintError(error)) throw new BenchmarkConflictError()
         throw error
@@ -164,6 +195,11 @@ export class BenchmarkService {
     run.status = 'paused'
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
+    run.substate = {
+      kind: 'paused',
+      previous:
+        run.substate.kind === 'paused' ? run.substate.previous : run.substate,
+    }
     this.save(run)
     return run
   }
@@ -176,6 +212,8 @@ export class BenchmarkService {
     run.error = undefined
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
+    run.substate =
+      run.substate.kind === 'paused' ? run.substate.previous : {kind: 'ready'}
     const game = this.currentGame(run)
     this.store.transaction(() => {
       if (game?.error) this.games.clearAutomatedError(game.id)
@@ -200,6 +238,7 @@ export class BenchmarkService {
     run.error = undefined
     run.waitingFor = undefined
     run.pauseAfterLlmMove = true
+    if (run.substate.kind === 'paused') run.substate = run.substate.previous
     const game = this.currentGame(run)
     this.store.transaction(() => {
       if (game?.error) this.games.clearAutomatedError(game.id)
@@ -217,6 +256,7 @@ export class BenchmarkService {
     run.status = 'cancelled'
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
+    run.substate = {kind: 'ready'}
     this.save(run)
     return run
   }
@@ -255,6 +295,18 @@ export class BenchmarkService {
     return deleted
   }
 
+  publishNotebook(
+    id: string,
+    input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
+  ) {
+    const run = this.require(id)
+    if (run.status !== 'completed')
+      throw new Error('The benchmark must be complete before publishing')
+    const content = this.store.getNotebookSnapshot(id)?.content
+    if (!content) throw new Error('The benchmark notebook is missing')
+    return this.store.publishBenchmarkNotebook(run, content, input)
+  }
+
   async close() {
     for (const controller of this.controllers.values()) controller.abort()
     this.controllers.clear()
@@ -280,12 +332,26 @@ export class BenchmarkService {
       if (!['queued', 'running'].includes(run.status)) return
       this.activeRuns.set(id, run)
       run.status = 'running'
+      run.substate = {kind: 'ready'}
       run.waitingFor = undefined
       run.error = undefined
       this.save(run)
+      if (run.phase === 'initializing_notebook') {
+        const initialized = await this.initializeNotebook(
+          run,
+          controller.signal,
+        )
+        if (!initialized) {
+          retry = Boolean(run.waitingFor)
+          return
+        }
+      }
       const trainingGameCount = run.config.trainingGameCount
       while (run.currentGame <= trainingGameCount && run.status === 'running') {
-        run.phase = run.currentGame < trainingGameCount ? 'training' : 'final'
+        run.phase =
+          run.currentGame < trainingGameCount ? 'training_game' : 'final_game'
+        run.substate = {kind: 'ready'}
+        this.save(run)
         const llmColor =
           run.currentGame < trainingGameCount
             ? run.currentGame % 2 === 0
@@ -304,9 +370,9 @@ export class BenchmarkService {
           return
         }
         if (run.currentGame < trainingGameCount) {
-          run.phase = 'reflection'
+          run.phase = 'reviewing_game'
           this.save(run)
-          const reflected = await this.reflect(run, controller.signal)
+          const reflected = await this.reviewGame(run, controller.signal)
           if (!reflected) {
             retry = Boolean(run.waitingFor)
             return
@@ -320,6 +386,7 @@ export class BenchmarkService {
       }
       if (run.status === 'running') {
         run.phase = 'complete'
+        run.substate = {kind: 'ready'}
         run.status = 'completed'
         run.metrics = calculateMetrics(
           this.games.get(run.gameIds[trainingGameCount])?.result ?? 'Void',
@@ -327,6 +394,16 @@ export class BenchmarkService {
           run.pointLosses ?? [],
           run.winRateLosses ?? [],
         )
+        const initial = this.store.listBenchmarkNotebookVersions(run.id)[0]
+        const current = this.store.listBenchmarkNotebookVersions(run.id).at(-1)
+        run.metrics.outputRepairRate = run.outputAttempts
+          ? (run.outputRepairs ?? 0) / run.outputAttempts
+          : 0
+        run.metrics.trainingReviewCount = this.store
+          .listBenchmarkNotebookVersions(run.id)
+          .filter(({sourcePhase}) => sourcePhase === 'reviewing_game').length
+        run.metrics.notebookGrowthCharacters =
+          (current?.characterCount ?? 0) - (initial?.characterCount ?? 0)
         this.save(run)
       }
     } catch (error) {
@@ -336,11 +413,19 @@ export class BenchmarkService {
           run.error = publicError(error)
           if (error instanceof KataGoUnavailableError) {
             run.waitingFor = 'katago'
+            run.substate = {kind: 'waiting_katago'}
             retry = true
             this.save(run)
           } else {
             run.status = 'paused'
             run.pauseAfterLlmMove = false
+            run.substate = {
+              kind: 'paused',
+              previous:
+                run.substate.kind === 'paused'
+                  ? run.substate.previous
+                  : run.substate,
+            }
             const game = this.currentGame(run)
             this.store.transaction(() => {
               if (game) this.games.reportAutomatedError(game.id, run.error!)
@@ -373,8 +458,10 @@ export class BenchmarkService {
       profileName: run.profileSnapshot.name,
     })
     run.gameIds[run.currentGame] = game.id
-    this.store.linkBenchmarkGame(run.id, game.id, run.currentGame)
-    this.save(run)
+    this.store.transaction(() => {
+      this.store.linkBenchmarkGame(run.id, game.id, run.currentGame)
+      this.save(run)
+    })
     return game
   }
 
@@ -388,34 +475,51 @@ export class BenchmarkService {
     while (run.status === 'running' && game.status !== 'finished') {
       let llmMoved = false
       signal.throwIfAborted()
-      const beforeResult = await this.analyze(game, run.config.visits, signal)
+      const phase =
+        run.currentGame < run.config.trainingGameCount
+          ? 'training_game'
+          : 'final_game'
+      const visits =
+        phase === 'training_game'
+          ? run.config.trainingVisits
+          : run.config.evaluationVisits
+      const positionBefore = makeSnapshot(game.size, game.komi, game.moves)
+      const beforeResult = await this.analyze(game, visits, signal)
       const before = rootFromBlack(beforeResult)
       if (game.toMove === llmColor) {
         const adapter = this.adapter(run)
         if (!adapter) {
           run.waitingFor = 'credentials'
+          run.substate = {kind: 'waiting_credentials'}
           this.save(run)
           return false
         }
         const connection = this.connection(run)
-        const notebook = (await this.selectedNotebook(run.config)).content
+        const notebook = await this.runNotebook(run.id)
         let outputFailures = 0
         let apiFailures = 0
         let rebasedProviderContext = false
         const retryErrors = [...(game.providerErrors ?? [])]
-        const phase =
-          run.currentGame < run.config.trainingGameCount ? 'training' : 'final'
+        const promptPhase = phase === 'training_game' ? 'training' : 'final'
         let prepared = this.games.prepareLlmActionTurn({
           gameId: game.id,
           color: llmColor,
           profile: run.profileSnapshot,
           connection,
-          mode: {kind: 'benchmark', phase, notebook},
+          mode: {kind: 'benchmark', phase: promptPhase, notebook},
           latestWinRate:
-            phase === 'training' && run.config.includeTrainingWinRates
-              ? this.winRateUpdate(game.id, llmColor)
+            phase === 'training_game' &&
+            run.config.trainingFeedback === 'structured'
+              ? this.latestMoveReview(run.id, run.currentGame)
               : undefined,
         })
+        run.substate = {
+          kind: 'provider_request',
+          operation: 'move',
+          attempt: 1,
+          maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+        }
+        this.save(run)
         this.games.setAutomatedTurnState(game.id, {
           phase: 'requesting',
           attempt: 1,
@@ -446,6 +550,7 @@ export class BenchmarkService {
                 retries: 0,
               }
               addUsage(run, response)
+              run.outputAttempts = (run.outputAttempts ?? 0) + 1
               response.retries = outputFailures + apiFailures
               response.retryErrors = retryErrors.length
                 ? retryErrors
@@ -487,10 +592,11 @@ export class BenchmarkService {
                   color: llmColor,
                   profile: run.profileSnapshot,
                   connection,
-                  mode: {kind: 'benchmark', phase, notebook},
+                  mode: {kind: 'benchmark', phase: promptPhase, notebook},
                   latestWinRate:
-                    phase === 'training' && run.config.includeTrainingWinRates
-                      ? this.winRateUpdate(game.id, llmColor)
+                    phase === 'training_game' &&
+                    run.config.trainingFeedback === 'structured'
+                      ? this.latestMoveReview(run.id, run.currentGame)
                       : undefined,
                 })
                 continue
@@ -513,6 +619,14 @@ export class BenchmarkService {
                   maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
                   lastError: message,
                 })
+                run.substate = {
+                  kind: 'provider_retry',
+                  operation: 'move',
+                  attempt: apiFailures + 1,
+                  maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                  lastError: message,
+                }
+                this.save(run)
                 await this.retryWait(apiFailures, signal, error)
                 continue
               }
@@ -529,6 +643,8 @@ export class BenchmarkService {
                 truncated: retained.length < content.length,
               })
               outputFailures += 1
+              run.outputAttempts = (run.outputAttempts ?? 0) + 1
+              run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
               if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS)
                 throw new Error(
@@ -552,20 +668,51 @@ export class BenchmarkService {
         } finally {
           this.games.clearAutomatedTurnState(game.id)
         }
-        const afterResult = await this.analyze(game, run.config.visits, signal)
-        if (run.currentGame === run.config.trainingGameCount) {
-          const after = rootFromBlack(afterResult)
-          const beforeScore =
-            llmColor === 'B' ? before.blackScoreLead : -before.blackScoreLead
-          const afterScore =
-            llmColor === 'B' ? after.blackScoreLead : -after.blackScoreLead
-          const beforeWin =
-            llmColor === 'B' ? before.blackWinRate : before.whiteWinRate
-          const afterWin =
-            llmColor === 'B' ? after.blackWinRate : after.whiteWinRate
-          ;(run.pointLosses ??= []).push(Math.max(0, beforeScore - afterScore))
-          ;(run.winRateLosses ??= []).push(Math.max(0, beforeWin - afterWin))
+        const afterResult = await this.analyze(game, visits, signal)
+        const after = rootFromBlack(afterResult)
+        const {
+          beforeScore,
+          afterScore,
+          beforeWin,
+          afterWin,
+          pointLoss,
+          winRateLoss,
+        } = lossFromPerspective(llmColor, before, after)
+        if (phase === 'final_game') {
+          ;(run.pointLosses ??= []).push(pointLoss)
+          ;(run.winRateLosses ??= []).push(winRateLoss)
         }
+        if (
+          phase === 'final_game' ||
+          run.config.trainingFeedback === 'structured'
+        )
+          this.store.saveBenchmarkMoveReview({
+            runId: run.id,
+            gameId: game.id,
+            gameIndex: run.currentGame,
+            turn: game.moves.length,
+            color: llmColor,
+            chosenMove:
+              game.moves.at(-1)?.coordinate ??
+              game.moves.at(-1)?.action ??
+              'unknown',
+            topCandidate: reviewCandidate(beforeResult),
+            pointLoss,
+            winRateLoss,
+            beforeScore,
+            afterScore,
+            beforeWinRate: beforeWin,
+            afterWinRate: afterWin,
+            position: {
+              size: positionBefore.size,
+              komi: positionBefore.komi,
+              board: positionBefore.board,
+              toMove: positionBefore.toMove,
+              captures: positionBefore.captures,
+            },
+            createdAt: new Date().toISOString(),
+          })
+        run.substate = {kind: 'ready'}
       } else {
         const move = selectedMove(beforeResult)
         const action: PlayerAction =
@@ -585,7 +732,7 @@ export class BenchmarkService {
         endedWithoutResignation ||
         (game.status === 'paused' && game.moves.length >= 722)
       ) {
-        const final = await this.analyze(game, run.config.visits, signal)
+        const final = await this.analyze(game, visits, signal)
         const lead = rootFromBlack(final).blackScoreLead
         game = this.games.finishAutomated(game.id, scoreLeadResult(lead))
       }
@@ -599,86 +746,161 @@ export class BenchmarkService {
     return game.status === 'finished'
   }
 
-  private async reflect(run: InternalRun, signal: AbortSignal) {
+  private async initializeNotebook(run: InternalRun, signal: AbortSignal) {
     const adapter = this.adapter(run)
     if (!adapter) {
       run.waitingFor = 'credentials'
+      run.substate = {kind: 'waiting_credentials'}
       this.save(run)
       return false
     }
-    const notebook = await this.selectedNotebook(run.config)
-    const game = this.currentGame(run)
-    if (!game) throw new Error('Benchmark game not found')
-    const color = run.currentGame % 2 === 0 ? 'B' : 'W'
-    const connection = this.connection(run)
-    let prepared = this.games.prepareLlmReflectionTurn({
-      gameId: game.id,
-      color,
-      profile: run.profileSnapshot,
-      connection,
-    })
-    const response = await this.requestReflection(
-      game.id,
-      () => this.games.requestPreparedLlmTurn(adapter, prepared, signal),
-      (error) =>
-        isProviderContextError(error) ||
-        (prepared.context.managedContinuation &&
-          Boolean(prepared.context.providerContinuationId) &&
-          NoOutputGeneratedError.isInstance(error)),
-      (error) => {
-        if (NoOutputGeneratedError.isInstance(error))
-          this.games.disableManagedLlmContinuation(game.id, color)
-        else this.games.rebaseLlmContext(game.id, color)
-        prepared = this.games.prepareLlmReflectionTurn({
-          gameId: game.id,
-          color,
-          profile: run.profileSnapshot,
-          connection,
-        })
-      },
+    const seedSnapshot = this.store.getBenchmarkNotebookSeed(run.id)
+    const seed = seedSnapshot?.content.trim()
+      ? [
+          '',
+          'EXISTING NOTEBOOK TO REFINE',
+          seedSnapshot.content,
+          '',
+          'Preserve correct, useful knowledge while improving clarity and actionability.',
+        ]
+      : []
+    const prompt = [
+      'Create an actionable Go technique notebook from the authoritative rules below.',
+      'Do not invent lessons from games, positions, or analysis that were not supplied.',
+      '',
+      'AUTHORITATIVE GO RULES',
+      ...formatCanonicalGoRules({size: 19, komi: 7.5}),
+      '',
+      'Use exactly this Markdown structure:',
+      '# Technique Notebook',
+      '## Opening',
+      '## Fighting',
+      '## Shape and Life',
+      '## Endgame',
+      '## Move Checklist',
+      ...seed,
+      '',
+      'Return only the complete Markdown notebook.',
+    ].join('\n')
+    const content = await this.requestValidNotebook(
+      run,
+      adapter,
+      prompt,
+      'initializing_notebook',
       signal,
     )
-    addUsage(run, response)
-    run.notebook.updatedAt = new Date().toISOString()
-    run.currentGame += 1
-    run.currentTurn = 0
-    run.phase =
-      run.currentGame < run.config.trainingGameCount ? 'training' : 'final'
-    run.updatedAt = run.notebook.updatedAt
-    const completedContext = this.games.completedLlmContext(
-      prepared,
-      response,
-      'complete',
-      game.moves.length,
-    )
-    if (this.notebooks.store)
-      this.store.saveReflectionWithContext(
-        notebook,
-        run,
-        response.text.trim(),
-        completedContext,
-      )
-    else {
-      await this.notebooks.saveReflection(notebook, run, response.text.trim())
-      this.store.transaction(() => {
-        this.store.saveBenchmark(run)
-        this.store.saveLlmGameContext(completedContext)
-      })
-    }
-    this.events.emit(run.id, run)
-    this.events.emit('changed', run.id)
+    const version = notebookVersion(run, 'initializing_notebook', content)
+    run.notebookVersion = version.version
+    run.notebookEstimatedTokens = version.estimatedTokens
+    run.notebook.updatedAt = version.createdAt
+    run.phase = 'training_game'
+    run.substate = {kind: 'ready'}
+    run.updatedAt = version.createdAt
+    this.store.saveBenchmarkNotebookVersion(run, version)
+    await this.notebooks.writeRunSnapshot(run.id, content)
+    this.emit(run)
     return true
   }
 
-  private async selectedNotebook(
+  private async reviewGame(run: InternalRun, signal: AbortSignal) {
+    const adapter = this.adapter(run)
+    if (!adapter) {
+      run.waitingFor = 'credentials'
+      run.substate = {kind: 'waiting_credentials'}
+      this.save(run)
+      return false
+    }
+    const game = this.currentGame(run)
+    if (!game) throw new Error('Benchmark game not found')
+    const color = run.currentGame % 2 === 0 ? 'B' : 'W'
+    const priorNotebook = await this.runNotebook(run.id)
+    const reasons = game.moves
+      .filter((move) => move.color === color && move.comment?.trim())
+      .map(
+        (move) =>
+          `${move.number}. ${move.coordinate ?? move.action}: ${move.comment!.trim()}`,
+      )
+    const reviewLines =
+      run.config.trainingFeedback === 'structured'
+        ? this.store
+            .listBenchmarkMoveReviews(run.id, run.currentGame)
+            .sort(compareMoveReviews)
+            .slice(0, 12)
+            .map((review, index) =>
+              [
+                `${index + 1}. Turn ${review.turn}: chose ${review.chosenMove}; KataGo ${review.topCandidate ?? 'unavailable'}; point loss ${review.pointLoss.toFixed(2)}; win-rate loss ${(review.winRateLoss * 100).toFixed(2)}%.`,
+                asciiBoard({
+                  size: review.position.size,
+                  komi: review.position.komi,
+                  board: review.position.board,
+                  toMove: review.position.toMove,
+                  moves: [],
+                  captures: review.position.captures,
+                  rules: 'Chinese area',
+                }),
+              ].join('\n'),
+            )
+        : []
+    const prompt = [
+      'Update the technique notebook using only the explicit prior notebook and game review below.',
+      'Generalize actionable lessons. Do not rely on conversation continuity.',
+      '',
+      'PRIOR NOTEBOOK',
+      priorNotebook,
+      '',
+      'GAME REVIEW',
+      `Outcome: ${perspectiveOutcome(game.result, color)}`,
+      'Visible move reasons:',
+      ...(reasons.length ? reasons : ['(none)']),
+      ...(run.config.trainingFeedback === 'structured'
+        ? [
+            '',
+            'Largest mistakes (stable by point loss, then turn):',
+            ...reviewLines,
+          ]
+        : []),
+      '',
+      'Return only the complete replacement Markdown technique notebook.',
+    ].join('\n')
+    const content = await this.requestValidNotebook(
+      run,
+      adapter,
+      prompt,
+      'reviewing_game',
+      signal,
+    )
+    const version = notebookVersion(run, 'reviewing_game', content)
+    run.notebookVersion = version.version
+    run.notebookEstimatedTokens = version.estimatedTokens
+    run.notebook.updatedAt = version.createdAt
+    run.currentGame += 1
+    run.currentTurn = 0
+    run.phase =
+      run.currentGame < run.config.trainingGameCount
+        ? 'training_game'
+        : 'final_game'
+    run.substate = {kind: 'ready'}
+    run.updatedAt = version.createdAt
+    this.games.completeLlmContexts(game.id)
+    this.store.saveBenchmarkNotebookVersion(run, version)
+    await this.notebooks.writeRunSnapshot(run.id, content)
+    this.emit(run)
+    return true
+  }
+
+  private async sourceNotebook(
     config: BenchmarkConfig,
-  ): Promise<TechniqueNotebook> {
-    const notebook = this.notebooks.get(config.profileId, config.notebookId)
+  ): Promise<TechniqueNotebook | undefined> {
+    if (config.notebookSeed.mode === 'rules_only') return undefined
+    const notebook = this.notebooks.get(
+      config.profileId,
+      config.notebookSeed.notebookId,
+    )
     if (notebook) return notebook
     if (!this.notebooks.store) {
       const content = await this.notebooks.readCurrent(config.profileId)
       return {
-        id: config.notebookId,
+        id: config.notebookSeed.notebookId,
         profileId: config.profileId,
         name: 'Default',
         content,
@@ -687,6 +909,132 @@ export class BenchmarkService {
       }
     }
     throw new Error('Technique notebook not found for this player profile')
+  }
+
+  private async runNotebook(runId: string) {
+    return (
+      this.store.getNotebookSnapshot(runId)?.content ??
+      (await this.notebooks.readSnapshot(runId))
+    )
+  }
+
+  private async requestValidNotebook(
+    run: InternalRun,
+    adapter: ReturnType<BenchmarkService['adapter']> & {},
+    initialPrompt: string,
+    sourcePhase: 'initializing_notebook' | 'reviewing_game',
+    signal: AbortSignal,
+  ) {
+    let prompt = initialPrompt
+    for (let invalidAttempt = 1; invalidAttempt <= 3; invalidAttempt++) {
+      const operation =
+        invalidAttempt === 1
+          ? sourcePhase === 'reviewing_game'
+            ? 'review'
+            : 'initialize'
+          : 'compress'
+      if (invalidAttempt > 1) {
+        run.substate = {
+          kind: 'compressing',
+          attempt: invalidAttempt,
+          maxAttempts: 3,
+        }
+        this.save(run)
+      }
+      const response = await this.requestNotebookText(
+        run,
+        adapter,
+        prompt,
+        operation,
+        signal,
+      )
+      addUsage(run, response, sourcePhase)
+      const content = response.text.trim()
+      const byteCount = Buffer.byteLength(content, 'utf8')
+      const estimatedTokens = Math.ceil(byteCount / 4)
+      if (content && estimatedTokens <= run.config.notebookTokenBudget)
+        return content
+      if (invalidAttempt === 3)
+        throw new Error(
+          content
+            ? `Notebook exceeds the ${run.config.notebookTokenBudget.toLocaleString()} estimated-token budget after three attempts. The benchmark has been paused.`
+            : 'The model returned an empty notebook after three attempts. The benchmark has been paused.',
+        )
+      prompt = content
+        ? [
+            `Compress the notebook below to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+            'Preserve the Markdown structure and the most actionable knowledge. Do not truncate it.',
+            '',
+            content,
+            '',
+            'Return only the complete compressed Markdown notebook.',
+          ].join('\n')
+        : [
+            initialPrompt,
+            '',
+            'Your previous response was empty. Return a non-empty complete Markdown notebook.',
+          ].join('\n')
+    }
+    throw new Error('Notebook validation failed')
+  }
+
+  private async requestNotebookText(
+    run: InternalRun,
+    adapter: ReturnType<BenchmarkService['adapter']> & {},
+    prompt: string,
+    operation: 'initialize' | 'compress' | 'review',
+    signal: AbortSignal,
+  ) {
+    if (!adapter.requestText)
+      throw new Error(
+        'The benchmark provider does not support notebook generation',
+      )
+    let lastError = ''
+    for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
+      run.substate =
+        attempt === 1
+          ? {
+              kind: 'provider_request',
+              operation,
+              attempt,
+              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+            }
+          : {
+              kind: 'provider_retry',
+              operation,
+              attempt,
+              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+              lastError,
+            }
+      this.save(run)
+      try {
+        return await adapter.requestText(prompt, signal)
+      } catch (error) {
+        if (signal.aborted) throw error
+        lastError = publicProviderError(error)
+        if (
+          !shouldRetryProviderError(error) ||
+          attempt >= MAX_PROVIDER_API_ATTEMPTS
+        )
+          throw new Error(
+            `LLM API request failed after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'} during notebook ${operation}. The benchmark has been paused. Last error: ${lastError}`,
+            {cause: error},
+          )
+        await this.retryWait(attempt, signal, error)
+      }
+    }
+    throw new Error('Notebook request failed')
+  }
+
+  private latestMoveReview(runId: string, gameIndex: number) {
+    const review = this.store.listBenchmarkMoveReviews(runId, gameIndex).at(-1)
+    if (!review) return undefined
+    return [
+      `Turn ${review.turn} review: chose ${review.chosenMove}.`,
+      `KataGo top candidate: ${review.topCandidate ?? 'unavailable'}.`,
+      `Point loss: ${review.pointLoss.toFixed(2)}; win-rate loss: ${(review.winRateLoss * 100).toFixed(2)}%.`,
+      `Score estimate before/after from your perspective: ${review.beforeScore.toFixed(2)} / ${review.afterScore.toFixed(2)}.`,
+    ].join(' ')
   }
 
   private adapter(run: InternalRun) {
@@ -707,60 +1055,6 @@ export class BenchmarkService {
     if (!connection)
       throw new Error('The benchmark provider connection no longer exists')
     return connection
-  }
-
-  private async requestReflection(
-    gameId: string,
-    request: () => Promise<LlmTurnResponse>,
-    shouldRebase: (error: unknown) => boolean,
-    rebase: (error: unknown) => void,
-    signal: AbortSignal,
-  ) {
-    let lastError = ''
-    let rebasedProviderContext = false
-    try {
-      for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
-        this.games.setAutomatedTurnState(
-          gameId,
-          attempt === 1
-            ? {
-                phase: 'requesting',
-                attempt,
-                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-              }
-            : {
-                phase: 'retrying',
-                attempt,
-                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-                lastError,
-              },
-        )
-        try {
-          return await request()
-        } catch (error) {
-          if (signal.aborted) throw error
-          if (!rebasedProviderContext && shouldRebase(error)) {
-            rebasedProviderContext = true
-            rebase(error)
-            attempt -= 1
-            continue
-          }
-          lastError = publicProviderError(error)
-          if (
-            !shouldRetryProviderError(error) ||
-            attempt >= MAX_PROVIDER_API_ATTEMPTS
-          )
-            throw new Error(
-              `LLM API request failed after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'} during reflection. The benchmark has been paused. Last error: ${lastError}`,
-              {cause: error},
-            )
-          await this.retryWait(attempt, signal, error)
-        }
-      }
-      throw new Error('Reflection request failed')
-    } finally {
-      this.games.clearAutomatedTurnState(gameId)
-    }
   }
 
   private async analyze(game: Game, visits: number, signal: AbortSignal) {
@@ -787,13 +1081,6 @@ export class BenchmarkService {
     return result
   }
 
-  private winRateUpdate(gameId: string, color: Color) {
-    const value = this.store.getGameAnalysis(gameId).positions.at(-1)
-    if (!value) return ''
-    const rate = color === 'B' ? value.blackWinRate : value.whiteWinRate
-    return `Turn ${value.turn}: ${(rate * 100).toFixed(2)}%`
-  }
-
   private currentGame(run: InternalRun) {
     const id = run.gameIds[run.currentGame]
     return id ? this.games.get(id) : undefined
@@ -808,6 +1095,10 @@ export class BenchmarkService {
   private save(run: InternalRun) {
     run.updatedAt = new Date().toISOString()
     this.store.saveBenchmark(run)
+    this.emit(run)
+  }
+
+  private emit(run: InternalRun) {
     this.events.emit(run.id, run)
     this.events.emit('changed', run.id)
   }
@@ -863,6 +1154,33 @@ export function calculateMetrics(
   }
 }
 
+export function lossFromPerspective(
+  color: Color,
+  before: Pick<
+    PositionAnalysis,
+    'blackScoreLead' | 'blackWinRate' | 'whiteWinRate'
+  >,
+  after: Pick<
+    PositionAnalysis,
+    'blackScoreLead' | 'blackWinRate' | 'whiteWinRate'
+  >,
+) {
+  const beforeScore =
+    color === 'B' ? before.blackScoreLead : -before.blackScoreLead
+  const afterScore =
+    color === 'B' ? after.blackScoreLead : -after.blackScoreLead
+  const beforeWin = color === 'B' ? before.blackWinRate : before.whiteWinRate
+  const afterWin = color === 'B' ? after.blackWinRate : after.whiteWinRate
+  return {
+    beforeScore,
+    afterScore,
+    beforeWin,
+    afterWin,
+    pointLoss: Math.max(0, beforeScore - afterScore),
+    winRateLoss: Math.max(0, beforeWin - afterWin),
+  }
+}
+
 function average(values: number[]) {
   return values.length
     ? values.reduce((sum, value) => sum + value, 0) / values.length
@@ -877,6 +1195,7 @@ function addUsage(
     outputTokens: number
     latencyMs: number
   },
+  phase: BenchmarkPhase = run.phase,
 ) {
   run.usage.calls += 1
   run.usage.inputTokens += value.inputTokens
@@ -884,6 +1203,62 @@ function addUsage(
     (run.usage.cachedInputTokens ?? 0) + (value.cachedInputTokens ?? 0)
   run.usage.outputTokens += value.outputTokens
   run.usage.latencyMs += value.latencyMs
+  if (
+    phase === 'initializing_notebook' ||
+    phase === 'training_game' ||
+    phase === 'reviewing_game' ||
+    phase === 'final_game'
+  ) {
+    const bucket = (run.usage.byPhase ??= {})
+    const usage = (bucket[phase] ??= {
+      calls: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+    })
+    usage.calls += 1
+    usage.inputTokens += value.inputTokens
+    usage.cachedInputTokens =
+      (usage.cachedInputTokens ?? 0) + (value.cachedInputTokens ?? 0)
+    usage.outputTokens += value.outputTokens
+    usage.latencyMs += value.latencyMs
+  }
+}
+
+function normalizeConfig(
+  input: BenchmarkConfig | LegacyBenchmarkConfig,
+): BenchmarkConfig {
+  if ('notebookSeed' in input) return input
+  return {
+    profileId: input.profileId,
+    finalColor: input.finalColor,
+    trainingGameCount: input.trainingGameCount,
+    notebookSeed: {mode: 'refine_existing', notebookId: input.notebookId},
+    trainingFeedback: input.includeTrainingWinRates ? 'structured' : 'none',
+    notebookTokenBudget: 8000,
+    trainingVisits: input.visits,
+    evaluationVisits: input.visits,
+  }
+}
+
+function notebookVersion(
+  run: InternalRun,
+  sourcePhase: 'initializing_notebook' | 'reviewing_game',
+  content: string,
+): BenchmarkNotebookVersion {
+  const byteCount = Buffer.byteLength(content, 'utf8')
+  return {
+    runId: run.id,
+    version: run.notebookVersion + 1,
+    sourcePhase,
+    content,
+    digest: createHash('sha256').update(content).digest('hex'),
+    characterCount: [...content].length,
+    byteCount,
+    estimatedTokens: Math.ceil(byteCount / 4),
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function scoreLeadResult(lead: number) {
@@ -891,23 +1266,16 @@ function scoreLeadResult(lead: number) {
   return `${lead > 0 ? 'B' : 'W'}+${Math.abs(lead).toFixed(1)}`
 }
 
-async function healthFromAnalysis(engine: KataGoAnalyzer) {
-  try {
-    const result = await engine.analyze({
-      size: 9,
-      komi: 7.5,
-      moves: [],
-      visits: 25,
-    })
-    return {
-      ok: true,
-      message: 'KataGo is ready',
-      winRate: result.rootInfo.winrate,
-      scoreLead: result.rootInfo.scoreLead,
-    }
-  } catch (error) {
-    return {ok: false, message: publicError(error)}
-  }
+export function reviewCandidate(result: {moveInfos?: Array<{move: string}>}) {
+  const move = result.moveInfos?.[0]?.move
+  return move ? (move.toLowerCase() === 'pass' ? 'pass' : move) : undefined
+}
+
+export function compareMoveReviews(
+  a: Pick<BenchmarkMoveReview, 'pointLoss' | 'turn'>,
+  b: Pick<BenchmarkMoveReview, 'pointLoss' | 'turn'>,
+) {
+  return b.pointLoss - a.pointLoss || a.turn - b.turn
 }
 
 function publicError(error: unknown) {

@@ -37,7 +37,7 @@ export class AnalysisService {
       ...analysis,
       enabled: true,
       shareWithLlm: Boolean(
-        run?.config.includeTrainingWinRates &&
+        run?.config.trainingFeedback === 'structured' &&
         gameIndex !== undefined &&
         gameIndex >= 0 &&
         gameIndex < (run?.config.trainingGameCount ?? 10),

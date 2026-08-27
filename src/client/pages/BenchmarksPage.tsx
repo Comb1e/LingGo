@@ -24,19 +24,29 @@ export function BenchmarksPage() {
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [finalColor, setFinalColor] = useState<Color>('B')
-  const [visits, setVisits] = useState(DEFAULT_KATAGO_VISITS)
+  const [trainingVisits, setTrainingVisits] = useState(DEFAULT_KATAGO_VISITS)
+  const [evaluationVisits, setEvaluationVisits] = useState(10_000)
+  const [notebookTokenBudget, setNotebookTokenBudget] = useState(8000)
   const [feedback, setFeedback] = useState(true)
   const [trainingGameCount, setTrainingGameCount] = useState(10)
   const [notebookId, setNotebookId] = useState('')
+  const [seedMode, setSeedMode] = useState<'rules_only' | 'refine_existing'>(
+    'rules_only',
+  )
   const create = useMutation({
     mutationFn: () =>
       api.createBenchmark({
         profileId,
         finalColor,
-        visits,
-        includeTrainingWinRates: feedback,
         trainingGameCount,
-        notebookId,
+        notebookSeed:
+          seedMode === 'rules_only'
+            ? {mode: 'rules_only'}
+            : {mode: 'refine_existing', notebookId},
+        trainingFeedback: feedback ? 'structured' : 'none',
+        notebookTokenBudget,
+        trainingVisits,
+        evaluationVisits,
       }),
     onSuccess: (run) => {
       void queryClient.invalidateQueries({queryKey: ['benchmarks']})
@@ -150,13 +160,27 @@ export function BenchmarksPage() {
             </div>
           </div>
           <label className="field">
-            <span>{t('kataGoVisits')}</span>
+            <span>{t('trainingVisits')}</span>
             <input
               type="number"
               min="25"
               max="100000"
-              value={visits}
-              onChange={(event) => setVisits(Number(event.target.value))}
+              value={trainingVisits}
+              onChange={(event) =>
+                setTrainingVisits(Number(event.target.value))
+              }
+            />
+          </label>
+          <label className="field">
+            <span>{t('evaluationVisits')}</span>
+            <input
+              type="number"
+              min={trainingVisits}
+              max="100000"
+              value={evaluationVisits}
+              onChange={(event) =>
+                setEvaluationVisits(Number(event.target.value))
+              }
             />
           </label>
           <label className="field">
@@ -172,11 +196,44 @@ export function BenchmarksPage() {
               }
             />
           </label>
-          <NotebookManager
-            profileId={profileId}
-            selectedId={notebookId}
-            onSelect={setNotebookId}
-          />
+          <div className="field-group notebook-seed-field">
+            <label>{t('notebookSeed')}</label>
+            <div className="segmented">
+              <button
+                type="button"
+                className={seedMode === 'rules_only' ? 'selected' : ''}
+                onClick={() => setSeedMode('rules_only')}
+              >
+                {t('rulesOnly')}
+              </button>
+              <button
+                type="button"
+                className={seedMode === 'refine_existing' ? 'selected' : ''}
+                onClick={() => setSeedMode('refine_existing')}
+              >
+                {t('refineExisting')}
+              </button>
+            </div>
+          </div>
+          {seedMode === 'refine_existing' && (
+            <NotebookManager
+              profileId={profileId}
+              selectedId={notebookId}
+              onSelect={setNotebookId}
+            />
+          )}
+          <label className="field">
+            <span>{t('notebookTokenBudget')}</span>
+            <input
+              type="number"
+              min="256"
+              max="100000"
+              value={notebookTokenBudget}
+              onChange={(event) =>
+                setNotebookTokenBudget(Number(event.target.value))
+              }
+            />
+          </label>
           <label className="switch-field">
             <input
               type="checkbox"
@@ -188,7 +245,12 @@ export function BenchmarksPage() {
           </label>
           <Button
             className="primary"
-            disabled={create.isPending || profileIsLive || !notebookId}
+            disabled={
+              create.isPending ||
+              profileIsLive ||
+              evaluationVisits < trainingVisits ||
+              (seedMode === 'refine_existing' && !notebookId)
+            }
           >
             <Play />
             {t('startBenchmark')}
@@ -206,7 +268,11 @@ export function BenchmarksPage() {
                 <span>
                   <strong>{run.profileSnapshot.name}</strong>
                   <small>
-                    {run.modelFingerprint.slice(0, 12)} · {run.config.visits}{' '}
+                    v{run.protocolVersion ?? 1} ·{' '}
+                    {run.protocolVersion === 2
+                      ? `${run.config.trainingVisits}/${run.config.evaluationVisits}`
+                      : ((run.config as unknown as {visits?: number}).visits ??
+                        'legacy')}{' '}
                     visits
                   </small>
                 </span>
@@ -214,7 +280,7 @@ export function BenchmarksPage() {
                 <b>
                   {run.status === 'completed'
                     ? run.metrics?.score.toFixed(1)
-                    : `${Math.min(run.currentGame, run.config.trainingGameCount)}/${run.config.trainingGameCount}`}
+                    : `${Math.min(run.currentGame, run.config.trainingGameCount ?? 10)}/${run.config.trainingGameCount ?? 10}`}
                 </b>
                 <ArrowRight />
               </Link>

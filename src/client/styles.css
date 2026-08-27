@@ -1073,6 +1073,9 @@ svg {
 .benchmark-form-grid .notebook-manager {
   grid-column: span 2;
 }
+.benchmark-form-grid .notebook-seed-field {
+  grid-column: span 2;
+}
 .rejected-action-history {
   margin: 10px 0;
   border: 1px solid var(--line);

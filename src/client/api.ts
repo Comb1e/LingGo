@@ -1,5 +1,7 @@
 import type {
   BenchmarkConfig,
+  BenchmarkMoveReview,
+  BenchmarkNotebookVersion,
   BenchmarkRun,
   Game,
   GameAnalysis,
@@ -218,6 +220,20 @@ export const api = {
     request<{ok: true}>(`/api/benchmarks/${id}`, {method: 'DELETE'}),
   benchmarkNotebook: (id: string) =>
     requestText(`/api/benchmarks/${id}/notebook.md`),
+  benchmarkNotebookVersions: (id: string) =>
+    request<BenchmarkNotebookVersion[]>(
+      `/api/benchmarks/${id}/notebook-versions`,
+    ),
+  benchmarkMoveReviews: (id: string) =>
+    request<BenchmarkMoveReview[]>(`/api/benchmarks/${id}/move-reviews`),
+  publishBenchmarkNotebook: (
+    id: string,
+    input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
+  ) =>
+    request<TechniqueNotebookSummary>(`/api/benchmarks/${id}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   importSgf: (sgf: string) =>
     request<{game: Game; warnings: string[]}>('/api/import', {
       method: 'POST',

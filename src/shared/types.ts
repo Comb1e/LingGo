@@ -300,16 +300,60 @@ export interface GameAnalysis {
 
 export type BenchmarkStatus =
   'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'invalid'
-export type BenchmarkPhase = 'training' | 'reflection' | 'final' | 'complete'
+export type BenchmarkPhase =
+  | 'initializing_notebook'
+  | 'training_game'
+  | 'reviewing_game'
+  | 'final_game'
+  | 'complete'
+  // Retained so invalidated V1 runs remain readable as historical records.
+  | 'training'
+  | 'reflection'
+  | 'final'
 
-export const benchmarkConfigSchema = z.object({
-  profileId: z.string().min(1),
-  finalColor: z.enum(['B', 'W']),
-  visits: z.number().int().min(25).max(100_000),
-  includeTrainingWinRates: z.boolean(),
-  trainingGameCount: z.number().int().min(1).max(1000),
-  notebookId: z.string().min(1),
-})
+export type ActiveBenchmarkSubstate =
+  | {kind: 'ready'}
+  | {
+      kind: 'provider_request'
+      operation: 'initialize' | 'compress' | 'move' | 'review'
+      attempt: number
+      maxAttempts: number
+    }
+  | {
+      kind: 'provider_retry'
+      operation: 'initialize' | 'compress' | 'move' | 'review'
+      attempt: number
+      maxAttempts: number
+      lastError: string
+    }
+  | {kind: 'compressing'; attempt: number; maxAttempts: number}
+  | {kind: 'waiting_credentials'}
+  | {kind: 'waiting_katago'}
+export type BenchmarkSubstate =
+  ActiveBenchmarkSubstate | {kind: 'paused'; previous: ActiveBenchmarkSubstate}
+
+export const notebookSeedSchema = z.discriminatedUnion('mode', [
+  z.object({mode: z.literal('rules_only')}),
+  z.object({mode: z.literal('refine_existing'), notebookId: z.string().min(1)}),
+])
+export type NotebookSeed = z.infer<typeof notebookSeedSchema>
+
+export const benchmarkConfigSchema = z
+  .object({
+    profileId: z.string().min(1),
+    finalColor: z.enum(['B', 'W']),
+    trainingGameCount: z.number().int().min(1).max(1000),
+    notebookSeed: notebookSeedSchema.default({mode: 'rules_only'}),
+    trainingFeedback: z.enum(['none', 'structured']).default('structured'),
+    notebookTokenBudget: z.number().int().min(256).max(100_000).default(8000),
+    trainingVisits: z.number().int().min(25).max(100_000).default(5000),
+    evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
+  })
+  .strict()
+  .refine((value) => value.evaluationVisits >= value.trainingVisits, {
+    message: 'Evaluation visits must be at least training visits',
+    path: ['evaluationVisits'],
+  })
 export type BenchmarkConfig = z.infer<typeof benchmarkConfigSchema>
 
 export interface BenchmarkUsage {
@@ -318,6 +362,15 @@ export interface BenchmarkUsage {
   cachedInputTokens?: number
   outputTokens: number
   latencyMs: number
+  byPhase?: Partial<
+    Record<
+      | 'initializing_notebook'
+      | 'training_game'
+      | 'reviewing_game'
+      | 'final_game',
+      Omit<BenchmarkUsage, 'byPhase'>
+    >
+  >
 }
 
 export interface BenchmarkMetrics {
@@ -328,6 +381,9 @@ export interface BenchmarkMetrics {
   moveQuality: number
   resultScore: number
   score: number
+  outputRepairRate?: number
+  trainingReviewCount?: number
+  notebookGrowthCharacters?: number
 }
 
 export interface NotebookMetadata {
@@ -353,8 +409,10 @@ export interface TechniqueNotebook extends TechniqueNotebookSummary {
 
 export interface BenchmarkRun {
   id: string
+  protocolVersion: 1 | 2
   status: BenchmarkStatus
   phase: BenchmarkPhase
+  substate: BenchmarkSubstate
   config: BenchmarkConfig
   profileSnapshot: PlayerProfile
   modelFingerprint: string
@@ -363,12 +421,56 @@ export interface BenchmarkRun {
   gameIds: string[]
   usage: BenchmarkUsage
   notebook: NotebookMetadata
+  notebookVersion: number
+  notebookEstimatedTokens: number
+  kataGoFingerprint: string
+  sourceRunId?: string
+  successorRunId?: string
   metrics?: BenchmarkMetrics
   error?: string
   waitingFor?: 'credentials' | 'katago'
   pauseAfterLlmMove?: boolean
   createdAt: string
   updatedAt: string
+}
+
+export type BenchmarkNotebookSourcePhase =
+  'initializing_notebook' | 'reviewing_game'
+
+export interface BenchmarkNotebookVersion {
+  runId: string
+  version: number
+  sourcePhase: BenchmarkNotebookSourcePhase
+  content: string
+  digest: string
+  characterCount: number
+  byteCount: number
+  estimatedTokens: number
+  createdAt: string
+}
+
+export interface BenchmarkMoveReview {
+  runId: string
+  gameId: string
+  gameIndex: number
+  turn: number
+  color: Color
+  chosenMove: string
+  topCandidate?: string
+  pointLoss: number
+  winRateLoss: number
+  beforeScore: number
+  afterScore: number
+  beforeWinRate: number
+  afterWinRate: number
+  position: {
+    size: BoardSize
+    komi: number
+    board: number[][]
+    toMove: Color
+    captures: {B: number; W: number}
+  }
+  createdAt: string
 }
 
 /** Inference-time adaptation conditions used by the research protocol. */

@@ -9,12 +9,16 @@ import {
   BenchmarkConflictError,
   BenchmarkService,
   calculateMetrics,
+  compareMoveReviews,
+  lossFromPerspective,
   pointLossQuality,
+  reviewCandidate,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {MalformedModelOutputError, type PlayerAdapter} from './providers'
 import {makeSnapshot} from './go'
 import {makeInitialLlmPrompt, perspectiveOutcome} from './llmGameContext'
+import {formatCanonicalGoRules} from './movePrompt'
 
 let store: Store | undefined
 let directory: string | undefined
@@ -73,8 +77,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).not.toContain('scoreLead')
     expect(prompt).not.toContain('candidate')
     expect(prompt).not.toContain('variation')
-    expect(prompt).toContain('BACKGROUND\nThis is the scored final game.')
-    expect(prompt).toContain('maximize your score')
+    expect(prompt).not.toContain('BACKGROUND')
     expect(prompt).not.toContain('The game result does not matter')
     expect(prompt).toContain('Required fields: move')
     expect(prompt).toContain('letter-number coordinate exactly as labeled')
@@ -214,7 +217,7 @@ describe('benchmark scoring and prompts', () => {
     expect(completed).toBe(true)
     const saved = service.get(run.id)!
     expect(saved.gameIds).toHaveLength(11)
-    expect(saved.usage.cachedInputTokens).toBe(92)
+    expect(saved.usage.cachedInputTokens).toBe(99)
     expect(saved.metrics).toMatchObject({
       result: 'Draw',
       resultScore: 50,
@@ -237,18 +240,15 @@ describe('benchmark scoring and prompts', () => {
     expect(await service.notebooks.readSnapshot(run.id)).toContain(
       '# Go techniques',
     )
-    expect(reflectionPrompts).toHaveLength(10)
-    expect(reflectionPrompts[0]).toContain('Outcome: Draw')
-    expect(reflectionPrompts[9]).toContain(
+    expect(reflectionPrompts).toHaveLength(11)
+    expect(reflectionPrompts[0]).toContain('AUTHORITATIVE GO RULES')
+    expect(reflectionPrompts[1]).toContain('Outcome: Draw')
+    expect(reflectionPrompts[10]).toContain(
       'Return only the complete replacement Markdown technique notebook.',
     )
-    expect(reflectionPrompts[9]).not.toContain('PREVIOUS NOTEBOOK')
-    expect(reflectionPrompts[9]).not.toContain('Move list')
-    expect(reflectionPrompts[9]).not.toContain('Comment at turn')
-    expect(reflectionPrompts[9]).not.toContain('KataGo passed.')
-    expect(reflectionPrompts[9]).not.toContain('"comment":')
-    expect(reflectionPrompts[9]).not.toContain('Thought at turn')
-    expect(reflectionPrompts[9]).not.toContain('"thought":')
+    expect(reflectionPrompts[10]).toContain('PRIOR NOTEBOOK')
+    expect(reflectionPrompts[10]).toContain('Comment at turn')
+    expect(reflectionPrompts[10]).not.toContain('Thought at turn')
     await service.close()
   })
 
@@ -302,7 +302,7 @@ describe('benchmark scoring and prompts', () => {
       ).toBe(true)
       const run = service.get(created.id)!
       expect(run.gameIds).toHaveLength(trainingGameCount + 1)
-      expect(reflections).toBe(trainingGameCount)
+      expect(reflections).toBe(trainingGameCount + 1)
       expect(games.get(run.gameIds[trainingGameCount])?.white.type).toBe('llm')
       expect(
         run.gameIds
@@ -326,6 +326,15 @@ describe('benchmark scoring and prompts', () => {
     let requestSignal: AbortSignal | undefined
     let requests = 0
     const adapter = {
+      async requestText() {
+        return {
+          text: '# Technique Notebook',
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+        }
+      },
       async requestAction(snapshot, signal) {
         requests += 1
         requestSignal = signal
@@ -479,28 +488,16 @@ describe('benchmark scoring and prompts', () => {
       'seed-run',
       '# Existing techniques',
     )
-    const healthGate = deferred()
-    const healthEntered = deferred()
-    const engine: KataGoAnalyzer = {
-      ...fakeKataGo,
-      async healthCheck() {
-        healthEntered.resolve()
-        await healthGate.promise
-        return {ok: true, message: 'ready'}
-      },
-    }
     const service = new BenchmarkService(
       store,
       new GameService(store),
-      engine,
+      fakeKataGo,
       notebooks,
     )
     const winner = service.create({
       ...benchmarkConfig('builtin-fake-profile'),
       notebookId: 'default',
     })
-    await healthEntered.promise
-
     await expect(
       service.create({
         ...benchmarkConfig('builtin-fake-profile'),
@@ -512,7 +509,6 @@ describe('benchmark scoring and prompts', () => {
       '# Existing techniques',
     )
 
-    healthGate.resolve()
     const created = await winner
     expect(created.status).toBe('queued')
     service.cancel(created.id)
@@ -600,6 +596,15 @@ describe('benchmark scoring and prompts', () => {
     const games = new GameService(store)
     let requests = 0
     const adapter = {
+      async requestText() {
+        return {
+          text: '# Technique Notebook',
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+        }
+      },
       async requestAction() {
         requests += 1
         throw new Error(
@@ -721,7 +726,15 @@ describe('benchmark scoring and prompts', () => {
           retries: 0,
         }
       },
-      async requestText() {
+      async requestText(prompt) {
+        if (!prompt.includes('GAME REVIEW'))
+          return {
+            text: '# Technique Notebook',
+            inputTokens: 0,
+            outputTokens: 0,
+            latencyMs: 0,
+            model: 'test-model',
+          }
         reflections += 1
         throw new Error('reflection connection reset')
       },
@@ -751,9 +764,242 @@ describe('benchmark scoring and prompts', () => {
     const game = games.get(run.gameIds[0])!
     expect(reflections).toBe(5)
     expect(game.status).toBe('finished')
-    expect(game.error).toContain('after 5 attempts during reflection')
+    expect(game.error).toContain('after 5 attempts during notebook review')
     expect(game.modelTurn).toBeUndefined()
     await service.close()
+  })
+
+  it('initializes before creating a game and owns every notebook version', async () => {
+    store = new Store(':memory:')
+    const games = new GameService(store)
+    const source = store.createNotebook('builtin-fake-profile', 'Source')
+    store.db
+      .prepare('UPDATE technique_notebooks SET content = ? WHERE id = ?')
+      .run('# Original source', source.id)
+    const initializationEntered = deferred()
+    const initializationGate = deferred()
+    const prompts: string[] = []
+    const adapter = {
+      async requestText(prompt: string, signal: AbortSignal) {
+        signal.throwIfAborted()
+        prompts.push(prompt)
+        if (prompt.includes('AUTHORITATIVE GO RULES')) {
+          initializationEntered.resolve()
+          await initializationGate.promise
+        }
+        return {
+          text: prompt.includes('GAME REVIEW')
+            ? '# Learned notebook'
+            : '# Initialized notebook',
+          inputTokens: 3,
+          outputTokens: 2,
+          latencyMs: 1,
+          model: 'test-model',
+        }
+      },
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'Visible reason.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(store),
+      () => adapter,
+    )
+    const created = await service.create({
+      profileId: 'builtin-fake-profile',
+      finalColor: 'B',
+      trainingGameCount: 1,
+      notebookSeed: {mode: 'refine_existing', notebookId: source.id},
+      trainingFeedback: 'structured',
+      notebookTokenBudget: 8000,
+      trainingVisits: 25,
+      evaluationVisits: 50,
+    })
+    await initializationEntered.promise
+    expect(service.get(created.id)).toMatchObject({
+      phase: 'initializing_notebook',
+      gameIds: [],
+    })
+    const moveRules = makeInitialLlmPrompt(makeSnapshot(19, 7.5, []), {
+      kind: 'benchmark',
+      phase: 'training',
+      notebook: '',
+    })
+    for (const rule of formatCanonicalGoRules({size: 19, komi: 7.5})) {
+      expect(prompts[0]).toContain(rule)
+      expect(moveRules).toContain(rule)
+    }
+    expect(prompts[0]).toContain('# Original source')
+    initializationGate.resolve()
+    expect(
+      await waitFor(
+        () => service.get(created.id)?.status === 'completed',
+        2000,
+      ),
+    ).toBe(true)
+
+    const versions = store.listBenchmarkNotebookVersions(created.id)
+    expect(versions).toHaveLength(2)
+    expect(versions.map(({version}) => version)).toEqual([1, 2])
+    for (const version of versions) {
+      expect(version.digest).toHaveLength(64)
+      expect(version.characterCount).toBe([...version.content].length)
+      expect(version.byteCount).toBe(Buffer.byteLength(version.content, 'utf8'))
+      expect(version.estimatedTokens).toBe(Math.ceil(version.byteCount / 4))
+    }
+    expect(store.getNotebook('builtin-fake-profile', source.id)?.content).toBe(
+      '# Original source',
+    )
+    const run = service.get(created.id)!
+    expect(run.usage.byPhase?.initializing_notebook?.calls).toBe(1)
+    expect(run.usage.byPhase?.reviewing_game?.calls).toBe(1)
+    expect(store.listBenchmarkMoveReviews(created.id)).toHaveLength(2)
+
+    const published = service.publishNotebook(created.id, {
+      mode: 'save_new',
+      name: 'Learned copy',
+    })
+    expect(published.content).toBe('# Learned notebook')
+    service.publishNotebook(created.id, {mode: 'replace_source'})
+    expect(store.getNotebook('builtin-fake-profile', source.id)?.content).toBe(
+      '# Learned notebook',
+    )
+    await service.close()
+  })
+
+  it('compresses oversized notebooks and pauses after three invalid outputs', async () => {
+    store = new Store(':memory:')
+    let calls = 0
+    const prompts: string[] = []
+    const adapter = {
+      async requestText(prompt: string) {
+        prompts.push(prompt)
+        calls += 1
+        return {
+          text: calls === 1 ? 'x'.repeat(100) : '# Fine',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'Pass.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(store),
+      () => adapter,
+    )
+    const compressed = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      notebookTokenBudget: 8,
+    })
+    expect(
+      await waitFor(
+        () => service.get(compressed.id)?.status === 'completed',
+        2000,
+      ),
+    ).toBe(true)
+    expect(prompts[1]).toContain('Compress the notebook')
+    expect(
+      service.get(compressed.id)?.notebookEstimatedTokens,
+    ).toBeLessThanOrEqual(8)
+    await service.close()
+
+    const invalidStore = new Store(':memory:')
+    store.close()
+    store = invalidStore
+    let invalidCalls = 0
+    const invalidService = new BenchmarkService(
+      invalidStore,
+      new GameService(invalidStore),
+      fakeKataGo,
+      new NotebookStore(invalidStore),
+      () => ({
+        async requestText() {
+          invalidCalls += 1
+          return {
+            text: '',
+            inputTokens: 0,
+            outputTokens: 0,
+            latencyMs: 0,
+            model: 'test-model',
+          }
+        },
+        async requestAction() {
+          throw new Error('A game must not be created')
+        },
+      }),
+    )
+    const invalid = await invalidService.create(
+      v2Config('builtin-fake-profile'),
+    )
+    expect(
+      await waitFor(
+        () => invalidService.get(invalid.id)?.status === 'paused',
+        2000,
+      ),
+    ).toBe(true)
+    expect(invalidCalls).toBe(3)
+    expect(invalidService.get(invalid.id)?.gameIds).toEqual([])
+    expect(invalidService.get(invalid.id)?.error).toContain('three attempts')
+    await invalidService.close()
+  })
+
+  it('calculates loss from either model color without rewarding improvements', () => {
+    const before = {
+      blackScoreLead: 4,
+      blackWinRate: 0.6,
+      whiteWinRate: 0.4,
+    }
+    const after = {
+      blackScoreLead: 1,
+      blackWinRate: 0.52,
+      whiteWinRate: 0.48,
+    }
+    const blackLoss = lossFromPerspective('B', before, after)
+    expect(blackLoss.pointLoss).toBe(3)
+    expect(blackLoss.winRateLoss).toBeCloseTo(0.08)
+    expect(lossFromPerspective('W', before, after)).toMatchObject({
+      pointLoss: 0,
+      winRateLoss: 0,
+    })
+    const whiteLoss = lossFromPerspective('W', after, before)
+    expect(whiteLoss.pointLoss).toBe(3)
+    expect(whiteLoss.winRateLoss).toBeCloseTo(0.08)
+    expect(reviewCandidate({})).toBeUndefined()
+    expect(
+      [
+        {pointLoss: 2, turn: 8},
+        {pointLoss: 3, turn: 9},
+        {pointLoss: 3, turn: 4},
+      ].sort(compareMoveReviews),
+    ).toEqual([
+      {pointLoss: 3, turn: 4},
+      {pointLoss: 3, turn: 9},
+      {pointLoss: 2, turn: 8},
+    ])
   })
 })
 
@@ -782,5 +1028,18 @@ function benchmarkConfig(profileId: string) {
     includeTrainingWinRates: false,
     trainingGameCount: 10,
     notebookId: 'default',
+  }
+}
+
+function v2Config(profileId: string) {
+  return {
+    profileId,
+    finalColor: 'B' as const,
+    trainingGameCount: 1,
+    notebookSeed: {mode: 'rules_only' as const},
+    trainingFeedback: 'structured' as const,
+    notebookTokenBudget: 8000,
+    trainingVisits: 25,
+    evaluationVisits: 50,
   }
 }

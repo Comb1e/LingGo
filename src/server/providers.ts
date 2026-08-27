@@ -173,7 +173,8 @@ export class FakePlayerAdapter implements PlayerAdapter {
     ].some(
       (content) =>
         content.includes('benchmark training game') ||
-        content.includes('scored final game'),
+        content.includes('scored final game') ||
+        content.includes('2. SELF-WRITTEN SKILLS'),
     )
     const action: PlayerAction = benchmarkConversation
       ? {action: 'pass', comment: 'Training pass.'}

@@ -84,18 +84,24 @@ function makeBenchmarkSections(snapshot: GameSnapshot): MovePromptSections {
   }
 }
 
-function makeGoRulesSection(snapshot: GameSnapshot) {
+export function formatCanonicalGoRules(
+  settings: Pick<GameSnapshot, 'size' | 'komi'>,
+) {
   return [
-    '1. GO RULES',
     "- LEGAL MOVE: A play is legal only when it places one stone on an empty intersection, removes adjacent opposing chains with no liberties, leaves the played stone's chain with at least one liberty, and does not recreate any earlier complete board position.",
-    `- The game is played on a ${snapshot.size}x${snapshot.size} grid. Black moves first, then Black and White alternate turns.`,
+    `- The game is played on a ${settings.size}x${settings.size} grid. Black moves first, then Black and White alternate turns.`,
     '- On your turn, place one stone of your color on an empty intersection. Once placed, a stone does not move; it stays on the board until it is captured and removed.',
     '- Orthogonally adjacent stones of one color form a chain and share liberties: orthogonally adjacent empty intersections.',
     '- After placing a stone, remove every adjacent opposing chain with no liberties. A move that leaves its own chain with no liberties after those captures is suicide and is illegal.',
     '- Positional whole-board repetition is prohibited: a move may not recreate any earlier complete board position.',
     '- Passing is legal. Two consecutive passes end play for scoring. A player may resign at any time.',
-    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${snapshot.komi} komi; the higher total wins.`,
+    `- Use Chinese area scoring. Each color scores its living stones on the board plus empty intersections surrounded only by that color. Captured stones do not add points directly; their removal can create territory. Neutral intersections score for neither side. White adds ${settings.komi} komi; the higher total wins.`,
+    '- Coordinates use column letters from left to right, skipping I, and row numbers from bottom to top.',
   ]
+}
+
+function makeGoRulesSection(snapshot: GameSnapshot) {
+  return ['1. GO RULES', ...formatCanonicalGoRules(snapshot)]
 }
 
 function formatPromptMoves(snapshot: GameSnapshot) {
