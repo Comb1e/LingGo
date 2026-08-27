@@ -41,6 +41,7 @@ export interface LlmGameContext {
   transcript: VisibleLlmMessage[]
   pendingTurn?: PendingLlmTurn
   providerContinuationId?: string
+  managedContinuation: boolean
   createdAt: string
   updatedAt: string
 }

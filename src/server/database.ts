@@ -210,7 +210,8 @@ export class Store {
       .prepare(
         `SELECT game_id, color, status, profile_id, provider_kind,
          model_fingerprint, last_observed_move, transcript_json,
-         pending_turn_json, provider_continuation_id, created_at, updated_at
+         pending_turn_json, provider_continuation_id, managed_continuation,
+         created_at, updated_at
          FROM llm_game_contexts WHERE game_id = ? AND color = ?`,
       )
       .get(gameId, color) as any
@@ -251,6 +252,7 @@ export class Store {
         transcript,
         pendingTurn,
         providerContinuationId: row.provider_continuation_id ?? undefined,
+        managedContinuation: Boolean(row.managed_continuation),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }
@@ -264,6 +266,7 @@ export class Store {
         modelFingerprint: row.model_fingerprint,
         lastObservedMove: 0,
         transcript: [],
+        managedContinuation: Boolean(row.managed_continuation),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }
@@ -276,8 +279,9 @@ export class Store {
         `INSERT INTO llm_game_contexts
          (game_id, color, status, profile_id, provider_kind,
           model_fingerprint, last_observed_move, transcript_json,
-          pending_turn_json, provider_continuation_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          pending_turn_json, provider_continuation_id, managed_continuation,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(game_id, color) DO UPDATE SET
          status = excluded.status, profile_id = excluded.profile_id,
          provider_kind = excluded.provider_kind,
@@ -286,6 +290,7 @@ export class Store {
          transcript_json = excluded.transcript_json,
          pending_turn_json = excluded.pending_turn_json,
          provider_continuation_id = excluded.provider_continuation_id,
+         managed_continuation = excluded.managed_continuation,
          updated_at = excluded.updated_at`,
       )
       .run(
@@ -299,6 +304,7 @@ export class Store {
         JSON.stringify(context.transcript),
         context.pendingTurn ? JSON.stringify(context.pendingTurn) : null,
         context.providerContinuationId ?? null,
+        context.managedContinuation ? 1 : 0,
         context.createdAt,
         context.updatedAt,
       )
@@ -313,6 +319,17 @@ export class Store {
          updated_at = ? WHERE ${where}`,
       )
       .run(new Date().toISOString(), gameId, ...(color ? [color] : []))
+  }
+
+  disableManagedLlmContinuation(gameId: string, color: 'B' | 'W') {
+    this.db
+      .prepare(
+        `UPDATE llm_game_contexts SET status = 'needs_rebase',
+         pending_turn_json = NULL, provider_continuation_id = NULL,
+         managed_continuation = 0, updated_at = ?
+         WHERE game_id = ? AND color = ?`,
+      )
+      .run(new Date().toISOString(), gameId, color)
   }
 
   completeLlmGameContexts(gameId: string) {

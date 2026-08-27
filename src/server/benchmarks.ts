@@ -462,27 +462,33 @@ export class BenchmarkService {
               break
             } catch (error) {
               if (signal.aborted) throw error
+              const managedContinuationFailed =
+                prepared.context.managedContinuation &&
+                Boolean(prepared.context.providerContinuationId) &&
+                NoOutputGeneratedError.isInstance(error)
+              if (
+                !rebasedProviderContext &&
+                prepared.context.providerContinuationId &&
+                (isProviderContextError(error) || managedContinuationFailed)
+              ) {
+                rebasedProviderContext = true
+                if (managedContinuationFailed)
+                  this.games.disableManagedLlmContinuation(game.id, llmColor)
+                else this.games.rebaseLlmContext(game.id, llmColor)
+                prepared = this.games.prepareLlmActionTurn({
+                  gameId: game.id,
+                  color: llmColor,
+                  profile: run.profileSnapshot,
+                  connection,
+                  mode: {kind: 'benchmark', phase, notebook},
+                  latestWinRate:
+                    phase === 'training' && run.config.includeTrainingWinRates
+                      ? this.winRateUpdate(game.id, llmColor)
+                      : undefined,
+                })
+                continue
+              }
               if (!isRepairableMoveError(error)) {
-                if (
-                  !rebasedProviderContext &&
-                  isProviderContextError(error) &&
-                  prepared.context.providerContinuationId
-                ) {
-                  rebasedProviderContext = true
-                  this.games.rebaseLlmContext(game.id, llmColor)
-                  prepared = this.games.prepareLlmActionTurn({
-                    gameId: game.id,
-                    color: llmColor,
-                    profile: run.profileSnapshot,
-                    connection,
-                    mode: {kind: 'benchmark', phase, notebook},
-                    latestWinRate:
-                      phase === 'training' && run.config.includeTrainingWinRates
-                        ? this.winRateUpdate(game.id, llmColor)
-                        : undefined,
-                  })
-                  continue
-                }
                 apiFailures += 1
                 const message = publicProviderError(error)
                 retryErrors.push(message)
@@ -607,8 +613,15 @@ export class BenchmarkService {
     const response = await this.requestReflection(
       game.id,
       () => this.games.requestPreparedLlmTurn(adapter, prepared, signal),
-      () => {
-        this.games.rebaseLlmContext(game.id, color)
+      (error) =>
+        isProviderContextError(error) ||
+        (prepared.context.managedContinuation &&
+          Boolean(prepared.context.providerContinuationId) &&
+          NoOutputGeneratedError.isInstance(error)),
+      (error) => {
+        if (NoOutputGeneratedError.isInstance(error))
+          this.games.disableManagedLlmContinuation(game.id, color)
+        else this.games.rebaseLlmContext(game.id, color)
         prepared = this.games.prepareLlmReflectionTurn({
           gameId: game.id,
           color,
@@ -692,7 +705,8 @@ export class BenchmarkService {
   private async requestReflection(
     gameId: string,
     request: () => Promise<LlmTurnResponse>,
-    rebase: () => void,
+    shouldRebase: (error: unknown) => boolean,
+    rebase: (error: unknown) => void,
     signal: AbortSignal,
   ) {
     let lastError = ''
@@ -718,9 +732,9 @@ export class BenchmarkService {
           return await request()
         } catch (error) {
           if (signal.aborted) throw error
-          if (!rebasedProviderContext && isProviderContextError(error)) {
+          if (!rebasedProviderContext && shouldRebase(error)) {
             rebasedProviderContext = true
-            rebase()
+            rebase(error)
             attempt -= 1
             continue
           }

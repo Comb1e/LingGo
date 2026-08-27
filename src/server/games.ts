@@ -301,6 +301,10 @@ export class GameService {
       providerContinuationId: rebase
         ? undefined
         : context!.providerContinuationId,
+      managedContinuation:
+        !context || identityChanged
+          ? input.connection.kind === 'openai'
+          : context.managedContinuation,
       createdAt: context?.createdAt ?? now,
       updatedAt: now,
     }
@@ -325,9 +329,10 @@ export class GameService {
         content,
         observedMoveCount: game.moves.length,
       },
-      providerContinuationId:
-        response.providerContinuationId ??
-        prepared.context.providerContinuationId,
+      providerContinuationId: prepared.context.managedContinuation
+        ? (response.providerContinuationId ??
+          prepared.context.providerContinuationId)
+        : undefined,
       updatedAt: new Date().toISOString(),
     }
     this.store.saveLlmGameContext(context)
@@ -346,13 +351,16 @@ export class GameService {
     const fingerprint =
       input.fingerprint ?? modelFingerprint(input.profile, input.connection)
     let context = this.store.getLlmGameContext(game.id, input.color)
-    const valid =
+    const identityMatches = Boolean(
       context &&
       context.profileId === input.profile.id &&
       context.providerKind === input.connection.kind &&
-      context.modelFingerprint === fingerprint &&
-      context.status !== 'needs_rebase' &&
-      context.lastObservedMove <= game.moves.length
+      context.modelFingerprint === fingerprint,
+    )
+    const valid =
+      identityMatches &&
+      context!.status !== 'needs_rebase' &&
+      context!.lastObservedMove <= game.moves.length
     if (
       valid &&
       context!.status === 'reflecting' &&
@@ -379,6 +387,10 @@ export class GameService {
       providerContinuationId: valid
         ? context!.providerContinuationId
         : undefined,
+      managedContinuation:
+        !context || !identityMatches
+          ? input.connection.kind === 'openai'
+          : context.managedContinuation,
       createdAt: context?.createdAt ?? now,
       updatedAt: now,
     }
@@ -398,15 +410,20 @@ export class GameService {
       lastObservedMove,
       transcript: appendVisibleTurn(prepared.context, response.text),
       pendingTurn: undefined,
-      providerContinuationId:
-        response.providerContinuationId ??
-        prepared.context.providerContinuationId,
+      providerContinuationId: prepared.context.managedContinuation
+        ? (response.providerContinuationId ??
+          prepared.context.providerContinuationId)
+        : undefined,
       updatedAt: new Date().toISOString(),
     }
   }
 
   rebaseLlmContext(gameId: string, color: Color) {
     this.store.markLlmGameContextsNeedsRebase(gameId, color)
+  }
+
+  disableManagedLlmContinuation(gameId: string, color: Color) {
+    this.store.disableManagedLlmContinuation(gameId, color)
   }
 
   finishAutomated(id: string, result: string) {
@@ -809,17 +826,23 @@ export class GameService {
             error instanceof IllegalMoveError ||
             error instanceof MalformedModelOutputError ||
             error instanceof NoOutputGeneratedError
+          const managedContinuationFailed =
+            prepared.context.managedContinuation &&
+            Boolean(prepared.context.providerContinuationId) &&
+            NoOutputGeneratedError.isInstance(error)
+          if (
+            !rebasedProviderContext &&
+            prepared.context.providerContinuationId &&
+            (isProviderContextError(error) || managedContinuationFailed)
+          ) {
+            rebasedProviderContext = true
+            if (managedContinuationFailed)
+              this.disableManagedLlmContinuation(id, game.toMove)
+            else this.rebaseLlmContext(id, game.toMove)
+            prepared = undefined
+            continue
+          }
           if (!repairable) {
-            if (
-              !rebasedProviderContext &&
-              isProviderContextError(error) &&
-              prepared.context.providerContinuationId
-            ) {
-              rebasedProviderContext = true
-              this.rebaseLlmContext(id, game.toMove)
-              prepared = undefined
-              continue
-            }
             apiFailures += 1
             const message = publicProviderError(error)
             retryErrors.push(message)
@@ -1002,7 +1025,9 @@ export class GameService {
         kind: pendingTurn.kind,
         content: pendingTurn.content,
         transcript: context.transcript,
-        previousResponseId: context.providerContinuationId,
+        previousResponseId: context.managedContinuation
+          ? context.providerContinuationId
+          : undefined,
         snapshot,
         output: pendingTurn.kind === 'reflection' ? 'notebook' : 'action',
       },

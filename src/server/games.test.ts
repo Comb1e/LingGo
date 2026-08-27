@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it} from 'vitest'
+import {NoOutputGeneratedError} from 'ai'
 import {Store} from './database'
 import {GameService, StaleVersionError} from './games'
 import type {PlayerAdapter} from './providers'
@@ -453,6 +454,90 @@ describe('game orchestration', () => {
     const recovered = service.get(created.id)!
     expect(recovered.providerErrors).toBeUndefined()
     expect(recovered.moves[0].retryErrors).toHaveLength(5)
+  })
+
+  it('falls back to visible transcript after managed continuation returns no output', async () => {
+    store = new Store(':memory:')
+    const requests: Array<{
+      kind: string
+      previousResponseId?: string
+      transcriptLength: number
+    }> = []
+    let calls = 0
+    const adapter = {
+      async requestAction() {
+        throw new Error('Legacy request path should not be used')
+      },
+      async requestTurn(request, signal) {
+        signal.throwIfAborted()
+        calls += 1
+        requests.push({
+          kind: request.kind,
+          previousResponseId: request.previousResponseId,
+          transcriptLength: request.transcript.length,
+        })
+        if (calls === 2)
+          throw new NoOutputGeneratedError({
+            message: 'No output generated. Check the stream for errors.',
+          })
+        const move = ['A9', 'unused', 'C9', 'E9'][calls - 1]
+        return {
+          text: JSON.stringify({move, reason: 'Test move.'}),
+          providerContinuationId: `resp-${calls}`,
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          providerKind: 'openai' as const,
+        }
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+    const profile = store.getProfile('builtin-fake-profile')!
+    store.saveConnection({
+      id: 'managed-openai',
+      name: 'Managed OpenAI',
+      kind: 'openai',
+      supportsStructuredOutput: false,
+    })
+    store.saveProfile({...profile, connectionId: 'managed-openai'})
+    service.vault.set('managed-openai', 'test-key')
+    let game = service.create({
+      size: 9,
+      komi: 7.5,
+      black: {type: 'llm', name: 'Bot', profileId: profile.id},
+      white: {type: 'human', name: 'Human'},
+      commentsVisible: true,
+    })
+    await waitFor(() => service.get(game.id)?.moves.length === 1)
+
+    game = await service.command(game.id, {
+      expectedVersion: service.get(game.id)!.version,
+      type: 'play',
+      coordinate: 'B9',
+    })
+    await waitFor(() => service.get(game.id)?.moves.length === 3)
+    expect(requests.slice(0, 3)).toEqual([
+      {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
+      {kind: 'continuation', previousResponseId: 'resp-1', transcriptLength: 2},
+      {kind: 'initial', previousResponseId: undefined, transcriptLength: 0},
+    ])
+    expect(store.getLlmGameContext(game.id, 'B')).toMatchObject({
+      managedContinuation: false,
+      providerContinuationId: undefined,
+    })
+
+    await service.command(game.id, {
+      expectedVersion: service.get(game.id)!.version,
+      type: 'play',
+      coordinate: 'D9',
+    })
+    await waitFor(() => service.get(game.id)?.moves.length === 5)
+    expect(requests[3]).toEqual({
+      kind: 'continuation',
+      previousResponseId: undefined,
+      transcriptLength: 2,
+    })
   })
 
   it('pauses immediately for a permanent provider request error', async () => {
