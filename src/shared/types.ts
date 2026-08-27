@@ -483,6 +483,7 @@ export interface BenchmarkMoveReview {
   color: Color
   chosenMove: string
   topCandidate?: string
+  topCandidates?: string[]
   pointLoss: number
   winRateLoss: number
   beforeScore: number

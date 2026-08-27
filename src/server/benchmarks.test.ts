@@ -10,9 +10,11 @@ import {
   BenchmarkService,
   calculateMetrics,
   compareMoveReviews,
+  formatReviewCandidates,
   lossFromPerspective,
   pointLossQuality,
   reviewCandidate,
+  reviewCandidateChoices,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {MalformedModelOutputError, type PlayerAdapter} from './providers'
@@ -149,7 +151,11 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain("Study the opponent's decisions")
     expect(prompt).toContain('LATEST TRAINING WIN-RATE UPDATE')
     expect(prompt).toContain('KATAGO TRAINING FEEDBACK')
-    expect(prompt).toContain('not a recommendation for the current position')
+    expect(prompt).toContain('top five ranked KataGo candidates')
+    expect(prompt).toContain('not recommendations for the current position')
+    expect(prompt).toContain(
+      "Candidate #1 is KataGo's best choice and is the baseline for the reported win-rate loss",
+    )
     expect(prompt).toContain('Turn 7: 42.00%')
     expect(prompt).not.toContain('in_game_reflections')
   })
@@ -1257,6 +1263,26 @@ describe('benchmark scoring and prompts', () => {
     expect(whiteLoss.pointLoss).toBe(3)
     expect(whiteLoss.winRateLoss).toBeCloseTo(0.08)
     expect(reviewCandidate({})).toBeUndefined()
+    expect(
+      reviewCandidateChoices({
+        moveInfos: ['d4', 'Q16', 'pass', 'c3', 'R17', 'A1'].map((move) => ({
+          move,
+        })),
+      }),
+    ).toEqual(['D4', 'Q16', 'pass', 'C3', 'R17'])
+    expect(
+      formatReviewCandidates({
+        topCandidate: 'D4',
+        topCandidates: ['D4', 'Q16', 'pass', 'C3', 'R17', 'A1'],
+      }),
+    ).toBe('#1 D4, #2 Q16, #3 pass, #4 C3, #5 R17')
+    expect(formatReviewCandidates({topCandidate: 'D4'})).toBe('#1 D4')
+
+    const candidateBasedLoss = lossFromPerspective('B', before, after, {
+      winrate: 0.65,
+    })
+    expect(candidateBasedLoss.beforeWin).toBe(0.65)
+    expect(candidateBasedLoss.winRateLoss).toBeCloseTo(0.13)
     expect(
       [
         {pointLoss: 2, turn: 8},

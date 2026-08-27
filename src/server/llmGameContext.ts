@@ -132,7 +132,7 @@ export function makeInitialLlmPrompt(
       0,
       '',
       'KATAGO TRAINING FEEDBACK',
-      'A retrospective update may appear after you make a move. Its KataGo candidate is the alternative move for the position immediately before your previous move, not a recommendation for the current position. Do not play that candidate now unless you independently determine it is legal and best in the current position.',
+      "A retrospective update may appear after you make a move. Its top five ranked KataGo candidates are alternative moves for the position immediately before your previous move, not recommendations for the current position. Candidate #1 is KataGo's best choice and is the baseline for the reported win-rate loss. Do not play those candidates now unless you independently determine one is legal and best in the current position.",
     )
   if (mode.phase === 'training' && latestWinRate)
     values.push(
@@ -177,7 +177,7 @@ export function makeFirstGameLlmPrompt(
       3,
       0,
       'KATAGO TRAINING FEEDBACK',
-      'A retrospective update may appear after you make a move. Its KataGo candidate is the alternative move for the position immediately before your previous move, not a recommendation for the current position. Do not play that candidate now unless you independently determine it is legal and best in the current position.',
+      "A retrospective update may appear after you make a move. Its top five ranked KataGo candidates are alternative moves for the position immediately before your previous move, not recommendations for the current position. Candidate #1 is KataGo's best choice and is the baseline for the reported win-rate loss. Do not play those candidates now unless you independently determine one is legal and best in the current position.",
       '',
     )
   return values.join('\n')
@@ -193,7 +193,7 @@ export function makeContinuationLlmPrompt(
     ...formatCurrentPosition(snapshot, observedMove),
     ...(latestWinRate
       ? [
-          'Latest win-rate update (retrospective; see the initial training instructions for candidate interpretation):',
+          'Latest win-rate update (retrospective; see the initial training instructions for ranked-candidate interpretation):',
           latestWinRate,
         ]
       : []),

@@ -769,7 +769,12 @@ export class BenchmarkService {
           afterWin,
           pointLoss,
           winRateLoss,
-        } = lossFromPerspective(llmColor, before, after)
+        } = lossFromPerspective(
+          llmColor,
+          before,
+          after,
+          beforeResult.moveInfos?.[0],
+        )
         if (phase === 'final_game') {
           ;(run.pointLosses ??= []).push(pointLoss)
           ;(run.winRateLosses ??= []).push(winRateLoss)
@@ -777,7 +782,8 @@ export class BenchmarkService {
         if (
           phase === 'final_game' ||
           trainingGameHasWinRates(run.config, run.currentGame)
-        )
+        ) {
+          const topCandidates = reviewCandidateChoices(beforeResult)
           this.store.saveBenchmarkMoveReview({
             runId: run.id,
             gameId: game.id,
@@ -788,7 +794,8 @@ export class BenchmarkService {
               game.moves.at(-1)?.coordinate ??
               game.moves.at(-1)?.action ??
               'unknown',
-            topCandidate: reviewCandidate(beforeResult),
+            topCandidate: topCandidates[0],
+            topCandidates,
             pointLoss,
             winRateLoss,
             beforeScore,
@@ -804,6 +811,7 @@ export class BenchmarkService {
             },
             createdAt: new Date().toISOString(),
           })
+        }
         run.substate = {kind: 'ready'}
       } else {
         const move = selectedMove(beforeResult)
@@ -918,7 +926,7 @@ export class BenchmarkService {
           .slice(0, 12)
           .map((review, index) =>
             [
-              `${index + 1}. Turn ${review.turn}: chose ${review.chosenMove}; KataGo ${review.topCandidate ?? 'unavailable'}; point loss ${review.pointLoss.toFixed(2)}; win-rate loss ${(review.winRateLoss * 100).toFixed(2)}%.`,
+              `${index + 1}. Turn ${review.turn}: chose ${review.chosenMove}; KataGo candidates (best first) ${formatReviewCandidates(review)}; point loss ${review.pointLoss.toFixed(2)}; win-rate loss versus candidate #1 ${(review.winRateLoss * 100).toFixed(2)}%.`,
               asciiBoard({
                 size: review.position.size,
                 komi: review.position.komi,
@@ -1121,8 +1129,8 @@ export class BenchmarkService {
     if (!review) return undefined
     return [
       `Previous-move review for turn ${review.turn}: you chose ${review.chosenMove}.`,
-      `KataGo's top candidate in the position immediately before that move: ${review.topCandidate ?? 'unavailable'}.`,
-      `Point loss: ${review.pointLoss.toFixed(2)}; win-rate loss: ${(review.winRateLoss * 100).toFixed(2)}%.`,
+      `KataGo's top candidates in the position immediately before that move, ranked best first: ${formatReviewCandidates(review)}.`,
+      `Point loss: ${review.pointLoss.toFixed(2)}; win-rate loss versus candidate #1: ${(review.winRateLoss * 100).toFixed(2)}%.`,
       `Score estimate before/after from your perspective: ${review.beforeScore.toFixed(2)} / ${review.afterScore.toFixed(2)}.`,
     ].join(' ')
   }
@@ -1254,12 +1262,19 @@ export function lossFromPerspective(
     PositionAnalysis,
     'blackScoreLead' | 'blackWinRate' | 'whiteWinRate'
   >,
+  topCandidate?: {winrate: number},
 ) {
   const beforeScore =
     color === 'B' ? before.blackScoreLead : -before.blackScoreLead
   const afterScore =
     color === 'B' ? after.blackScoreLead : -after.blackScoreLead
-  const beforeWin = color === 'B' ? before.blackWinRate : before.whiteWinRate
+  const beforeWin = topCandidate
+    ? color === 'B'
+      ? topCandidate.winrate
+      : 1 - topCandidate.winrate
+    : color === 'B'
+      ? before.blackWinRate
+      : before.whiteWinRate
   const afterWin = color === 'B' ? after.blackWinRate : after.whiteWinRate
   return {
     beforeScore,
@@ -1380,8 +1395,33 @@ function scoreLeadResult(lead: number) {
 }
 
 export function reviewCandidate(result: {moveInfos?: Array<{move: string}>}) {
-  const move = result.moveInfos?.[0]?.move
-  return move ? (move.toLowerCase() === 'pass' ? 'pass' : move) : undefined
+  return reviewCandidateChoices(result)[0]
+}
+
+export function reviewCandidateChoices(result: {
+  moveInfos?: Array<{move: string}>
+}) {
+  return (result.moveInfos ?? [])
+    .map(({move}) => move.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .map((move) =>
+      move.toLowerCase() === 'pass' ? 'pass' : move.toUpperCase(),
+    )
+}
+
+export function formatReviewCandidates(
+  review: Pick<BenchmarkMoveReview, 'topCandidate' | 'topCandidates'>,
+) {
+  const availableCandidates = review.topCandidates?.length
+    ? review.topCandidates
+    : review.topCandidate
+      ? [review.topCandidate]
+      : []
+  const candidates = availableCandidates.slice(0, 5)
+  return candidates.length
+    ? candidates.map((move, index) => `#${index + 1} ${move}`).join(', ')
+    : 'unavailable'
 }
 
 export function compareMoveReviews(

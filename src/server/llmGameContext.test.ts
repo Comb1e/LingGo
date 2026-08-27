@@ -195,7 +195,13 @@ describe('persistent LLM game context', () => {
 
     expect(prepared.request.content).toContain('KATAGO TRAINING FEEDBACK')
     expect(prepared.request.content).toContain(
-      'not a recommendation for the current position',
+      'top five ranked KataGo candidates',
+    )
+    expect(prepared.request.content).toContain(
+      'not recommendations for the current position',
+    )
+    expect(prepared.request.content).toContain(
+      "Candidate #1 is KataGo's best choice and is the baseline for the reported win-rate loss",
     )
   })
 
