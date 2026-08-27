@@ -83,7 +83,12 @@ describe('benchmark scoring and prompts', () => {
     expect(prompt).toContain(
       'Do not include any other top-level or nested fields',
     )
-    expect(prompt).toContain('JSON only, without Markdown fences')
+    expect(prompt).toContain(
+      'The correct output is pure JSON: your entire response must be exactly one valid JSON object and nothing else',
+    )
+    expect(prompt).toContain(
+      'Do not add explanations, introductory or trailing text, comments, or Markdown fences',
+    )
     const instruction = prompt.slice(
       prompt.indexOf('3. INSTRUCTION'),
       prompt.indexOf('4. JSON OUTPUT'),

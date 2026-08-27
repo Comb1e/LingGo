@@ -93,7 +93,7 @@ function makeBenchmarkSections(
       'Create and revise reflections carefully: base each one on concrete evidence from the current game, keep it concise and generally reusable, and correct it if later play disproves it.',
       'Still be willing to summarize a useful lesson when the evidence is strong; do not wait for perfect certainty or the end of the game.',
       'Do not include any other top-level or nested fields.',
-      'Return JSON only, without Markdown fences.',
+      'IMPORTANT: The correct output is pure JSON: your entire response must be exactly one valid JSON object and nothing else. Do not add explanations, introductory or trailing text, comments, or Markdown fences.',
     ],
     currentPosition: [
       '5. CURRENT BOARD AND PREVIOUS MOVES',
