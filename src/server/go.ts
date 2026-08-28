@@ -207,7 +207,7 @@ export function asciiBoard(snapshot: GameSnapshot): string {
     const label = String(snapshot.size - y).padStart(2, ' ')
     return `${label} ${row.map((value) => (value === 1 ? 'X' : value === 2 ? 'O' : '.')).join(' ')}`
   })
-  return [`   ${columns.join(' ')}`, ...rows].join('\n')
+  return [...rows, `   ${columns.join(' ')}`].join('\n')
 }
 
 export function toggleDeadChain(

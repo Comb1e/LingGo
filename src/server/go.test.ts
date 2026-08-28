@@ -25,12 +25,13 @@ describe('coordinates', () => {
 })
 
 describe('ASCII board', () => {
-  it('labels columns above the board only', () => {
+  it('labels columns below the board only', () => {
     const lines = asciiBoard(makeSnapshot(9, 7.5, [])).split('\n')
 
-    expect(lines[0]).toBe('   A B C D E F G H J')
-    expect(lines.at(-1)).toBe(' 1 . . . . . . . . .')
-    expect(lines.filter((line) => line === lines[0])).toHaveLength(1)
+    expect(lines[0]).toBe(' 9 . . . . . . . . .')
+    expect(lines.at(-2)).toBe(' 1 . . . . . . . . .')
+    expect(lines.at(-1)).toBe('   A B C D E F G H J')
+    expect(lines.filter((line) => line === lines.at(-1))).toHaveLength(1)
   })
 })
 
