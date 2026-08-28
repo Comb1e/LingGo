@@ -159,7 +159,6 @@ export function makeFirstGameLlmPrompt(
   const values = [
     'BEGIN FIRST BENCHMARK GAME',
     'Use the technique notebook you just wrote as your play guidance. Begin the game by choosing one legal move for the current position.',
-    'Do not place a stone on an X or O intersection: X and O already contain stones. You may place a stone only on a . (dot) intersection.',
     '',
     ...sections.instruction.map((line, index) =>
       index === 0 ? 'INSTRUCTION TO PLACE ONE STONE' : line,
@@ -194,6 +193,7 @@ export function makeContinuationLlmPrompt(
   return [
     `Newly observed opponent action: ${formatMove(observedMove, snapshot)}`,
     ...formatCurrentPosition(snapshot, observedMove),
+    'BOARD OCCUPANCY: Do not place a stone on an X or O intersection: X and O already contain stones. You may place a stone only on a . (dot) intersection.',
     ...(latestWinRate
       ? [
           isStructuredTraining

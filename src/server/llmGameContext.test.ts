@@ -88,9 +88,6 @@ describe('persistent LLM game context', () => {
     expect(prepared.request.kind).toBe('initial')
     expect(prepared.request.transcript).toEqual(transcript)
     expect(prepared.request.content).toContain('BEGIN FIRST BENCHMARK GAME')
-    expect(prepared.request.content).toContain(
-      'Do not place a stone on an X or O intersection: X and O already contain stones. You may place a stone only on a . (dot) intersection.',
-    )
     expect(prepared.request.content).toContain('JSON OUTPUT SCHEMA')
     expect(prepared.request.content).toContain('CURRENT BOARD')
     expect(prepared.request.content).not.toContain('GO RULES')
@@ -168,6 +165,9 @@ describe('persistent LLM game context', () => {
     expect(continuation.request.kind).toBe('continuation')
     expect(continuation.request.content).toContain(
       'Newly observed opponent action: 2. W B9',
+    )
+    expect(continuation.request.content).toContain(
+      'BOARD OCCUPANCY: Do not place a stone on an X or O intersection: X and O already contain stones. You may place a stone only on a . (dot) intersection.',
     )
     expect(continuation.request.content).toContain('Turn 2: your win rate')
     expect(continuation.request.content).toContain(
