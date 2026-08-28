@@ -88,6 +88,9 @@ describe('persistent LLM game context', () => {
     expect(prepared.request.kind).toBe('initial')
     expect(prepared.request.transcript).toEqual(transcript)
     expect(prepared.request.content).toContain('BEGIN FIRST BENCHMARK GAME')
+    expect(prepared.request.content).toContain(
+      'Do not place a stone on an X or O intersection: X and O already contain stones. You may place a stone only on a . (dot) intersection.',
+    )
     expect(prepared.request.content).toContain('JSON OUTPUT SCHEMA')
     expect(prepared.request.content).toContain('CURRENT BOARD')
     expect(prepared.request.content).not.toContain('GO RULES')
