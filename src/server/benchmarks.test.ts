@@ -600,6 +600,7 @@ describe('benchmark scoring and prompts', () => {
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-retry-'))
     const games = new GameService(store)
     const prompts: string[] = []
+    const reflectionPrompts: string[] = []
     const adapter = {
       async requestAction(snapshot, signal, prompt) {
         signal.throwIfAborted()
@@ -620,8 +621,9 @@ describe('benchmark scoring and prompts', () => {
           retries: 0,
         }
       },
-      async requestText(_prompt, signal) {
+      async requestText(prompt, signal) {
         signal.throwIfAborted()
+        if (prompt.includes('GAME REVIEW')) reflectionPrompts.push(prompt)
         return {
           text: '# Lessons',
           inputTokens: 0,
@@ -660,11 +662,34 @@ describe('benchmark scoring and prompts', () => {
       .at(-1)
     expect(rejection).toMatchObject({turn: 3, attempt: 5, truncated: false})
     expect(rejection?.responseContent).toContain('A19')
-    expect(
-      games.list().find((game) => game.benchmarkRunId === run.id),
-    ).toMatchObject({
+    const endedEarly = games
+      .list()
+      .find(
+        (game) => game.benchmarkRunId === run.id && game.benchmarkTermination,
+      )
+    expect(endedEarly).toMatchObject({
       status: 'finished',
+      benchmarkTermination: {
+        kind: 'invalid_llm_actions',
+        turn: 3,
+        actionCount: 5,
+        reason: 'Intersection is occupied',
+      },
     })
+    expect(
+      reflectionPrompts.some(
+        (prompt) =>
+          prompt.includes(
+            'Termination: This game ended early because you produced 5 illegal actions.',
+          ) &&
+          prompt.includes(
+            'The final rejected action was for turn 3: Intersection is occupied.',
+          ) &&
+          prompt.includes(
+            'The outcome above is the board score at termination, not a normally completed game.',
+          ),
+      ),
+    ).toBe(true)
     expect(service.get(run.id)?.status).toBe('completed')
     expect(service.get(run.id)?.error).toBeUndefined()
     await service.close()

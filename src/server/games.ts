@@ -561,9 +561,14 @@ export class GameService {
     )
   }
 
-  finishAutomated(id: string, result: string) {
+  finishAutomated(
+    id: string,
+    result: string,
+    benchmarkTermination?: Game['benchmarkTermination'],
+  ) {
     const game = this.requireGame(id)
     game.result = result
+    game.benchmarkTermination = benchmarkTermination
     game.status = 'finished'
     game.autoplay = false
     game.pauseAfterMove = false

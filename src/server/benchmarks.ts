@@ -733,7 +733,12 @@ export class BenchmarkService {
                 error instanceof IllegalMoveError
               ) {
                 const score = scoreBoard(game.board as any, game.komi, [])
-                this.games.finishAutomated(game.id, score.result)
+                this.games.finishAutomated(game.id, score.result, {
+                  kind: 'invalid_llm_actions',
+                  turn: game.moves.length + 1,
+                  actionCount: illegalMoveFailures,
+                  reason: feedback,
+                })
                 run.substate = {kind: 'ready'}
                 this.save(run)
                 return true
@@ -948,6 +953,9 @@ export class BenchmarkService {
       '',
       'GAME REVIEW',
       `Outcome: ${perspectiveOutcome(game.result, color)}`,
+      ...(game.benchmarkTermination
+        ? ['', formatBenchmarkTermination(game.benchmarkTermination)]
+        : []),
       'Visible move reasons:',
       ...(reasons.length ? reasons : ['(none)']),
       ...(trainingGameHasWinRates(run.config, run.currentGame)
@@ -1429,6 +1437,12 @@ export function compareMoveReviews(
   b: Pick<BenchmarkMoveReview, 'pointLoss' | 'turn'>,
 ) {
   return b.pointLoss - a.pointLoss || a.turn - b.turn
+}
+
+export function formatBenchmarkTermination(
+  termination: NonNullable<Game['benchmarkTermination']>,
+) {
+  return `Termination: This game ended early because you produced ${termination.actionCount} illegal actions. The final rejected action was for turn ${termination.turn}: ${termination.reason}. The outcome above is the board score at termination, not a normally completed game.`
 }
 
 function publicError(error: unknown) {

@@ -144,9 +144,17 @@ export interface Game {
   shareAnalysisWithLlm?: boolean
   benchmarkRunId?: string
   benchmarkGameIndex?: number
+  benchmarkTermination?: BenchmarkGameTermination
   rejectedModelActions?: RejectedModelAction[]
   createdAt: string
   updatedAt: string
+}
+
+export type BenchmarkGameTermination = {
+  kind: 'invalid_llm_actions'
+  turn: number
+  actionCount: number
+  reason: string
 }
 
 export interface RejectedModelAction {
