@@ -1189,6 +1189,178 @@ svg {
   width: min(100%, 720px);
   aspect-ratio: 1;
 }
+
+.life-death-page {
+  width: min(1400px, 100%);
+}
+.life-death-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.life-death-toolbar .field {
+  max-width: 440px;
+}
+.life-death-provenance {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.life-death-provenance a {
+  color: var(--blue);
+  text-decoration: underline;
+}
+.life-death-run-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(80px, 1fr));
+  gap: 24px;
+}
+.life-death-run-metrics > div {
+  display: grid;
+  gap: 3px;
+}
+.life-death-run-metrics span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.life-death-run-metrics strong {
+  font-size: 20px;
+}
+.life-death-workspace {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(280px, 340px);
+  gap: 28px;
+  align-items: start;
+  margin-top: 24px;
+}
+.life-death-board-column {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+}
+.life-death-board-column > header {
+  width: min(100%, calc(100vh - 250px));
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.life-death-board-column > header div {
+  min-width: 0;
+}
+.life-death-board-column > header span,
+.life-death-board-column > header > strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.life-death-board-column h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+}
+.life-death-board-column .board-host {
+  width: min(100%, calc(100vh - 250px));
+}
+.life-death-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+.life-death-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.life-death-failure-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 620px) {
+  .life-death-failure-actions {
+    grid-template-columns: 1fr;
+  }
+}
+.life-death-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid;
+  border-radius: 6px;
+}
+.life-death-result.correct {
+  color: #225b3f;
+  background: var(--green-soft);
+  border-color: #afd0ba;
+}
+.life-death-result.failed {
+  color: #8d3026;
+  background: #fff0ed;
+  border-color: #ebbbb3;
+}
+.life-death-result div {
+  display: grid;
+  gap: 4px;
+}
+.life-death-result span {
+  font-size: 13px;
+}
+.life-death-history {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.life-death-history h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.life-death-history > div {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #edf0ed;
+  font-size: 13px;
+}
+.life-death-history > div svg {
+  width: 15px;
+}
+.life-death-history > div:has(.lucide-circle-check-big) svg {
+  color: var(--green);
+}
+.life-death-history > div:has(.lucide-circle-x) svg {
+  color: var(--coral);
+}
+.life-death-history p {
+  color: var(--muted);
+  font-size: 13px;
+}
+.life-death-complete {
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.life-death-complete > svg {
+  width: 44px;
+  height: 44px;
+  color: var(--green);
+}
+.life-death-complete h2 {
+  margin: 0;
+}
+.life-death-complete strong {
+  font-size: 34px;
+}
 .benchmark-progress > div,
 .metrics-band > div {
   display: grid;
@@ -1620,7 +1792,7 @@ svg {
   }
   .sidebar nav {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     flex: 1;
     gap: 2px;
   }
@@ -1649,6 +1821,16 @@ svg {
   }
   .game-workspace {
     grid-template-columns: 1fr;
+  }
+  .life-death-workspace {
+    grid-template-columns: 1fr;
+  }
+  .life-death-board-column > header,
+  .life-death-board-column .board-host {
+    width: min(100%, calc(100vh - 275px));
+  }
+  .life-death-panel {
+    width: 100%;
   }
   .board-host,
   .player-strip,
@@ -1771,6 +1953,23 @@ svg {
   }
   .game-workspace {
     gap: 15px;
+  }
+  .life-death-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .life-death-toolbar .field {
+    max-width: none;
+  }
+  .life-death-run-metrics {
+    gap: 12px;
+  }
+  .life-death-workspace {
+    gap: 15px;
+  }
+  .life-death-board-column > header,
+  .life-death-board-column .board-host {
+    width: 100%;
   }
   .winrate-panel {
     width: 100%;

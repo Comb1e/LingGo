@@ -3,6 +3,7 @@ import {
   Gauge,
   Languages,
   List,
+  Puzzle,
   Plus,
   Settings as SettingsIcon,
 } from 'lucide-react'
@@ -16,6 +17,7 @@ import {GamePage} from './pages/GamePage'
 import {SettingsPage} from './pages/SettingsPage'
 import {BenchmarksPage} from './pages/BenchmarksPage'
 import {BenchmarkPage} from './pages/BenchmarkPage'
+import {LifeDeathPage} from './pages/LifeDeathPage'
 
 export function App() {
   const {t, i18n} = useTranslation()
@@ -37,6 +39,11 @@ export function App() {
         <nav aria-label="Primary">
           <NavItem to="/new" icon={<Plus />} label={t('newGame')} />
           <NavItem to="/games" icon={<List />} label={t('games')} />
+          <NavItem
+            to="/life-and-death"
+            icon={<Puzzle />}
+            label={t('lifeDeath')}
+          />
           <NavItem to="/benchmarks" icon={<Gauge />} label={t('benchmarks')} />
           <NavItem
             to="/settings"
@@ -59,6 +66,7 @@ export function App() {
           <Route path="/games" element={<GamesPage />} />
           <Route path="/games/:id" element={<GamePage />} />
           <Route path="/new" element={<NewGamePage />} />
+          <Route path="/life-and-death" element={<LifeDeathPage />} />
           <Route path="/benchmarks" element={<BenchmarksPage />} />
           <Route path="/benchmarks/:id" element={<BenchmarkPage />} />
           <Route path="/settings" element={<SettingsPage />} />

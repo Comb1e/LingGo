@@ -20,6 +20,140 @@ beforeEach(() => {
 afterEach(() => app.close())
 
 describe('game API', () => {
+  it('serves sanitized life-and-death problems and scores one human answer', async () => {
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/life-death/problem-sets',
+    })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()[0]).toMatchObject({
+      id: 'default',
+      version: '1.1',
+      count: 4,
+    })
+    expect(listed.json()[1]).toMatchObject({
+      id: 'gogameguru-easy',
+      count: 140,
+      license: 'CC BY-NC-SA 4.0',
+    })
+    expect(listed.json()[2]).toMatchObject({
+      id: 'gogameguru-hard',
+      count: 140,
+      license: 'CC BY-NC-SA 4.0',
+    })
+    expect(listed.json()[3]).toMatchObject({
+      id: 'gogameguru-intermediate',
+      count: 140,
+      license: 'CC BY-NC-SA 4.0',
+    })
+    expect(listed.json()[4]).toMatchObject({
+      id: 'gogameguru-other',
+      count: 1,
+      license: 'CC BY-NC-SA 4.0',
+    })
+
+    const loaded = await app.inject({
+      method: 'GET',
+      url: '/api/life-death/problem-sets/default',
+    })
+    expect(loaded.statusCode).toBe(200)
+    expect(loaded.json().problems[0]).toMatchObject({
+      id: 'black-corner-capture',
+      size: 19,
+      sideToMove: 'B',
+    })
+    expect(loaded.json().problems[0]).not.toHaveProperty('expected')
+    expect(loaded.json().problems[0]).not.toHaveProperty('expectedAction')
+
+    const correct = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/default/problems/black-corner-capture/answers',
+      payload: {action: 'play', coordinate: 'B1'},
+    })
+    expect(correct.statusCode).toBe(200)
+    expect(correct.json()).toMatchObject({
+      problemId: 'black-corner-capture',
+      legal: true,
+      correct: true,
+      expectedAction: {action: 'play', coordinate: 'B1'},
+    })
+    expect(correct.json().board[18][1]).toBe(1)
+  })
+
+  it('marks an occupied life-and-death intersection as a failed answer', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/default/problems/black-corner-capture/answers',
+      payload: {action: 'play', coordinate: 'A2'},
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({legal: false, correct: false})
+    expect(response.json().failureReason).toContain('occupied')
+  })
+
+  it('scores a scraped setup-position problem against its imported board', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/gogameguru-easy/problems/ggg-easy-01/answers',
+      payload: {action: 'play', coordinate: 'S1'},
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({legal: true, correct: true})
+    expect(response.json().board[18][17]).toBe(1)
+  })
+
+  it('scores a difficult scraped problem against its imported board', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/gogameguru-hard/problems/ggg-hard-01/answers',
+      payload: {action: 'play', coordinate: 'C2'},
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({legal: true, correct: true})
+  })
+
+  it('scores a multi-step scraped solution one move at a time', async () => {
+    const first = {action: 'play' as const, coordinate: 'S1', comment: ''}
+    const second = {action: 'play' as const, coordinate: 'S2', comment: ''}
+    const third = {action: 'play' as const, coordinate: 'O1', comment: ''}
+    const stepOne = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/gogameguru-easy/problems/ggg-easy-01/answers',
+      payload: {...first, sequence: [first]},
+    })
+    expect(stepOne.statusCode).toBe(200)
+    expect(stepOne.json()).toMatchObject({
+      correct: true,
+      complete: false,
+      step: 1,
+    })
+
+    const stepTwo = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/gogameguru-easy/problems/ggg-easy-01/answers',
+      payload: {...second, sequence: [first, second]},
+    })
+    expect(stepTwo.json()).toMatchObject({
+      correct: true,
+      complete: false,
+      step: 2,
+    })
+
+    const solved = await app.inject({
+      method: 'POST',
+      url: '/api/life-death/problem-sets/gogameguru-easy/problems/ggg-easy-01/answers',
+      payload: {...third, sequence: [first, second, third]},
+    })
+    expect(solved.json()).toMatchObject({
+      correct: true,
+      complete: true,
+      step: 3,
+    })
+  })
+
   it('serves client assets created after server startup', async () => {
     const clientDir = mkdtempSync(join(tmpdir(), 'linggo-client-'))
     writeFileSync(join(clientDir, 'index.html'), '<div id="root"></div>')

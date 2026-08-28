@@ -1,5 +1,49 @@
 import {expect, test} from '@playwright/test'
 
+test('lets a human practice randomized 19x19 life-and-death problems', async ({
+  page,
+}, testInfo) => {
+  if (testInfo.project.name === 'desktop')
+    await page.setViewportSize({width: 1600, height: 1100})
+  await page.goto('/life-and-death')
+
+  await expect(
+    page.getByRole('heading', {name: 'Life & Death Practice'}),
+  ).toBeVisible()
+  await expect(page.getByLabel('Life-and-death problem set')).toContainText(
+    'v1.1 · 4 problems',
+  )
+  const board = page.getByLabel('19 by 19 Go board')
+  await expect(board).toBeVisible()
+  await expect(board.locator('.shudan-vertex')).toHaveCount(361)
+
+  const answerResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes('/life-death/problem-sets/'),
+  )
+  await board.locator('.shudan-vertex:not(.shudan-sign_0)').first().click()
+  expect((await answerResponse).ok()).toBe(true)
+  await expect(page.getByText('Illegal move · problem failed')).toBeVisible()
+  await expect(page.getByText('Expected:')).toBeVisible()
+  await expect(page.getByRole('button', {name: 'Next problem'})).toBeVisible()
+
+  await page.getByRole('button', {name: 'Next problem'}).click()
+  await expect(page.getByText('Problem 2 of 4')).toBeVisible()
+  const legalPoint = board.locator('[data-x="9"][data-y="9"]')
+  await expect(legalPoint).toHaveClass(/shudan-sign_0/)
+  await legalPoint.click()
+  await expect(page.getByText('Expected:')).toBeVisible()
+  await expect(legalPoint).toHaveClass(/shudan-sign_(-?1)/)
+
+  await page.screenshot({
+    path: testInfo.outputPath('life-and-death.png'),
+    fullPage: true,
+  })
+  await page.getByRole('button', {name: 'New random run'}).click()
+  await expect(page.getByText('No attempts yet')).toBeVisible()
+})
+
 test('creates a default 19x19 human game and plays a move', async ({
   page,
 }, testInfo) => {

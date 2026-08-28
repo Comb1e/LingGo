@@ -12,7 +12,10 @@ import type {
   KataGoHealth,
   KataGoPositionReview,
   KataGoSettings,
+  LifeDeathAnswerResult,
+  LifeDeathProblemSetView,
   NewGameInput,
+  PlayerAction,
   PlayerProfile,
   ProviderConnection,
   TechniqueNotebookSummary,
@@ -82,6 +85,35 @@ async function connectionsWithRestoredKeys(): Promise<ProviderConnection[]> {
 
 export const api = {
   games: () => request<Game[]>('/api/games'),
+  lifeDeathProblemSets: () =>
+    request<
+      Array<{
+        id: string
+        version: string
+        checksum: string
+        count: number
+        source?: string
+        license?: string
+        attribution?: string
+      }>
+    >('/api/life-death/problem-sets'),
+  lifeDeathProblemSet: (id: string) =>
+    request<LifeDeathProblemSetView>(
+      `/api/life-death/problem-sets/${encodeURIComponent(id)}`,
+    ),
+  answerLifeDeathProblem: (
+    setId: string,
+    problemId: string,
+    action: PlayerAction,
+    sequence?: PlayerAction[],
+  ) =>
+    request<LifeDeathAnswerResult>(
+      `/api/life-death/problem-sets/${encodeURIComponent(setId)}/problems/${encodeURIComponent(problemId)}/answers`,
+      {
+        method: 'POST',
+        body: JSON.stringify(sequence ? {...action, sequence} : action),
+      },
+    ),
   game: (id: string) => request<Game>(`/api/games/${id}`),
   llmMessages: (id: string) =>
     request<LlmMessageSet[]>(`/api/games/${id}/llm-messages`),

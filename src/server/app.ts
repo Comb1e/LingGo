@@ -24,6 +24,13 @@ import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
 import {createPlayerAdapter} from './providers'
+import {
+  listProblemSets,
+  loadProblemSet,
+  problemView,
+  scoreProblemAction,
+  scoreProblemSequence,
+} from './benchmarkProblems'
 
 const connectionSchema = z
   .object({
@@ -134,6 +141,66 @@ export function createApp(
   )
 
   app.get('/api/health', async () => ({ok: true}))
+  app.get('/api/life-death/problem-sets', async () => listProblemSets())
+  app.get('/api/life-death/problem-sets/:setId', async (request, reply) => {
+    const {setId} = request.params as {setId: string}
+    const set = loadProblemSet(setId)
+    return reply.send({
+      id: set.id,
+      version: set.version,
+      checksum: set.checksum,
+      count: set.problems.length,
+      source: set.source,
+      license: set.license,
+      attribution: set.attribution,
+      problems: set.problems.map(problemView),
+    })
+  })
+  app.post(
+    '/api/life-death/problem-sets/:setId/problems/:problemId/answers',
+    async (request, reply) => {
+      const {setId, problemId} = request.params as {
+        setId: string
+        problemId: string
+      }
+      const body = request.body as Record<string, unknown>
+      const action = playerActionSchema.parse(body)
+      const sequence = Array.isArray(body.sequence)
+        ? body.sequence.map((item) => playerActionSchema.parse(item))
+        : [action]
+      const problem = loadProblemSet(setId).problems.find(
+        (candidate) => candidate.id === problemId,
+      )
+      if (!problem)
+        return reply.code(404).send({error: 'Life-and-death problem not found'})
+      const result =
+        problem.solution.length > 1
+          ? scoreProblemSequence(sequence, problem.solution, problem.snapshot)
+          : scoreProblemAction(action, problem.expected, problem.snapshot)
+      const expectedAction =
+        problem.solution[
+          Math.min(
+            Math.max(sequence.length - 1, 0),
+            problem.solution.length - 1,
+          )
+        ]
+      return {
+        problemId,
+        action,
+        expectedAction,
+        legal: result.legal,
+        correct: result.correct,
+        complete: 'complete' in result ? result.complete : result.correct,
+        step: 'step' in result ? result.step : 1,
+        nextExpectedAction:
+          'nextExpectedAction' in result
+            ? result.nextExpectedAction
+            : undefined,
+        failureReason: result.reason,
+        board: result.board,
+      }
+    },
+  )
   app.get('/api/games', async () => games.list())
   app.post('/api/games', async (request, reply) =>
     reply.code(201).send(games.create(newGameSchema.parse(request.body))),
@@ -536,7 +603,9 @@ export function createApp(
   )
   app.get('/api/benchmarks/:id/current-problem', async (request, reply) => {
     const value = benchmarks.currentProblem((request.params as {id: string}).id)
-    return value ?? reply.code(404).send({error: 'Current problem not available'})
+    return (
+      value ?? reply.code(404).send({error: 'Current problem not available'})
+    )
   })
   app.get('/api/benchmarks/events', async (request, reply) => {
     reply.hijack()

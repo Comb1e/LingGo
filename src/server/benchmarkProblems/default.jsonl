@@ -1,2 +1,5 @@
-{"setId":"default","version":"1.0"}
-{"id":"capture-1","size":19,"komi":7.5,"moves":[],"sideToMove":"B","expected":{"action":"play","coordinate":"K10"},"title":"Opening center","tags":["basic"]}
+{"setId":"default","version":"1.1"}
+{"id":"black-corner-capture","size":19,"komi":7.5,"moves":[{"color":"B","move":"A2"},{"color":"W","move":"A1"}],"sideToMove":"B","expected":{"action":"play","coordinate":"B1"},"title":"Finish the corner capture","tags":["capture","corner","beginner"]}
+{"id":"white-corner-capture","size":19,"komi":7.5,"moves":[{"color":"B","move":"T19"},{"color":"W","move":"T18"},{"color":"B","move":"D4"}],"sideToMove":"W","expected":{"action":"play","coordinate":"S19"},"title":"Capture in the upper-right corner","tags":["capture","corner","beginner"]}
+{"id":"black-atari-escape","size":19,"komi":7.5,"moves":[{"color":"B","move":"B2"},{"color":"W","move":"B1"},{"color":"B","move":"Q16"},{"color":"W","move":"A2"},{"color":"B","move":"Q17"},{"color":"W","move":"C2"}],"sideToMove":"B","expected":{"action":"play","coordinate":"B3"},"title":"Escape from atari","tags":["atari","escape","beginner"]}
+{"id":"white-atari-escape","size":19,"komi":7.5,"moves":[{"color":"B","move":"B19"},{"color":"W","move":"B18"},{"color":"B","move":"A18"},{"color":"W","move":"Q3"},{"color":"B","move":"C18"}],"sideToMove":"W","expected":{"action":"play","coordinate":"B17"},"title":"Save the white stone","tags":["atari","escape","beginner"]}

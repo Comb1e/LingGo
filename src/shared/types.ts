@@ -541,6 +541,30 @@ export interface BenchmarkProblemView {
   captures: {B: number; W: number}
 }
 
+export interface LifeDeathProblemSetView {
+  id: string
+  version: string
+  checksum: string
+  count: number
+  problems: BenchmarkProblemView[]
+  source?: string
+  license?: string
+  attribution?: string
+}
+
+export interface LifeDeathAnswerResult {
+  problemId: string
+  action: PlayerAction
+  expectedAction: PlayerAction
+  legal: boolean
+  correct: boolean
+  complete?: boolean
+  step?: number
+  nextExpectedAction?: PlayerAction
+  failureReason?: string
+  board?: number[][]
+}
+
 export interface BenchmarkNotebookVersion {
   runId: string
   version: number
