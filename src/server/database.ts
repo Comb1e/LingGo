@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 import type {
   BenchmarkRun,
   BenchmarkMoveReview,
+  BenchmarkProblemAttempt,
   BenchmarkNotebookVersion,
   Game,
   GameAnalysis,
@@ -753,6 +754,64 @@ export class Store {
     return rows.map(
       ({review_json}) => JSON.parse(review_json) as BenchmarkMoveReview,
     )
+  }
+
+  saveBenchmarkProblemAttempt(attempt: BenchmarkProblemAttempt) {
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_problem_attempts
+      (run_id, sequence, problem_id, cursor, actual_action_json, expected_action_json,
+       legal, correct, first_response, failure_reason, notebook_version_before,
+       notebook_version_after, prompt_digest, response_digest, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, sequence) DO UPDATE SET notebook_version_after = excluded.notebook_version_after,
+       failure_reason = excluded.failure_reason`,
+      )
+      .run(
+        attempt.runId,
+        attempt.sequence,
+        attempt.problemId,
+        attempt.cursor,
+        attempt.actualAction ? JSON.stringify(attempt.actualAction) : null,
+        JSON.stringify(attempt.expectedAction),
+        attempt.legal ? 1 : 0,
+        attempt.correct ? 1 : 0,
+        attempt.firstResponse ? 1 : 0,
+        attempt.failureReason ?? null,
+        attempt.notebookVersionBefore,
+        attempt.notebookVersionAfter ?? null,
+        attempt.promptDigest,
+        attempt.responseDigest ?? null,
+        attempt.createdAt,
+      )
+  }
+
+  listBenchmarkProblemAttempts(runId: string): BenchmarkProblemAttempt[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM benchmark_problem_attempts WHERE run_id = ? ORDER BY sequence`,
+        )
+        .all(runId) as any[]
+    ).map((row) => ({
+      runId: row.run_id,
+      sequence: row.sequence,
+      problemId: row.problem_id,
+      cursor: row.cursor,
+      actualAction: row.actual_action_json
+        ? JSON.parse(row.actual_action_json)
+        : undefined,
+      expectedAction: JSON.parse(row.expected_action_json),
+      legal: Boolean(row.legal),
+      correct: Boolean(row.correct),
+      firstResponse: Boolean(row.first_response),
+      failureReason: row.failure_reason ?? undefined,
+      notebookVersionBefore: row.notebook_version_before,
+      notebookVersionAfter: row.notebook_version_after ?? undefined,
+      promptDigest: row.prompt_digest,
+      responseDigest: row.response_digest ?? undefined,
+      createdAt: row.created_at,
+    }))
   }
 
   publishBenchmarkNotebook(

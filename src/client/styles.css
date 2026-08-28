@@ -1171,6 +1171,24 @@ svg {
   border-bottom: 1px solid var(--line);
   padding-bottom: 20px;
 }
+
+.benchmark-problem-view {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 760px;
+}
+
+.benchmark-problem-view header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.benchmark-problem-view .board-host {
+  width: min(100%, 720px);
+  aspect-ratio: 1;
+}
 .benchmark-progress > div,
 .metrics-band > div {
   display: grid;

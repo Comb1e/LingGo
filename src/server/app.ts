@@ -531,6 +531,13 @@ export function createApp(
   })
 
   app.get('/api/benchmarks', async () => benchmarks.list())
+  app.get('/api/benchmark-problem-sets', async () =>
+    benchmarks.listProblemSets(),
+  )
+  app.get('/api/benchmarks/:id/current-problem', async (request, reply) => {
+    const value = benchmarks.currentProblem((request.params as {id: string}).id)
+    return value ?? reply.code(404).send({error: 'Current problem not available'})
+  })
   app.get('/api/benchmarks/events', async (request, reply) => {
     reply.hijack()
     const response = reply.raw
@@ -614,6 +621,12 @@ export function createApp(
     if (!benchmarks.get(id))
       return reply.code(404).send({error: 'Benchmark not found'})
     return store.listBenchmarkMoveReviews(id)
+  })
+  app.get('/api/benchmarks/:id/problem-attempts', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
+    return benchmarks.problemAttempts(id)
   })
   app.post('/api/benchmarks/:id/publish', async (request, reply) => {
     const id = (request.params as {id: string}).id

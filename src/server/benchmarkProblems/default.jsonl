@@ -1,0 +1,2 @@
+{"setId":"default","version":"1.0"}
+{"id":"capture-1","size":19,"komi":7.5,"moves":[],"sideToMove":"B","expected":{"action":"play","coordinate":"K10"},"title":"Opening center","tags":["basic"]}

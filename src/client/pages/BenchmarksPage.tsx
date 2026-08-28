@@ -22,6 +22,10 @@ export function BenchmarksPage() {
   const queryClient = useQueryClient()
   const runs = useQuery({queryKey: ['benchmarks'], queryFn: api.benchmarks})
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
+  const problemSets = useQuery({
+    queryKey: ['benchmark-problem-sets'],
+    queryFn: api.benchmarkProblemSets,
+  })
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [finalColor, setFinalColor] = useState<Color>('B')
   const [trainingVisits, setTrainingVisits] = useState(
@@ -36,6 +40,7 @@ export function BenchmarksPage() {
   const [seedMode, setSeedMode] = useState<'rules_only' | 'refine_existing'>(
     'rules_only',
   )
+  const [problemSetId, setProblemSetId] = useState('')
   const trainingGameCount =
     trainingGamesWithWinRates + trainingGamesWithoutWinRates
   const create = useMutation({
@@ -54,6 +59,14 @@ export function BenchmarksPage() {
         notebookTokenBudget,
         trainingVisits,
         evaluationVisits,
+        ...(problemSetId
+          ? {
+              problemSetId,
+              problemSetChecksum: problemSets.data?.find(
+                (set) => set.id === problemSetId,
+              )?.checksum,
+            }
+          : {}),
       }),
     onSuccess: (run) => {
       void queryClient.invalidateQueries({queryKey: ['benchmarks']})
@@ -114,7 +127,7 @@ export function BenchmarksPage() {
     }
   }
 
-  if (runs.isLoading || profiles.isLoading)
+  if (runs.isLoading || profiles.isLoading || problemSets.isLoading)
     return (
       <div className="page">
         <Loading />
@@ -132,6 +145,20 @@ export function BenchmarksPage() {
         }}
       >
         <div className="benchmark-form-grid">
+          <label className="field">
+            <span>{t('lifeDeathProblemSet')}</span>
+            <select
+              value={problemSetId}
+              onChange={(event) => setProblemSetId(event.target.value)}
+            >
+              <option value="">{t('legacyBenchmarkProtocol')}</option>
+              {problemSets.data?.map((set) => (
+                <option key={set.id} value={set.id}>
+                  {set.id} v{set.version} ({set.count})
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="field">
             <span>{t('profile')}</span>
             <select
@@ -166,18 +193,20 @@ export function BenchmarksPage() {
               ))}
             </div>
           </div>
-          <label className="field">
-            <span>{t('trainingVisits')}</span>
-            <input
-              type="number"
-              min="25"
-              max="100000"
-              value={trainingVisits}
-              onChange={(event) =>
-                setTrainingVisits(Number(event.target.value))
-              }
-            />
-          </label>
+          {!problemSetId && (
+            <label className="field">
+              <span>{t('trainingVisits')}</span>
+              <input
+                type="number"
+                min="25"
+                max="100000"
+                value={trainingVisits}
+                onChange={(event) =>
+                  setTrainingVisits(Number(event.target.value))
+                }
+              />
+            </label>
+          )}
           <label className="field">
             <span>{t('evaluationVisits')}</span>
             <input

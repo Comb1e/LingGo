@@ -310,6 +310,8 @@ export type BenchmarkStatus =
   'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'invalid'
 export type BenchmarkPhase =
   | 'initializing_notebook'
+  | 'solving_problem'
+  | 'updating_problem_notebook'
   | 'training_game'
   | 'reviewing_game'
   | 'final_game'
@@ -323,13 +325,25 @@ export type ActiveBenchmarkSubstate =
   | {kind: 'ready'}
   | {
       kind: 'provider_request'
-      operation: 'initialize' | 'compress' | 'move' | 'review'
+      operation:
+        | 'initialize'
+        | 'compress'
+        | 'move'
+        | 'review'
+        | 'problem'
+        | 'problem_notebook'
       attempt: number
       maxAttempts: number
     }
   | {
       kind: 'provider_retry'
-      operation: 'initialize' | 'compress' | 'move' | 'review'
+      operation:
+        | 'initialize'
+        | 'compress'
+        | 'move'
+        | 'review'
+        | 'problem'
+        | 'problem_notebook'
       attempt: number
       maxAttempts: number
       lastError: string
@@ -358,9 +372,23 @@ export const benchmarkConfigSchema = z
     notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
     trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
+    problemSetId: z.string().min(1).optional(),
+    problemSetChecksum: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .superRefine((value, context) => {
+    if (
+      (value.problemSetId === undefined) !==
+      (value.problemSetChecksum === undefined)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['problemSetChecksum'],
+        message: 'Problem set ID and checksum must be provided together',
+      })
     const withWinRates = value.trainingGamesWithWinRates
     const withoutWinRates = value.trainingGamesWithoutWinRates
     if ((withWinRates === undefined) !== (withoutWinRates === undefined)) {
@@ -401,7 +429,9 @@ export interface BenchmarkUsage {
       | 'initializing_notebook'
       | 'training_game'
       | 'reviewing_game'
-      | 'final_game',
+      | 'final_game'
+      | 'solving_problem'
+      | 'updating_problem_notebook',
       Omit<BenchmarkUsage, 'byPhase'>
     >
   >
@@ -418,6 +448,12 @@ export interface BenchmarkMetrics {
   outputRepairRate?: number
   trainingReviewCount?: number
   notebookGrowthCharacters?: number
+  problemCount?: number
+  problemAttempts?: number
+  firstResponseSuccessRate?: number
+  problemFailures?: number
+  completedCleanCycles?: number
+  kataGoGateReached?: boolean
 }
 
 export interface NotebookMetadata {
@@ -443,7 +479,7 @@ export interface TechniqueNotebook extends TechniqueNotebookSummary {
 
 export interface BenchmarkRun {
   id: string
-  protocolVersion: 1 | 2
+  protocolVersion: 1 | 2 | 3
   status: BenchmarkStatus
   phase: BenchmarkPhase
   substate: BenchmarkSubstate
@@ -457,6 +493,10 @@ export interface BenchmarkRun {
   notebook: NotebookMetadata
   notebookVersion: number
   notebookEstimatedTokens: number
+  problemCursor?: number
+  currentProblemId?: string
+  problemSuccessStreak?: number
+  problemSetChecksum?: string
   kataGoFingerprint: string
   sourceRunId?: string
   successorRunId?: string
@@ -469,7 +509,37 @@ export interface BenchmarkRun {
 }
 
 export type BenchmarkNotebookSourcePhase =
-  'initializing_notebook' | 'reviewing_game'
+  'initializing_notebook' | 'reviewing_game' | 'problem_notebook'
+
+export interface BenchmarkProblemAttempt {
+  runId: string
+  sequence: number
+  problemId: string
+  cursor: number
+  actualAction?: PlayerAction
+  expectedAction: PlayerAction
+  legal: boolean
+  correct: boolean
+  firstResponse: boolean
+  failureReason?: string
+  notebookVersionBefore: number
+  notebookVersionAfter?: number
+  promptDigest: string
+  responseDigest?: string
+  createdAt: string
+}
+
+export interface BenchmarkProblemView {
+  id: string
+  title?: string
+  tags?: string[]
+  size: BoardSize
+  komi: number
+  sideToMove: Color
+  board: number[][]
+  moves: Move[]
+  captures: {B: number; W: number}
+}
 
 export interface BenchmarkNotebookVersion {
   runId: string

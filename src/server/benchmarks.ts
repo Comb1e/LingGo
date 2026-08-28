@@ -14,6 +14,7 @@ import type {
   PlayerAction,
   PositionAnalysis,
   TechniqueNotebook,
+  BenchmarkProblemAttempt,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
@@ -37,6 +38,13 @@ import {formatCanonicalGoRules} from './movePrompt'
 import type {VisibleLlmMessage} from './llmGameContext'
 import {perspectiveOutcome} from './llmGameContext'
 import {
+  listProblemSets,
+  loadProblemSet,
+  problemView,
+  scoreProblemAction,
+  type BenchmarkProblem,
+} from './benchmarkProblems'
+import {
   MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
   shouldRetryProviderError,
@@ -58,6 +66,17 @@ type InternalRun = BenchmarkRun & {
   outputRepairs?: number
   initializationContext?: {
     transcript: VisibleLlmMessage[]
+  }
+  pendingProblem?: {
+    problemId: string
+    cursor: number
+    actualAction?: PlayerAction
+    legal: boolean
+    correct: boolean
+    failureReason?: string
+    promptDigest: string
+    responseDigest?: string
+    notebookVersionBefore: number
   }
 }
 
@@ -110,8 +129,30 @@ export class BenchmarkService {
     return this.store.getBenchmark(id)
   }
 
+  listProblemSets() {
+    return listProblemSets()
+  }
+
+  problemAttempts(id: string) {
+    return this.store.listBenchmarkProblemAttempts(id)
+  }
+
+  currentProblem(id: string) {
+    const run = this.require(id)
+    if (!run.config.problemSetId) return undefined
+    if (run.metrics?.kataGoGateReached) return undefined
+    const set = loadProblemSet(run.config.problemSetId)
+    const cursor = run.problemCursor ?? 0
+    return problemView(set.problems[cursor % set.problems.length])
+  }
+
   async create(input: BenchmarkConfig | LegacyBenchmarkConfig) {
     const config = normalizeConfig(input)
+    const problemSet = config.problemSetId
+      ? loadProblemSet(config.problemSetId)
+      : undefined
+    if (problemSet && config.problemSetChecksum !== problemSet.checksum)
+      throw new Error('Problem set checksum does not match the shipped corpus')
     if (
       this.reservedProfiles.has(config.profileId) ||
       this.list().some(
@@ -132,9 +173,9 @@ export class BenchmarkService {
       const id = randomUUID()
       const run: InternalRun = {
         id,
-        protocolVersion: 2,
+        protocolVersion: problemSet ? 3 : 2,
         status: 'queued',
-        phase: 'initializing_notebook',
+        phase: problemSet ? 'solving_problem' : 'initializing_notebook',
         substate: {kind: 'ready'},
         config,
         profileSnapshot: {...profile},
@@ -172,6 +213,20 @@ export class BenchmarkService {
         },
         notebookVersion: 0,
         notebookEstimatedTokens: 0,
+        problemCursor: 0,
+        problemSuccessStreak: 0,
+        problemSetChecksum: problemSet?.checksum,
+        metrics: problemSet
+          ? {
+              ...calculateMetrics('Void', config.finalColor, [], []),
+              problemCount: problemSet.problems.length,
+              problemAttempts: 0,
+              firstResponseSuccessRate: 0,
+              problemFailures: 0,
+              completedCleanCycles: 0,
+              kataGoGateReached: false,
+            }
+          : undefined,
         pointLosses: [],
         winRateLosses: [],
         createdAt: now,
@@ -351,7 +406,19 @@ export class BenchmarkService {
           return
         }
       }
-      const trainingGameCount = configuredTrainingGameCount(run.config)
+      if (isLifeDeath(run)) {
+        const gated = await this.runProblemGate(run, controller.signal)
+        if (!gated) {
+          retry = Boolean(run.waitingFor)
+          return
+        }
+        run.phase = 'final_game'
+        run.substate = {kind: 'ready'}
+        this.save(run)
+      }
+      const trainingGameCount = isLifeDeath(run)
+        ? 0
+        : configuredTrainingGameCount(run.config)
       while (run.currentGame <= trainingGameCount && run.status === 'running') {
         run.phase =
           run.currentGame < trainingGameCount ? 'training_game' : 'final_game'
@@ -404,12 +471,15 @@ export class BenchmarkService {
         run.phase = 'complete'
         run.substate = {kind: 'ready'}
         run.status = 'completed'
-        run.metrics = calculateMetrics(
-          this.games.get(run.gameIds[trainingGameCount])?.result ?? 'Void',
-          run.config.finalColor,
-          run.pointLosses ?? [],
-          run.winRateLosses ?? [],
-        )
+        run.metrics = {
+          ...(run.metrics ?? {}),
+          ...calculateMetrics(
+            this.games.get(run.gameIds[trainingGameCount])?.result ?? 'Void',
+            run.config.finalColor,
+            run.pointLosses ?? [],
+            run.winRateLosses ?? [],
+          ),
+        }
         const initial = this.store.listBenchmarkNotebookVersions(run.id)[0]
         const current = this.store.listBenchmarkNotebookVersions(run.id).at(-1)
         run.metrics.outputRepairRate = run.outputAttempts
@@ -897,13 +967,247 @@ export class BenchmarkService {
         {role: 'assistant', content},
       ],
     }
-    run.phase = 'training_game'
+    run.phase = isLifeDeath(run) ? 'solving_problem' : 'training_game'
     run.substate = {kind: 'ready'}
     run.updatedAt = version.createdAt
     this.store.saveBenchmarkNotebookVersion(run, version)
     await this.notebooks.writeRunSnapshot(run.id, content)
     this.emit(run)
     return true
+  }
+
+  private async runProblemGate(run: InternalRun, signal: AbortSignal) {
+    const set = loadProblemSet(run.config.problemSetId!)
+    if (run.problemSetChecksum !== set.checksum) {
+      run.status = 'invalid'
+      run.error =
+        'The selected problem set changed after this benchmark was created.'
+      this.save(run)
+      return false
+    }
+    const required = set.problems.length
+    while (
+      run.status === 'running' &&
+      (run.problemSuccessStreak ?? 0) < required
+    ) {
+      const cursor = run.problemCursor ?? 0
+      const problem = set.problems[cursor % required]
+      run.currentProblemId = problem.id
+      run.phase = run.pendingProblem
+        ? 'updating_problem_notebook'
+        : 'solving_problem'
+      run.substate = {kind: 'ready'}
+      this.save(run)
+      if (!run.pendingProblem) {
+        const notebook = await this.runNotebook(run.id)
+        const prompt = [
+          'Solve the life-and-death Go problem. Use exactly one legal action and return the JSON action format.',
+          'AUTHORITATIVE GO RULES',
+          ...formatCanonicalGoRules(problem.snapshot),
+          'CURRENT PROBLEM',
+          `Expected side to move: ${problem.sideToMove}`,
+          `Captures: Black ${problem.snapshot.captures.B}, White ${problem.snapshot.captures.W}.`,
+          asciiBoard(problem.snapshot),
+          'Move list:',
+          problem.snapshot.moves.length
+            ? problem.snapshot.moves
+                .map(
+                  (move) =>
+                    `${move.number}. ${move.color} ${move.coordinate ?? move.action}`,
+                )
+                .join('\n')
+            : '(none)',
+          '',
+          'Return exactly one action.',
+          'SELF-WRITTEN SKILLS',
+          notebook,
+        ].join('\n')
+        const digest = createHash('sha256').update(prompt).digest('hex')
+        const adapter = this.adapter(run)
+        if (!adapter) {
+          run.waitingFor = 'credentials'
+          run.substate = {kind: 'waiting_credentials'}
+          this.save(run)
+          return false
+        }
+        let actual: PlayerAction | undefined
+        let responseDigest: string | undefined
+        let failureReason: string | undefined
+        let legal = false
+        let correct = false
+        try {
+          const response = await this.requestProblemAction(
+            run,
+            adapter,
+            problem,
+            prompt,
+            signal,
+          )
+          addUsage(run, response, 'solving_problem')
+          actual = response.action
+          responseDigest = createHash('sha256')
+            .update(response.responseContent ?? JSON.stringify(actual))
+            .digest('hex')
+          const score = scoreProblemAction(
+            actual,
+            problem.expected as PlayerAction,
+            problem.snapshot,
+          )
+          legal = score.legal
+          correct = score.correct
+          failureReason = score.reason
+        } catch (error) {
+          if (signal.aborted) throw error
+          failureReason =
+            error instanceof Error ? error.message : 'Malformed action'
+        }
+        if (!correct) run.problemSuccessStreak = 0
+        else run.problemSuccessStreak = (run.problemSuccessStreak ?? 0) + 1
+        run.pendingProblem = {
+          problemId: problem.id,
+          cursor,
+          actualAction: actual,
+          legal,
+          correct,
+          failureReason,
+          promptDigest: digest,
+          responseDigest,
+          notebookVersionBefore: run.notebookVersion,
+        }
+        const attempt: BenchmarkProblemAttempt = {
+          runId: run.id,
+          sequence: this.store.listBenchmarkProblemAttempts(run.id).length + 1,
+          problemId: problem.id,
+          cursor,
+          actualAction: actual,
+          expectedAction: problem.expected as PlayerAction,
+          legal,
+          correct,
+          firstResponse: true,
+          failureReason,
+          notebookVersionBefore: run.notebookVersion,
+          promptDigest: digest,
+          responseDigest,
+          createdAt: new Date().toISOString(),
+        }
+        this.store.saveBenchmarkProblemAttempt(attempt)
+        this.save(run)
+      }
+      run.phase = 'updating_problem_notebook'
+      const pending = run.pendingProblem!
+      const prior = await this.runNotebook(run.id)
+      const updatePrompt = [
+        'Update the technique notebook based on this one life-and-death problem.',
+        'PRIOR NOTEBOOK',
+        prior,
+        'PROBLEM',
+        asciiBoard(problem.snapshot),
+        `MODEL ANSWER: ${pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
+        `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.expected)}`,
+        'Return only the complete replacement Markdown notebook.',
+      ].join('\n')
+      const notebookAdapter = this.adapter(run)
+      if (!notebookAdapter) {
+        run.waitingFor = 'credentials'
+        run.substate = {kind: 'waiting_credentials'}
+        this.save(run)
+        return false
+      }
+      const content = await this.requestValidNotebook(
+        run,
+        notebookAdapter,
+        updatePrompt,
+        'problem_notebook',
+        signal,
+      )
+      const version = notebookVersion(run, 'problem_notebook', content)
+      run.notebookVersion = version.version
+      run.notebookEstimatedTokens = version.estimatedTokens
+      run.notebook.updatedAt = version.createdAt
+      run.pendingProblem = undefined
+      run.problemCursor = (cursor + 1) % required
+      this.store.saveBenchmarkNotebookVersion(run, version)
+      await this.notebooks.writeRunSnapshot(run.id, content)
+      const attempts = this.store.listBenchmarkProblemAttempts(run.id)
+      const last = attempts.at(-1)!
+      last.notebookVersionAfter = version.version
+      this.store.saveBenchmarkProblemAttempt(last)
+      const allAttempts = this.store.listBenchmarkProblemAttempts(run.id)
+      run.metrics = {
+        ...(run.metrics ?? ({} as any)),
+        problemCount: required,
+        problemAttempts: allAttempts.length,
+        firstResponseSuccessRate:
+          allAttempts.filter((attempt) => attempt.correct).length /
+          Math.max(1, allAttempts.length),
+        problemFailures: allAttempts.filter((attempt) => !attempt.correct)
+          .length,
+        completedCleanCycles: 0,
+        kataGoGateReached: false,
+      }
+      this.emit(run)
+    }
+    if ((run.problemSuccessStreak ?? 0) >= required) {
+      run.metrics = {
+        ...(run.metrics ?? ({} as any)),
+        problemCount: required,
+        problemAttempts: this.store.listBenchmarkProblemAttempts(run.id).length,
+        firstResponseSuccessRate:
+          this.store
+            .listBenchmarkProblemAttempts(run.id)
+            .filter((a) => a.correct).length /
+          Math.max(1, this.store.listBenchmarkProblemAttempts(run.id).length),
+        problemFailures: this.store
+          .listBenchmarkProblemAttempts(run.id)
+          .filter((a) => !a.correct).length,
+        completedCleanCycles: 1,
+        kataGoGateReached: true,
+      }
+      this.save(run)
+    }
+    return true
+  }
+
+  private async requestProblemAction(
+    run: InternalRun,
+    adapter: ReturnType<BenchmarkService['adapter']> & {},
+    problem: BenchmarkProblem,
+    prompt: string,
+    signal: AbortSignal,
+  ) {
+    let lastError = ''
+    for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
+      run.substate =
+        attempt === 1
+          ? {
+              kind: 'provider_request',
+              operation: 'problem',
+              attempt,
+              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+            }
+          : {
+              kind: 'provider_retry',
+              operation: 'problem',
+              attempt,
+              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+              lastError,
+            }
+      this.save(run)
+      try {
+        return await adapter.requestAction(problem.snapshot, signal, prompt)
+      } catch (error) {
+        if (signal.aborted) throw error
+        if (
+          isRepairableMoveError(error) ||
+          !shouldRetryProviderError(error) ||
+          attempt >= MAX_PROVIDER_API_ATTEMPTS
+        )
+          throw error
+        lastError = publicProviderError(error)
+        await this.retryWait(attempt, signal, error)
+      }
+    }
+    throw new Error('Problem request failed')
   }
 
   private async reviewGame(run: InternalRun, signal: AbortSignal) {
@@ -1020,6 +1324,7 @@ export class BenchmarkService {
   private async runNotebook(runId: string) {
     return (
       this.store.getNotebookSnapshot(runId)?.content ??
+      this.store.getBenchmarkNotebookSeed(runId)?.content ??
       (await this.notebooks.readSnapshot(runId))
     )
   }
@@ -1028,7 +1333,8 @@ export class BenchmarkService {
     run: InternalRun,
     adapter: ReturnType<BenchmarkService['adapter']> & {},
     initialPrompt: string,
-    sourcePhase: 'initializing_notebook' | 'reviewing_game',
+    sourcePhase:
+      'initializing_notebook' | 'reviewing_game' | 'problem_notebook',
     signal: AbortSignal,
   ) {
     let prompt = initialPrompt
@@ -1037,7 +1343,9 @@ export class BenchmarkService {
         invalidAttempt === 1
           ? sourcePhase === 'reviewing_game'
             ? 'review'
-            : 'initialize'
+            : sourcePhase === 'problem_notebook'
+              ? 'problem_notebook'
+              : 'initialize'
           : 'compress'
       if (invalidAttempt > 1) {
         run.substate = {
@@ -1054,7 +1362,13 @@ export class BenchmarkService {
         operation,
         signal,
       )
-      addUsage(run, response, sourcePhase)
+      addUsage(
+        run,
+        response,
+        sourcePhase === 'problem_notebook'
+          ? 'updating_problem_notebook'
+          : sourcePhase,
+      )
       const content = response.text.trim()
       const byteCount = Buffer.byteLength(content, 'utf8')
       const estimatedTokens = Math.ceil(byteCount / 4)
@@ -1088,7 +1402,8 @@ export class BenchmarkService {
     run: InternalRun,
     adapter: ReturnType<BenchmarkService['adapter']> & {},
     prompt: string,
-    operation: 'initialize' | 'compress' | 'review',
+    operation:
+      'initialize' | 'compress' | 'review' | 'problem' | 'problem_notebook',
     signal: AbortSignal,
   ) {
     if (!adapter.requestText)
@@ -1320,7 +1635,9 @@ function addUsage(
     phase === 'initializing_notebook' ||
     phase === 'training_game' ||
     phase === 'reviewing_game' ||
-    phase === 'final_game'
+    phase === 'final_game' ||
+    phase === 'solving_problem' ||
+    phase === 'updating_problem_notebook'
   ) {
     const bucket = (run.usage.byPhase ??= {})
     const usage = (bucket[phase] ??= {
@@ -1361,6 +1678,10 @@ function normalizeConfig(
   }
 }
 
+function isLifeDeath(run: BenchmarkRun) {
+  return run.protocolVersion === 3 || Boolean(run.config.problemSetId)
+}
+
 function configuredTrainingGameCount(config: BenchmarkConfig) {
   if (
     config.trainingGamesWithWinRates !== undefined &&
@@ -1380,7 +1701,7 @@ function trainingGameHasWinRates(config: BenchmarkConfig, gameIndex: number) {
 
 function notebookVersion(
   run: InternalRun,
-  sourcePhase: 'initializing_notebook' | 'reviewing_game',
+  sourcePhase: 'initializing_notebook' | 'reviewing_game' | 'problem_notebook',
   content: string,
 ): BenchmarkNotebookVersion {
   const byteCount = Buffer.byteLength(content, 'utf8')

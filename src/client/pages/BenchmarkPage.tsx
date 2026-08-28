@@ -12,8 +12,9 @@ import {
 import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
-import type {BenchmarkRun} from '../../shared/types'
+import type {BenchmarkProblemView, BenchmarkRun, Game} from '../../shared/types'
 import {api} from '../api'
+import {Board} from '../Board'
 import {
   Button,
   ErrorBanner,
@@ -37,6 +38,16 @@ export function BenchmarkPage() {
     queryKey: ['benchmark-notebook', id],
     queryFn: () => api.benchmarkNotebook(id),
     enabled: Boolean(id),
+  })
+  const problemAttempts = useQuery({
+    queryKey: ['benchmark-problem-attempts', id],
+    queryFn: () => api.benchmarkProblemAttempts(id),
+    enabled: Boolean(id && query.data?.config.problemSetId),
+  })
+  const currentProblem = useQuery({
+    queryKey: ['benchmark-current-problem', id],
+    queryFn: () => api.benchmarkCurrentProblem(id),
+    enabled: Boolean(id && query.data?.config.problemSetId),
   })
   const command = useMutation({
     mutationFn: (input: Record<string, unknown>) =>
@@ -71,6 +82,10 @@ export function BenchmarkPage() {
       if (run.notebook.updatedAt)
         void queryClient.invalidateQueries({
           queryKey: ['benchmark-notebook', id],
+        })
+      if (run.config.problemSetId)
+        void queryClient.invalidateQueries({
+          queryKey: ['benchmark-current-problem', id],
         })
     }
     return () => events.close()
@@ -143,6 +158,21 @@ export function BenchmarkPage() {
       />
       {run.error && <div className="banner warning-banner">{run.error}</div>}
       <section className="benchmark-progress">
+        {run.config.problemSetId && (
+          <div className="benchmark-gate">
+            <span>{t('lifeDeathProblemSet')}</span>
+            <small>{run.currentProblemId ?? ''}</small>
+            <strong>
+              {run.problemSuccessStreak ?? 0} /{' '}
+              {run.metrics?.problemCount ?? '?'}
+            </strong>
+            <small>
+              {run.metrics?.kataGoGateReached
+                ? t('gateComplete')
+                : t('gameLockedUntilGate')}
+            </small>
+          </div>
+        )}
         <div>
           <span>{t('trainingGames')}</span>
           <strong>
@@ -228,6 +258,35 @@ export function BenchmarkPage() {
           </div>
         )}
       </section>
+      {currentProblem.data && (
+        <section className="benchmark-problem-view">
+          <header>
+            <h2>{currentProblem.data.title ?? currentProblem.data.id}</h2>
+            <span>
+              {currentProblem.data.sideToMove === 'B' ? t('black') : t('white')}{' '}
+              {t('toMove')}
+            </span>
+          </header>
+          <Board
+            game={problemAsGame(currentProblem.data)}
+            onPoint={() => undefined}
+            disabled
+          />
+        </section>
+      )}
+      {run.config.problemSetId && problemAttempts.data && (
+        <section className="benchmark-attempts">
+          <h2>{t('problemAttempts')}</h2>
+          {problemAttempts.data.map((attempt) => (
+            <div key={attempt.sequence}>
+              {attempt.sequence}. {attempt.problemId}{' '}
+              {attempt.correct
+                ? 'correct'
+                : `failed${attempt.failureReason ? `: ${attempt.failureReason}` : ''}`}
+            </div>
+          ))}
+        </section>
+      )}
 
       {run.status === 'paused' && run.currentGame < trainingGameCount && (
         <div className="benchmark-force">
@@ -367,6 +426,30 @@ function benchmarkTrainingGameCount(config: BenchmarkRun['config']) {
       config.trainingGamesWithWinRates + config.trainingGamesWithoutWinRates
     )
   return config.trainingGameCount ?? 10
+}
+
+function problemAsGame(problem: BenchmarkProblemView): Game {
+  const now = new Date(0).toISOString()
+  return {
+    id: `problem-${problem.id}`,
+    version: 0,
+    size: problem.size,
+    komi: problem.komi,
+    board: problem.board,
+    toMove: problem.sideToMove,
+    status: 'active',
+    black: {type: 'human', name: 'Black'},
+    white: {type: 'human', name: 'White'},
+    moves: problem.moves,
+    captures: problem.captures,
+    commentsVisible: false,
+    autoplay: false,
+    moveCap: 722,
+    dead: [],
+    approvals: [],
+    createdAt: now,
+    updatedAt: now,
+  }
 }
 
 function Metric({label, value}: {label: string; value: string}) {

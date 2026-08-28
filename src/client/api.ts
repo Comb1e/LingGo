@@ -1,6 +1,8 @@
 import type {
   BenchmarkConfig,
   BenchmarkMoveReview,
+  BenchmarkProblemAttempt,
+  BenchmarkProblemView,
   BenchmarkNotebookVersion,
   BenchmarkRun,
   Game,
@@ -205,6 +207,10 @@ export const api = {
       method: 'DELETE',
     }),
   benchmarks: () => request<BenchmarkRun[]>('/api/benchmarks'),
+  benchmarkProblemSets: () =>
+    request<
+      Array<{id: string; version: string; checksum: string; count: number}>
+    >('/api/benchmark-problem-sets'),
   benchmark: (id: string) => request<BenchmarkRun>(`/api/benchmarks/${id}`),
   createBenchmark: (input: BenchmarkConfig) =>
     request<BenchmarkRun>('/api/benchmarks', {
@@ -226,6 +232,12 @@ export const api = {
     ),
   benchmarkMoveReviews: (id: string) =>
     request<BenchmarkMoveReview[]>(`/api/benchmarks/${id}/move-reviews`),
+  benchmarkProblemAttempts: (id: string) =>
+    request<BenchmarkProblemAttempt[]>(
+      `/api/benchmarks/${id}/problem-attempts`,
+    ),
+  benchmarkCurrentProblem: (id: string) =>
+    request<BenchmarkProblemView>(`/api/benchmarks/${id}/current-problem`),
   publishBenchmarkNotebook: (
     id: string,
     input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
