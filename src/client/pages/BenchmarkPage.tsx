@@ -326,12 +326,10 @@ export function BenchmarkPage() {
         </section>
       )}
 
-      {run.config.problemSetId && (
-        <BenchmarkLlmMessageInspector
-          sets={llmMessages.data ?? []}
-          loading={llmMessages.isLoading}
-        />
-      )}
+      <BenchmarkLlmMessageInspector
+        sets={llmMessages.data ?? []}
+        loading={llmMessages.isLoading}
+      />
 
       {run.status === 'paused' && run.currentGame < trainingGameCount && (
         <div className="benchmark-force">

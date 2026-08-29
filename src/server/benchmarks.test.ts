@@ -254,6 +254,16 @@ describe('benchmark scoring and prompts', () => {
     expect(await service.notebooks.readSnapshot(run.id)).toContain(
       '# Go techniques',
     )
+    expect(saved.llmMessages?.[0]).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining(
+        'Write a complete Markdown Go technique notebook',
+      ),
+    })
+    expect(saved.llmMessages?.[1]).toMatchObject({
+      role: 'assistant',
+      content: '# Go techniques',
+    })
     expect(reflectionPrompts).toHaveLength(11)
     expect(reflectionPrompts[0]).toContain('AUTHORITATIVE GO RULES')
     expect(reflectionPrompts[1]).toContain('Outcome: Draw')
