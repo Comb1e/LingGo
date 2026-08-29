@@ -21,6 +21,7 @@ import {MalformedModelOutputError, type PlayerAdapter} from './providers'
 import {makeSnapshot} from './go'
 import {makeInitialLlmPrompt, perspectiveOutcome} from './llmGameContext'
 import {formatCanonicalGoRules} from './movePrompt'
+import {loadProblemSet} from './benchmarkProblems'
 
 let store: Store | undefined
 let directory: string | undefined
@@ -1172,6 +1173,67 @@ describe('benchmark scoring and prompts', () => {
     expect(store.getNotebook('builtin-fake-profile', source.id)?.content).toBe(
       '# Learned notebook',
     )
+    await service.close()
+  })
+
+  it('forbids direct answers in life-and-death notebook updates', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-life-notebook-prompt-'))
+    const games = new GameService(store)
+    const set = loadProblemSet('gogameguru-easy')
+    const promptReady = deferred()
+    const responseGate = deferred()
+    const prompts: string[] = []
+    const adapter = {
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'Pass.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(prompt: string, signal: AbortSignal) {
+        prompts.push(prompt)
+        promptReady.resolve()
+        await responseGate.promise
+        signal.throwIfAborted()
+        return {
+          text: '# Life techniques',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      games,
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: set.id,
+      problemSetChecksum: set.checksum,
+    })
+
+    await promptReady.promise
+    expect(prompts[0]).toContain(
+      'Do not write the direct answer to an individual life-and-death problem in this notebook.',
+    )
+    expect(prompts[0]).toContain(
+      "do not include the problem's answer coordinate or a step-by-step solution sequence.",
+    )
+    service.pause(created.id)
+    responseGate.resolve()
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
+    ).toBe(true)
     await service.close()
   })
 

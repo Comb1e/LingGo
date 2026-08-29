@@ -93,6 +93,9 @@ type LegacyBenchmarkConfig = {
 
 class KataGoUnavailableError extends Error {}
 
+const LIFE_DEATH_NOTEBOOK_INSTRUCTION =
+  "Do not write the direct answer to an individual life-and-death problem in this notebook. Record only generalizable techniques and reasoning patterns; do not include the problem's answer coordinate or a step-by-step solution sequence."
+
 export class BenchmarkConflictError extends Error {
   constructor() {
     super(
@@ -1043,6 +1046,7 @@ export class BenchmarkService {
       'Write a complete Markdown Go technique notebook from the authoritative rules below.',
       'Choose the organization, headings, level of detail, and writing style yourself.',
       'Do not invent lessons from games, positions, or analysis that were not supplied.',
+      ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
       ...(readOnlyContext
         ? [
             'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
@@ -1206,6 +1210,7 @@ export class BenchmarkService {
       const prior = await this.runNotebook(run.id)
       const updatePrompt = [
         'Update the technique notebook based on this one life-and-death problem.',
+        LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'PRIOR NOTEBOOK',
         prior,
         'PROBLEM',
@@ -1532,6 +1537,7 @@ export class BenchmarkService {
         ? [
             `Compress the notebook below to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
             'Preserve the most useful knowledge while writing a complete Markdown notebook in your own organization and style. Do not truncate it.',
+            ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
             '',
             content,
             '',
@@ -1539,6 +1545,7 @@ export class BenchmarkService {
           ].join('\n')
         : [
             initialPrompt,
+            ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
             '',
             'Your previous response was empty. Return a non-empty complete Markdown notebook.',
           ].join('\n')
