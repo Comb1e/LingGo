@@ -17,6 +17,7 @@ import {GamePage} from './pages/GamePage'
 import {SettingsPage} from './pages/SettingsPage'
 import {BenchmarksPage} from './pages/BenchmarksPage'
 import {BenchmarkPage} from './pages/BenchmarkPage'
+import {BenchmarkSessionPage} from './pages/BenchmarkSessionPage'
 import {LifeDeathPage} from './pages/LifeDeathPage'
 
 export function App() {
@@ -69,6 +70,10 @@ export function App() {
           <Route path="/life-and-death" element={<LifeDeathPage />} />
           <Route path="/benchmarks" element={<BenchmarksPage />} />
           <Route path="/benchmarks/:id" element={<BenchmarkPage />} />
+          <Route
+            path="/benchmark-sessions/:id"
+            element={<BenchmarkSessionPage />}
+          />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

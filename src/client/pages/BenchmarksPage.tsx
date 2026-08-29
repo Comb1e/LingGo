@@ -1,12 +1,11 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
-import {ArrowRight, Gauge, Pause, Play, Trash2} from 'lucide-react'
+import {ArrowRight, Gauge} from 'lucide-react'
 import {useEffect, useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
 import {DEFAULT_BENCHMARK_TRAINING_VISITS} from '../../shared/constants'
-import type {BenchmarkRun, Color} from '../../shared/types'
+import type {BenchmarkSession, Color} from '../../shared/types'
 import {api} from '../api'
-import {hasLiveBenchmarkForProfile} from '../benchmarkAvailability'
 import {NotebookManager} from '../NotebookManager'
 import {
   Button,
@@ -20,123 +19,100 @@ export function BenchmarksPage() {
   const {t} = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const runs = useQuery({queryKey: ['benchmarks'], queryFn: api.benchmarks})
-  const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
-  const problemSets = useQuery({
-    queryKey: ['benchmark-problem-sets'],
-    queryFn: api.benchmarkProblemSets,
+  const sessions = useQuery({
+    queryKey: ['benchmark-sessions'],
+    queryFn: api.benchmarkSessions,
   })
+  const legacyRuns = useQuery({
+    queryKey: ['benchmarks'],
+    queryFn: api.benchmarks,
+  })
+  const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
   const [profileId, setProfileId] = useState('builtin-fake-profile')
+  const [lifeNotebookId, setLifeNotebookId] = useState('')
+  const [ordinaryNotebookId, setOrdinaryNotebookId] = useState('')
   const [finalColor, setFinalColor] = useState<Color>('B')
   const [trainingVisits, setTrainingVisits] = useState(
     DEFAULT_BENCHMARK_TRAINING_VISITS,
   )
   const [evaluationVisits, setEvaluationVisits] = useState(10_000)
   const [notebookTokenBudget, setNotebookTokenBudget] = useState(10_000)
-  const [trainingGamesWithWinRates, setTrainingGamesWithWinRates] = useState(5)
-  const [trainingGamesWithoutWinRates, setTrainingGamesWithoutWinRates] =
-    useState(5)
-  const [notebookId, setNotebookId] = useState('')
-  const [seedMode, setSeedMode] = useState<'rules_only' | 'refine_existing'>(
-    'rules_only',
-  )
-  const [problemSetId, setProblemSetId] = useState('')
-  const trainingGameCount =
-    trainingGamesWithWinRates + trainingGamesWithoutWinRates
+  const [withWinRates, setWithWinRates] = useState(5)
+  const [withoutWinRates, setWithoutWinRates] = useState(5)
+  const profileNotebooks = useQuery({
+    queryKey: ['notebooks', profileId],
+    queryFn: () => api.notebooks(profileId),
+    enabled: Boolean(profileId),
+  })
+  const notebookIds = profileNotebooks.data?.map(({id}) => id) ?? []
+  const selectedLifeNotebookId = notebookIds.includes(lifeNotebookId)
+    ? lifeNotebookId
+    : (notebookIds[0] ?? '')
+  const selectedOrdinaryNotebookId =
+    notebookIds.includes(ordinaryNotebookId) &&
+    ordinaryNotebookId !== selectedLifeNotebookId
+      ? ordinaryNotebookId
+      : (notebookIds.find((id) => id !== selectedLifeNotebookId) ?? '')
+  const trainingGameCount = withWinRates + withoutWinRates
+  const profileIsLive =
+    sessions.data?.some(
+      (session) =>
+        session.profileId === profileId &&
+        !['completed', 'cancelled'].includes(session.status),
+    ) ||
+    legacyRuns.data?.some(
+      (run) =>
+        run.config.profileId === profileId &&
+        ['queued', 'running', 'paused'].includes(run.status),
+    )
   const create = useMutation({
     mutationFn: () =>
-      api.createBenchmark({
+      api.createBenchmarkSession({
         profileId,
+        lifeDeathNotebookId: selectedLifeNotebookId,
+        ordinaryNotebookId: selectedOrdinaryNotebookId,
         finalColor,
         trainingGameCount,
-        notebookSeed:
-          seedMode === 'rules_only'
-            ? {mode: 'rules_only'}
-            : {mode: 'refine_existing', notebookId},
+        trainingGamesWithWinRates: withWinRates,
+        trainingGamesWithoutWinRates: withoutWinRates,
         trainingFeedback: 'structured',
-        trainingGamesWithWinRates,
-        trainingGamesWithoutWinRates,
         notebookTokenBudget,
         trainingVisits,
         evaluationVisits,
-        ...(problemSetId
-          ? {
-              problemSetId,
-              problemSetChecksum: problemSets.data?.find(
-                (set) => set.id === problemSetId,
-              )?.checksum,
-            }
-          : {}),
       }),
-    onSuccess: (run) => {
+    onSuccess: (session) => {
+      void queryClient.invalidateQueries({queryKey: ['benchmark-sessions']})
       void queryClient.invalidateQueries({queryKey: ['benchmarks']})
-      navigate(`/benchmarks/${run.id}`)
+      navigate(`/benchmark-sessions/${session.id}`)
     },
   })
-  const [pendingById, setPendingById] = useState<Record<string, string>>({})
-  const [rowErrors, setRowErrors] = useState<Record<string, unknown>>({})
-  const profileIsLive = hasLiveBenchmarkForProfile(runs.data, profileId)
 
   useEffect(() => {
-    const events = new EventSource('/api/benchmarks/events')
+    const events = new EventSource('/api/benchmark-sessions/events')
     events.onmessage = (event) => {
-      const next = JSON.parse(event.data) as BenchmarkRun[]
-      queryClient.setQueryData(['benchmarks'], next)
-      for (const run of next)
-        queryClient.setQueryData(['benchmark', run.id], run)
+      const next = JSON.parse(event.data) as BenchmarkSession[]
+      queryClient.setQueryData(['benchmark-sessions'], next)
+      for (const session of next)
+        queryClient.setQueryData(['benchmark-session', session.id], session)
     }
     return () => events.close()
   }, [queryClient])
 
-  const command = async (run: BenchmarkRun, type: 'pause' | 'resume') => {
-    setPendingById((current) => ({...current, [run.id]: type}))
-    setRowErrors((current) => ({...current, [run.id]: undefined}))
-    try {
-      const updated = await api.benchmarkCommand(run.id, {type})
-      queryClient.setQueryData<BenchmarkRun[]>(['benchmarks'], (current) =>
-        current?.map((value) => (value.id === updated.id ? updated : value)),
-      )
-      queryClient.setQueryData(['benchmark', updated.id], updated)
-    } catch (error) {
-      setRowErrors((current) => ({...current, [run.id]: error}))
-    } finally {
-      setPendingById((current) => {
-        const next = {...current}
-        delete next[run.id]
-        return next
-      })
-    }
-  }
-
-  const remove = async (run: BenchmarkRun) => {
-    if (!window.confirm(t('deleteBenchmarkConfirm'))) return
-    setPendingById((current) => ({...current, [run.id]: 'delete'}))
-    setRowErrors((current) => ({...current, [run.id]: undefined}))
-    try {
-      await api.deleteBenchmark(run.id)
-      queryClient.removeQueries({queryKey: ['benchmark', run.id]})
-      await queryClient.invalidateQueries({queryKey: ['benchmarks']})
-    } catch (error) {
-      setRowErrors((current) => ({...current, [run.id]: error}))
-    } finally {
-      setPendingById((current) => {
-        const next = {...current}
-        delete next[run.id]
-        return next
-      })
-    }
-  }
-
-  if (runs.isLoading || profiles.isLoading || problemSets.isLoading)
+  if (sessions.isLoading || profiles.isLoading || legacyRuns.isLoading)
     return (
       <div className="page">
         <Loading />
       </div>
     )
+
   return (
     <div className="page benchmark-page">
       <PageHeader title={t('benchmarks')} />
-      <ErrorBanner error={create.error ?? runs.error ?? profiles.error} />
+      <ErrorBanner
+        error={
+          create.error ?? sessions.error ?? profiles.error ?? legacyRuns.error
+        }
+      />
       <form
         className="benchmark-create"
         onSubmit={(event: FormEvent) => {
@@ -144,28 +120,15 @@ export function BenchmarksPage() {
           create.mutate()
         }}
       >
-        <div className="benchmark-form-grid">
-          <label className="field">
-            <span>{t('lifeDeathProblemSet')}</span>
-            <select
-              value={problemSetId}
-              onChange={(event) => setProblemSetId(event.target.value)}
-            >
-              <option value="">{t('legacyBenchmarkProtocol')}</option>
-              {problemSets.data?.map((set) => (
-                <option key={set.id} value={set.id}>
-                  {set.id} v{set.version} ({set.count})
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="benchmark-form-grid session-form-grid">
           <label className="field">
             <span>{t('profile')}</span>
             <select
               value={profileId}
               onChange={(event) => {
                 setProfileId(event.target.value)
-                setNotebookId('')
+                setLifeNotebookId('')
+                setOrdinaryNotebookId('')
               }}
             >
               {profiles.data?.map((profile) => (
@@ -193,193 +156,144 @@ export function BenchmarksPage() {
               ))}
             </div>
           </div>
-          {!problemSetId && (
-            <label className="field">
-              <span>{t('trainingVisits')}</span>
-              <input
-                type="number"
-                min="25"
-                max="100000"
-                value={trainingVisits}
-                onChange={(event) =>
-                  setTrainingVisits(Number(event.target.value))
-                }
-              />
-            </label>
-          )}
-          <label className="field">
-            <span>{t('evaluationVisits')}</span>
-            <input
-              type="number"
-              min={trainingVisits}
-              max="100000"
-              value={evaluationVisits}
-              onChange={(event) =>
-                setEvaluationVisits(Number(event.target.value))
-              }
-            />
-          </label>
-          <label className="field">
-            <span>{t('trainingGamesWithWinRates')}</span>
-            <input
-              type="number"
-              min="0"
-              max="1000"
-              required
-              value={trainingGamesWithWinRates}
-              onChange={(event) =>
-                setTrainingGamesWithWinRates(Number(event.target.value))
-              }
-            />
-          </label>
-          <label className="field">
-            <span>{t('trainingGamesWithoutWinRates')}</span>
-            <input
-              type="number"
-              min="0"
-              max="1000"
-              required
-              value={trainingGamesWithoutWinRates}
-              onChange={(event) =>
-                setTrainingGamesWithoutWinRates(Number(event.target.value))
-              }
-            />
-          </label>
-          <div className="field-group notebook-seed-field">
-            <label>{t('notebookSeed')}</label>
-            <div className="segmented">
-              <button
-                type="button"
-                className={seedMode === 'rules_only' ? 'selected' : ''}
-                onClick={() => setSeedMode('rules_only')}
-              >
-                {t('rulesOnly')}
-              </button>
-              <button
-                type="button"
-                className={seedMode === 'refine_existing' ? 'selected' : ''}
-                onClick={() => setSeedMode('refine_existing')}
-              >
-                {t('refineExisting')}
-              </button>
-            </div>
-          </div>
-          {seedMode === 'refine_existing' && (
-            <NotebookManager
-              profileId={profileId}
-              selectedId={notebookId}
-              onSelect={setNotebookId}
-            />
-          )}
-          <label className="field">
-            <span>{t('notebookTokenBudget')}</span>
-            <input
-              type="number"
-              min="256"
-              max="100000"
-              value={notebookTokenBudget}
-              onChange={(event) =>
-                setNotebookTokenBudget(Number(event.target.value))
-              }
-            />
-          </label>
+          <NotebookManager
+            profileId={profileId}
+            selectedId={selectedLifeNotebookId}
+            onSelect={setLifeNotebookId}
+            label={t('lifeDeathNotebook')}
+            disabledIds={
+              selectedOrdinaryNotebookId ? [selectedOrdinaryNotebookId] : []
+            }
+            autoSelect={false}
+          />
+          <NotebookManager
+            profileId={profileId}
+            selectedId={selectedOrdinaryNotebookId}
+            onSelect={setOrdinaryNotebookId}
+            label={t('ordinaryGameNotebook')}
+            disabledIds={selectedLifeNotebookId ? [selectedLifeNotebookId] : []}
+            autoSelect={false}
+          />
+          <NumberField
+            label={t('trainingGamesWithWinRates')}
+            value={withWinRates}
+            min={0}
+            onChange={setWithWinRates}
+          />
+          <NumberField
+            label={t('trainingGamesWithoutWinRates')}
+            value={withoutWinRates}
+            min={0}
+            onChange={setWithoutWinRates}
+          />
+          <NumberField
+            label={t('trainingVisits')}
+            value={trainingVisits}
+            min={25}
+            onChange={(value) => {
+              setTrainingVisits(value)
+              if (evaluationVisits < value) setEvaluationVisits(value)
+            }}
+          />
+          <NumberField
+            label={t('evaluationVisits')}
+            value={evaluationVisits}
+            min={trainingVisits}
+            onChange={setEvaluationVisits}
+          />
+          <NumberField
+            label={t('notebookTokenBudget')}
+            value={notebookTokenBudget}
+            min={256}
+            onChange={setNotebookTokenBudget}
+          />
           <Button
             className="primary"
             disabled={
               create.isPending ||
               profileIsLive ||
-              trainingGameCount < 1 ||
-              evaluationVisits < trainingVisits ||
-              (seedMode === 'refine_existing' && !notebookId)
+              !selectedLifeNotebookId ||
+              !selectedOrdinaryNotebookId ||
+              selectedLifeNotebookId === selectedOrdinaryNotebookId ||
+              trainingGameCount < 1
             }
           >
-            <Play />
-            {t('startBenchmark')}
+            <Gauge />
+            {profileIsLive
+              ? t('benchmarkAlreadyRunning')
+              : t('startBenchmarkSession')}
           </Button>
         </div>
       </form>
 
       <section className="benchmark-list">
-        <h2>{t('benchmarkRuns')}</h2>
-        {runs.data?.length ? (
-          runs.data.map((run) => (
-            <div className="benchmark-row" key={run.id}>
-              <Link to={`/benchmarks/${run.id}`}>
-                <Gauge />
-                <span>
-                  <strong>{run.profileSnapshot.name}</strong>
-                  <small>
-                    v{run.protocolVersion ?? 1} ·{' '}
-                    {run.protocolVersion === 2
-                      ? `${run.config.trainingVisits}/${run.config.evaluationVisits}`
-                      : ((run.config as unknown as {visits?: number}).visits ??
-                        'legacy')}{' '}
-                    visits
-                  </small>
-                </span>
-                <StatusBadge status={run.status} label={t(run.status)} />
-                <b>
-                  {run.status === 'completed'
-                    ? run.metrics?.score.toFixed(1)
-                    : `${Math.min(run.currentGame, benchmarkTrainingGameCount(run.config))}/${benchmarkTrainingGameCount(run.config)}`}
-                </b>
-                <ArrowRight />
-              </Link>
-              <div className="benchmark-row-actions">
-                {['queued', 'running'].includes(run.status) && (
-                  <Button
-                    className="icon-button"
-                    title={t('pauseBenchmark')}
-                    aria-label={t('pauseBenchmark')}
-                    disabled={Boolean(pendingById[run.id])}
-                    onClick={() => void command(run, 'pause')}
-                  >
-                    <Pause />
-                  </Button>
-                )}
-                {run.status === 'paused' && (
-                  <Button
-                    className="icon-button primary"
-                    title={t('resumeBenchmark')}
-                    aria-label={t('resumeBenchmark')}
-                    disabled={Boolean(pendingById[run.id])}
-                    onClick={() => void command(run, 'resume')}
-                  >
-                    <Play />
-                  </Button>
-                )}
-                <Button
-                  className="icon-button danger-quiet"
-                  title={t('delete')}
-                  aria-label={t('delete')}
-                  disabled={Boolean(pendingById[run.id])}
-                  onClick={() => void remove(run)}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-              {Boolean(rowErrors[run.id]) && (
-                <div className="benchmark-row-error">
-                  <ErrorBanner error={rowErrors[run.id]} />
-                </div>
-              )}
-            </div>
-          ))
-        ) : (
-          <p className="muted">{t('noBenchmarks')}</p>
-        )}
+        <h2>{t('benchmarkSessions')}</h2>
+        {!sessions.data?.length && <p className="muted">{t('noBenchmarks')}</p>}
+        {sessions.data?.map((session) => (
+          <div className="benchmark-row" key={session.id}>
+            <Link to={`/benchmark-sessions/${session.id}`}>
+              <span>
+                <b>{t(`stage_${session.currentStage}`)}</b>
+                <small>
+                  {new Date(session.createdAt).toLocaleString()} ·{' '}
+                  {
+                    session.stages.filter(({status}) => status === 'completed')
+                      .length
+                  }
+                  /4
+                </small>
+              </span>
+              <StatusBadge status={session.status} label={t(session.status)} />
+              <ArrowRight />
+            </Link>
+          </div>
+        ))}
       </section>
+
+      {!!legacyRuns.data?.filter((run) => !run.sessionId).length && (
+        <section className="benchmark-list legacy-benchmark-list">
+          <h2>{t('legacyBenchmarkRuns')}</h2>
+          {legacyRuns.data
+            ?.filter((run) => !run.sessionId)
+            .map((run) => (
+              <div className="benchmark-row" key={run.id}>
+                <Link to={`/benchmarks/${run.id}`}>
+                  <span>
+                    <b>{run.profileSnapshot.name}</b>
+                    <small>{new Date(run.createdAt).toLocaleString()}</small>
+                  </span>
+                  <StatusBadge status={run.status} label={t(run.status)} />
+                  <ArrowRight />
+                </Link>
+              </div>
+            ))}
+        </section>
+      )}
     </div>
   )
 }
 
-function benchmarkTrainingGameCount(config: BenchmarkRun['config']) {
-  if (
-    config.trainingGamesWithWinRates !== undefined &&
-    config.trainingGamesWithoutWinRates !== undefined
+function NumberField({
+  label,
+  value,
+  min,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        max="100000"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
   )
-    return (
-      config.trainingGamesWithWinRates + config.trainingGamesWithoutWinRates
-    )
-  return config.trainingGameCount ?? 10
 }

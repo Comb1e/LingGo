@@ -39,6 +39,18 @@ export function BenchmarkPage() {
     queryFn: () => api.benchmarkNotebook(id),
     enabled: Boolean(id),
   })
+  const lifeNotebook = useQuery({
+    queryKey: [
+      'benchmark-session-notebook',
+      query.data?.sessionId,
+      'life_death',
+    ],
+    queryFn: () =>
+      api.benchmarkSessionNotebook(query.data!.sessionId!, 'life_death'),
+    enabled: Boolean(
+      query.data?.sessionId && query.data?.stageKey === 'ordinary',
+    ),
+  })
   const problemAttempts = useQuery({
     queryKey: ['benchmark-problem-attempts', id],
     queryFn: () => api.benchmarkProblemAttempts(id),
@@ -108,6 +120,14 @@ export function BenchmarkPage() {
         actions={
           <>
             <StatusBadge status={run.status} label={t(run.status)} />
+            {run.sessionId && (
+              <Link
+                className="button"
+                to={`/benchmark-sessions/${run.sessionId}`}
+              >
+                {t('benchmarkSession')}
+              </Link>
+            )}
             {run.status === 'running' && (
               <Button onClick={() => command.mutate({type: 'pause'})}>
                 <Pause />
@@ -141,15 +161,18 @@ export function BenchmarkPage() {
                 {t('cancel')}
               </Button>
             )}
-            <Button
-              className="icon-button danger-quiet"
-              title={t('delete')}
-              onClick={() => {
-                if (window.confirm(t('deleteBenchmarkConfirm'))) remove.mutate()
-              }}
-            >
-              <Trash2 />
-            </Button>
+            {!run.sessionId && (
+              <Button
+                className="icon-button danger-quiet"
+                title={t('delete')}
+                onClick={() => {
+                  if (window.confirm(t('deleteBenchmarkConfirm')))
+                    remove.mutate()
+                }}
+              >
+                <Trash2 />
+              </Button>
+            )}
           </>
         }
       />
@@ -370,9 +393,18 @@ export function BenchmarkPage() {
         </section>
         <section className="notebook-panel">
           <header>
-            <h2>{t('techniqueNotebook')}</h2>
+            <h2>
+              {run.writableNotebookRole
+                ? t(
+                    run.writableNotebookRole === 'life_death'
+                      ? 'lifeDeathNotebook'
+                      : 'ordinaryGameNotebook',
+                  )
+                : t('techniqueNotebook')}
+            </h2>
             <div className="notebook-actions">
-              {run.status === 'completed' &&
+              {!run.sessionId &&
+                run.status === 'completed' &&
                 run.config.notebookSeed?.mode === 'refine_existing' && (
                   <Button
                     title={t('replaceSourceNotebook')}
@@ -386,7 +418,7 @@ export function BenchmarkPage() {
                     {t('replaceSource')}
                   </Button>
                 )}
-              {run.status === 'completed' && (
+              {!run.sessionId && run.status === 'completed' && (
                 <Button
                   title={t('saveNotebookAsNew')}
                   disabled={publish.isPending}
@@ -412,6 +444,27 @@ export function BenchmarkPage() {
           </header>
           <Markdown source={notebook.data ?? ''} />
         </section>
+        {run.sessionId && run.stageKey === 'ordinary' && (
+          <section className="notebook-panel session-child-readonly-notebook">
+            <header>
+              <div>
+                <h2>{t('lifeDeathNotebook')}</h2>
+                <span className="notebook-role-state readonly">
+                  {t('readOnlyReference')}
+                </span>
+              </div>
+              <a
+                className="button icon-button"
+                href={`/api/benchmark-sessions/${run.sessionId}/notebooks/life-death.md`}
+                download
+                title={t('downloadNotebook')}
+              >
+                <Download />
+              </a>
+            </header>
+            <Markdown source={lifeNotebook.data ?? ''} />
+          </section>
+        )}
       </div>
     </div>
   )

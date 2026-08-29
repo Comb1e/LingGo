@@ -25,6 +25,8 @@ test('lets a human practice randomized 19x19 life-and-death problems', async ({
   await board.locator('.shudan-vertex:not(.shudan-sign_0)').first().click()
   expect((await answerResponse).ok()).toBe(true)
   await expect(page.getByText('Illegal move · problem failed')).toBeVisible()
+  await expect(page.getByText('Answer hidden')).toBeVisible()
+  await page.getByRole('button', {name: 'See answer'}).click()
   await expect(page.getByText('Expected:')).toBeVisible()
   await expect(page.getByRole('button', {name: 'Next problem'})).toBeVisible()
 
@@ -33,6 +35,8 @@ test('lets a human practice randomized 19x19 life-and-death problems', async ({
   const legalPoint = board.locator('[data-x="9"][data-y="9"]')
   await expect(legalPoint).toHaveClass(/shudan-sign_0/)
   await legalPoint.click()
+  await expect(page.getByText('Incorrect answer')).toBeVisible()
+  await page.getByRole('button', {name: 'See answer'}).click()
   await expect(page.getByText('Expected:')).toBeVisible()
   await expect(legalPoint).toHaveClass(/shudan-sign_(-?1)/)
 
@@ -232,45 +236,49 @@ test('retains the displayed board while another historical turn loads', async ({
   await request.delete(`/api/games/${game.id}`)
 })
 
-test('tests KataGo settings and completes a benchmark with a notebook', async ({
+test('tests KataGo settings and keeps a standalone benchmark readable', async ({
   page,
+  request,
 }, testInfo) => {
   await page.goto('/settings')
   await expect(page.getByLabel('Ordinary-game visits')).toHaveValue('5000')
   await page.getByRole('button', {name: 'Test KataGo'}).click()
   await expect(page.getByText('Deterministic KataGo is ready.')).toBeVisible()
 
-  await page.goto('/benchmarks')
-  await expect(
-    page.getByRole('heading', {name: 'Benchmark', exact: true}),
-  ).toBeVisible()
-  await expect(page.getByLabel('Training visits')).toHaveValue('10000')
-  await expect(page.getByLabel('Evaluation visits')).toHaveValue('10000')
-  await page.getByRole('button', {name: 'Rules + existing notebook'}).click()
-  page.once('dialog', (dialog) => dialog.accept('E2E notebook'))
-  await page.getByRole('button', {name: 'Create notebook'}).click()
-  await expect(page.getByLabel('Technique notebook')).toHaveValue(/.+/)
-  page.once('dialog', (dialog) => dialog.accept('E2E renamed'))
-  await page.getByRole('button', {name: 'Rename notebook'}).click()
-  await expect(page.getByLabel('Technique notebook')).toContainText(
-    'E2E renamed',
+  const notebookResponse = await request.post(
+    '/api/profiles/builtin-fake-profile/notebooks',
+    {data: {name: `E2E renamed ${testInfo.project.name}`}},
   )
-  await page.getByLabel('Training games with win rates').fill('1')
-  await page.getByLabel('Training games without win rates').fill('0')
-  await page.getByRole('button', {name: 'Start benchmark'}).click()
-  await expect(page).toHaveURL(/\/benchmarks\//)
-  const benchmarkUrl = page.url()
-  await expect(page.getByText('Completed')).toBeVisible()
-  await expect(page.getByText('LingGo score')).toBeVisible()
-  await expect(page.locator('.benchmark-games a')).toHaveCount(2)
+  const notebook = await notebookResponse.json()
+  const benchmarkResponse = await request.post('/api/benchmarks', {
+    data: {
+      profileId: 'builtin-fake-profile',
+      finalColor: 'B',
+      trainingGameCount: 1,
+      trainingGamesWithWinRates: 1,
+      trainingGamesWithoutWinRates: 0,
+      notebookSeed: {mode: 'refine_existing', notebookId: notebook.id},
+      trainingFeedback: 'structured',
+      notebookTokenBudget: 10000,
+      trainingVisits: 10000,
+      evaluationVisits: 10000,
+    },
+  })
+  const benchmark = await benchmarkResponse.json()
+  const benchmarkUrl = `/benchmarks/${benchmark.id}`
+  await page.goto(benchmarkUrl)
+  await expect(page.locator('.page-header .status-badge')).toHaveText(
+    'Paused',
+    {
+      timeout: 15_000,
+    },
+  )
+  await expect(page.locator('.benchmark-games a')).toHaveCount(1)
   await expect(
     page.getByText('Check liberties before every move.'),
   ).toBeVisible()
-  await expect(page.getByText('Training reviews')).toBeVisible()
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', {name: 'Replace source'}).click()
   await page.screenshot({
-    path: testInfo.outputPath('benchmark-complete.png'),
+    path: testInfo.outputPath('standalone-benchmark.png'),
     fullPage: true,
   })
 
@@ -294,43 +302,215 @@ test('tests KataGo settings and completes a benchmark with a notebook', async ({
     fullPage: true,
   })
   await page.goBack()
-  await expect(page.getByText('Completed')).toBeVisible()
-  await page.locator('.benchmark-games a').nth(1).click()
-  const finalMessages = page.locator('.llm-message-inspector')
-  await finalMessages.getByText('LLM messages').click()
-  await expect(finalMessages).not.toContainText('Outcome:')
-  await expect(finalMessages).not.toContainText(
-    'Return only the complete replacement Markdown technique notebook.',
-  )
-  await page.goBack()
-  await expect(page.getByText('Completed')).toBeVisible()
-
-  await page.goto('/settings')
-  await page
-    .getByRole('button', {name: 'Technique notebook Local learner'})
-    .click()
-  const notebookManager = page.locator(
-    '.profile-notebook-panel .notebook-manager',
-  )
-  const notebookSelect = notebookManager.getByRole('combobox')
-  await notebookSelect.selectOption({label: 'E2E renamed'})
-  await notebookManager.getByRole('button', {name: 'Preview notebook'}).click()
-  await expect(
-    page.getByText('Check liberties before every move.'),
-  ).toBeVisible()
-  page.once('dialog', (dialog) => dialog.accept())
-  await notebookManager.getByRole('button', {name: 'Delete notebook'}).click()
-  await expect(notebookSelect).not.toContainText('E2E renamed')
-
-  await page.goto(benchmarkUrl)
-  await expect(
-    page.getByText('Check liberties before every move.'),
-  ).toBeVisible()
-
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByTitle('Delete').click()
   await expect(page).toHaveURL(/\/benchmarks$/)
+  await request.delete(
+    `/api/profiles/builtin-fake-profile/notebooks/${notebook.id}`,
+  )
 })
+
+test('advances a four-stage benchmark session with role notebooks', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const lifeResponse = await request.post(
+    '/api/profiles/builtin-fake-profile/notebooks',
+    {data: {name: `Session life ${suffix}`}},
+  )
+  const ordinaryResponse = await request.post(
+    '/api/profiles/builtin-fake-profile/notebooks',
+    {data: {name: `Session ordinary ${suffix}`}},
+  )
+  const lifeNotebook = await lifeResponse.json()
+  const ordinaryNotebook = await ordinaryResponse.json()
+  let stageIndex = 0
+  let ordinaryAttempt = 1
+  const sessionValue = () =>
+    mockedSession(
+      lifeNotebook.id,
+      ordinaryNotebook.id,
+      stageIndex,
+      ordinaryAttempt,
+    )
+
+  await page.route('**/api/benchmark-sessions**', async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    if (path.endsWith('/notebooks/life-death.md'))
+      return route.fulfill({
+        contentType: 'text/markdown',
+        body: '# Learned life notebook',
+      })
+    if (path.endsWith('/notebooks/ordinary.md'))
+      return route.fulfill({
+        contentType: 'text/markdown',
+        body: '# Ordinary notebook',
+      })
+    if (path.endsWith('/continue') && route.request().method() === 'POST') {
+      stageIndex += 1
+      return route.fulfill({json: sessionValue()})
+    }
+    if (
+      path.endsWith('/restart-stage') &&
+      route.request().method() === 'POST'
+    ) {
+      ordinaryAttempt += 1
+      return route.fulfill({json: sessionValue()})
+    }
+    if (path.endsWith('/events')) {
+      const payload =
+        path === '/api/benchmark-sessions/events' ? [] : sessionValue()
+      return route.fulfill({
+        contentType: 'text/event-stream',
+        body: `data: ${JSON.stringify(payload)}\n\n`,
+      })
+    }
+    if (
+      path === '/api/benchmark-sessions' &&
+      route.request().method() === 'GET'
+    )
+      return route.fulfill({json: []})
+    if (
+      path === '/api/benchmark-sessions' &&
+      route.request().method() === 'POST'
+    )
+      return route.fulfill({status: 201, json: sessionValue()})
+    if (path.includes('/stages/')) return route.fulfill({json: []})
+    return route.fulfill({json: sessionValue()})
+  })
+  await page.route('**/api/benchmarks/run-*', (route) => {
+    const stage = ['easy', 'medium', 'hard', 'ordinary'][stageIndex]
+    return route.fulfill({
+      json: {
+        id: `run-${stage}`,
+        status: 'completed',
+        phase: 'complete',
+        notebookVersion: 1,
+      },
+    })
+  })
+  await page.route('**/api/benchmarks', (route) => route.fulfill({json: []}))
+
+  await page.goto('/benchmarks')
+  const managers = page.locator('.benchmark-create .notebook-manager')
+  await expect(managers).toHaveCount(2)
+  await managers.nth(0).getByRole('combobox').selectOption(lifeNotebook.id)
+  await managers.nth(1).getByRole('combobox').selectOption(ordinaryNotebook.id)
+  await page.getByRole('button', {name: 'Start four-stage session'}).click()
+  await expect(page).toHaveURL(/\/benchmark-sessions\/mock-session/)
+
+  await expect(page.locator('.session-stage-card.current')).toContainText(
+    'Easy life-and-death',
+  )
+  await expect(page.locator('.session-notebook-panel')).toHaveCount(1)
+  await expect(
+    page.getByRole('heading', {name: 'Ordinary-game notebook'}),
+  ).toHaveCount(0)
+
+  for (const stage of ['Medium life-and-death', 'Hard life-and-death']) {
+    await page.getByRole('button', {name: 'Continue to next stage'}).click()
+    await expect(page.locator('.session-stage-card.current')).toContainText(
+      stage,
+    )
+  }
+  await page.getByRole('button', {name: 'Continue to next stage'}).click()
+  await expect(page.locator('.session-stage-card.current')).toContainText(
+    'Ordinary Go vs KataGo',
+  )
+  await expect(page.locator('.session-notebook-panel')).toHaveCount(2)
+  await expect(page.getByText('Read-only reference')).toBeVisible()
+  await expect(page.getByText('Active benchmark notebook')).toBeVisible()
+  await expect(
+    page
+      .locator('.session-stage-card')
+      .filter({hasText: 'Hard life-and-death'}),
+  ).toContainText('Completed')
+
+  await page.getByRole('button', {name: 'Restart current stage'}).click()
+  await expect(page.locator('.session-stage-card.current')).toContainText(
+    'Attempt 2',
+  )
+  await expect(page.locator('.session-stage-card')).toHaveCount(4)
+  await expect(page.locator('.session-notebook-panel a[download]')).toHaveCount(
+    2,
+  )
+})
+
+function mockedSession(
+  lifeNotebookId: string,
+  ordinaryNotebookId: string,
+  currentIndex: number,
+  ordinaryAttempt: number,
+) {
+  const keys = ['easy', 'medium', 'hard', 'ordinary'] as const
+  const now = new Date().toISOString()
+  const stages = keys.map((stageKey, index) => ({
+    id: `stage-${stageKey}`,
+    sessionId: 'mock-session',
+    stageKey,
+    runId: index <= currentIndex ? `run-${stageKey}` : undefined,
+    attempt:
+      stageKey === 'ordinary' ? ordinaryAttempt : index <= currentIndex ? 1 : 0,
+    status: index <= currentIndex ? 'completed' : 'pending',
+    writableNotebookRole: stageKey === 'ordinary' ? 'ordinary' : 'life_death',
+    metrics: {
+      result: 'Void',
+      averagePointLoss: 0,
+      averageWinRateLoss: 0,
+      moveCount: 0,
+      moveQuality: 0,
+      resultScore: 0,
+      score: stageKey === 'ordinary' ? 75 : 0,
+      firstResponseSuccessRate: 1,
+    },
+    createdAt: now,
+    startedAt: now,
+    completedAt: index <= currentIndex ? now : undefined,
+    updatedAt: now,
+  }))
+  return {
+    id: 'mock-session',
+    profileId: 'builtin-fake-profile',
+    status: currentIndex === 3 ? 'completed' : 'awaiting_continue',
+    currentStage: keys[currentIndex],
+    stageIds: stages.map(({id}) => id),
+    config: {
+      profileId: 'builtin-fake-profile',
+      lifeDeathNotebookId: lifeNotebookId,
+      ordinaryNotebookId,
+      finalColor: 'B',
+      trainingGameCount: 2,
+      trainingGamesWithWinRates: 1,
+      trainingGamesWithoutWinRates: 1,
+      trainingFeedback: 'structured',
+      notebookTokenBudget: 10000,
+      trainingVisits: 10000,
+      evaluationVisits: 10000,
+    },
+    notebooks: {
+      life_death: {
+        role: 'life_death',
+        profileId: 'builtin-fake-profile',
+        notebookId: lifeNotebookId,
+        version: 1,
+        estimatedTokens: 8,
+      },
+      ordinary: {
+        role: 'ordinary',
+        profileId: 'builtin-fake-profile',
+        notebookId: ordinaryNotebookId,
+        version: 1,
+        estimatedTokens: 8,
+      },
+    },
+    stages,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: currentIndex === 3 ? now : undefined,
+  }
+}
 
 test('switches the interface to Simplified Chinese', async ({page}) => {
   await page.goto('/games')

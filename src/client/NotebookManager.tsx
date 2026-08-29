@@ -10,10 +10,16 @@ export function NotebookManager({
   profileId,
   selectedId,
   onSelect,
+  label,
+  disabledIds = [],
+  autoSelect = true,
 }: {
   profileId: string
   selectedId: string
   onSelect: (id: string) => void
+  label?: string
+  disabledIds?: string[]
+  autoSelect?: boolean
 }) {
   const {t} = useTranslation()
   const queryClient = useQueryClient()
@@ -33,10 +39,17 @@ export function NotebookManager({
   })
 
   useEffect(() => {
+    if (!autoSelect) return
     if (!notebooks.data) return
-    if (!notebooks.data.some(({id}) => id === selectedId))
-      onSelect(notebooks.data[0]?.id ?? '')
-  }, [notebooks.data, onSelect, selectedId])
+    if (
+      !notebooks.data.some(
+        ({id}) => id === selectedId && !disabledIds.includes(id),
+      )
+    )
+      onSelect(
+        notebooks.data.find(({id}) => !disabledIds.includes(id))?.id ?? '',
+      )
+  }, [autoSelect, disabledIds, notebooks.data, onSelect, selectedId])
 
   const refresh = () =>
     queryClient.invalidateQueries({queryKey: ['notebooks', profileId]})
@@ -97,7 +110,7 @@ export function NotebookManager({
     <div className="notebook-manager">
       <div className="notebook-toolbar">
         <label className="field">
-          <span>{t('techniqueNotebook')}</span>
+          <span>{label ?? t('techniqueNotebook')}</span>
           <select
             value={selectedId}
             onChange={(event) => onSelect(event.target.value)}
@@ -107,7 +120,11 @@ export function NotebookManager({
               <option value="">{t('noNotebooks')}</option>
             )}
             {notebooks.data?.map((notebook) => (
-              <option key={notebook.id} value={notebook.id}>
+              <option
+                key={notebook.id}
+                value={notebook.id}
+                disabled={disabledIds.includes(notebook.id)}
+              >
                 {notebook.name}
               </option>
             ))}

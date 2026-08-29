@@ -5,6 +5,11 @@ import type {
   BenchmarkProblemView,
   BenchmarkNotebookVersion,
   BenchmarkRun,
+  BenchmarkNotebookRole,
+  BenchmarkSession,
+  BenchmarkSessionConfig,
+  BenchmarkSessionNotebookVersion,
+  BenchmarkStageKey,
   Game,
   GameAnalysis,
   GamePosition,
@@ -239,6 +244,47 @@ export const api = {
       method: 'DELETE',
     }),
   benchmarks: () => request<BenchmarkRun[]>('/api/benchmarks'),
+  benchmarkSessions: () =>
+    request<BenchmarkSession[]>('/api/benchmark-sessions'),
+  benchmarkSession: (id: string) =>
+    request<BenchmarkSession>(`/api/benchmark-sessions/${id}`),
+  createBenchmarkSession: (input: BenchmarkSessionConfig) =>
+    request<BenchmarkSession>('/api/benchmark-sessions', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  continueBenchmarkSession: (id: string) =>
+    request<BenchmarkSession>(`/api/benchmark-sessions/${id}/continue`, {
+      method: 'POST',
+    }),
+  restartBenchmarkSessionStage: (id: string) =>
+    request<BenchmarkSession>(`/api/benchmark-sessions/${id}/restart-stage`, {
+      method: 'POST',
+    }),
+  benchmarkSessionCommand: (id: string, input: Record<string, unknown>) =>
+    request<BenchmarkSession>(`/api/benchmark-sessions/${id}/commands`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  deleteBenchmarkSession: (id: string) =>
+    request<{ok: true}>(`/api/benchmark-sessions/${id}`, {method: 'DELETE'}),
+  benchmarkSessionNotebook: (id: string, role: BenchmarkNotebookRole) =>
+    requestText(
+      `/api/benchmark-sessions/${id}/notebooks/${role === 'life_death' ? 'life-death' : role}.md`,
+    ),
+  benchmarkSessionNotebookVersions: (id: string, stage: BenchmarkStageKey) =>
+    request<BenchmarkSessionNotebookVersion[]>(
+      `/api/benchmark-sessions/${id}/stages/${stage}/notebook-versions`,
+    ),
+  publishBenchmarkSessionNotebook: (
+    id: string,
+    role: BenchmarkNotebookRole,
+    input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
+  ) =>
+    request<TechniqueNotebookSummary>(
+      `/api/benchmark-sessions/${id}/notebooks/${role === 'life_death' ? 'life-death' : role}/publish`,
+      {method: 'POST', body: JSON.stringify(input)},
+    ),
   benchmarkProblemSets: () =>
     request<
       Array<{id: string; version: string; checksum: string; count: number}>

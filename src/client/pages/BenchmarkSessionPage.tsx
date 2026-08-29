@@ -1,0 +1,328 @@
+import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
+import {
+  Download,
+  Pause,
+  Play,
+  RotateCcw,
+  SkipForward,
+  XCircle,
+} from 'lucide-react'
+import {useEffect} from 'react'
+import {useTranslation} from 'react-i18next'
+import {Link, useParams} from 'react-router-dom'
+import type {
+  BenchmarkNotebookRole,
+  BenchmarkSession,
+  BenchmarkSessionStage,
+} from '../../shared/types'
+import {api} from '../api'
+import {
+  Button,
+  ErrorBanner,
+  Loading,
+  PageHeader,
+  StatusBadge,
+} from '../components'
+import {Markdown} from '../Markdown'
+
+export function BenchmarkSessionPage() {
+  const {id = ''} = useParams()
+  const {t} = useTranslation()
+  const queryClient = useQueryClient()
+  const sessionQuery = useQuery({
+    queryKey: ['benchmark-session', id],
+    queryFn: () => api.benchmarkSession(id),
+    enabled: Boolean(id),
+  })
+  const session = sessionQuery.data
+  const currentStage = session?.stages.find(
+    ({stageKey}) => stageKey === session.currentStage,
+  )
+  const runQuery = useQuery({
+    queryKey: ['benchmark', currentStage?.runId],
+    queryFn: () => api.benchmark(currentStage!.runId!),
+    enabled: Boolean(currentStage?.runId),
+  })
+  const lifeNotebook = useQuery({
+    queryKey: ['benchmark-session-notebook', id, 'life_death'],
+    queryFn: () => api.benchmarkSessionNotebook(id, 'life_death'),
+    enabled: Boolean(id),
+  })
+  const ordinaryNotebook = useQuery({
+    queryKey: ['benchmark-session-notebook', id, 'ordinary'],
+    queryFn: () => api.benchmarkSessionNotebook(id, 'ordinary'),
+    enabled: Boolean(id && session?.currentStage === 'ordinary'),
+  })
+  const action = useMutation({
+    mutationFn: (
+      kind: 'continue' | 'restart' | 'pause' | 'resume' | 'next' | 'cancel',
+    ) => {
+      if (kind === 'continue') return api.continueBenchmarkSession(id)
+      if (kind === 'restart') return api.restartBenchmarkSessionStage(id)
+      return api.benchmarkSessionCommand(id, {
+        type: kind === 'next' ? 'nextMoveAndPause' : kind,
+      })
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['benchmark-session', id], updated)
+      void queryClient.invalidateQueries({queryKey: ['benchmark-sessions']})
+      void queryClient.invalidateQueries({queryKey: ['benchmarks']})
+    },
+  })
+  const publish = useMutation({
+    mutationFn: ({role, name}: {role: BenchmarkNotebookRole; name: string}) =>
+      api.publishBenchmarkSessionNotebook(id, role, {mode: 'save_new', name}),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['notebooks', session?.profileId],
+      }),
+  })
+
+  useEffect(() => {
+    if (!id) return
+    const events = new EventSource(`/api/benchmark-sessions/${id}/events`)
+    events.onmessage = (event) => {
+      const next = JSON.parse(event.data) as BenchmarkSession | null
+      if (!next) return
+      queryClient.setQueryData(['benchmark-session', id], next)
+      void queryClient.invalidateQueries({queryKey: ['benchmark-sessions']})
+      void queryClient.invalidateQueries({
+        queryKey: ['benchmark-session-notebook', id],
+      })
+      const stage = next.stages.find(
+        ({stageKey}) => stageKey === next.currentStage,
+      )
+      if (stage?.runId)
+        void queryClient.invalidateQueries({
+          queryKey: ['benchmark', stage.runId],
+        })
+    }
+    return () => events.close()
+  }, [id, queryClient])
+
+  if (sessionQuery.isLoading || !session)
+    return (
+      <div className="page">
+        <Loading />
+        <ErrorBanner error={sessionQuery.error} />
+      </div>
+    )
+  const run = runQuery.data
+  const showOrdinary = session.currentStage === 'ordinary'
+  return (
+    <div className="page benchmark-session-detail">
+      <PageHeader
+        title={t('benchmarkSession')}
+        actions={
+          <>
+            <StatusBadge status={session.status} label={t(session.status)} />
+            {run?.status === 'running' && (
+              <Button onClick={() => action.mutate('pause')}>
+                <Pause />
+                {t('pause')}
+              </Button>
+            )}
+            {run?.status === 'paused' && (
+              <Button
+                className="primary"
+                onClick={() => action.mutate('resume')}
+              >
+                <Play />
+                {t('resume')}
+              </Button>
+            )}
+            {run && ['running', 'paused'].includes(run.status) && (
+              <Button onClick={() => action.mutate('next')}>
+                <SkipForward />
+                {t('nextMoveAndPause')}
+              </Button>
+            )}
+            {!['completed', 'cancelled'].includes(session.status) && (
+              <Button
+                className="danger-quiet"
+                onClick={() => action.mutate('cancel')}
+              >
+                <XCircle />
+                {t('cancel')}
+              </Button>
+            )}
+          </>
+        }
+      />
+      <ErrorBanner error={action.error ?? publish.error ?? runQuery.error} />
+
+      <section className="session-stage-band">
+        {session.stages.map((stage, index) => (
+          <StageCard
+            key={stage.id}
+            stage={stage}
+            index={index}
+            current={stage.stageKey === session.currentStage}
+          />
+        ))}
+      </section>
+
+      {session.status === 'awaiting_continue' && (
+        <section className="continue-gate">
+          <div>
+            <strong>{t('stageComplete')}</strong>
+            <span>{t('manualContinueRequired')}</span>
+          </div>
+          <Button className="primary" onClick={() => action.mutate('continue')}>
+            <Play />
+            {t('continueToNextStage')}
+          </Button>
+        </section>
+      )}
+      {currentStage &&
+        ['completed', 'failed'].includes(currentStage.status) && (
+          <div className="session-restart-action">
+            <Button onClick={() => action.mutate('restart')}>
+              <RotateCcw />
+              {t('restartCurrentStage')}
+            </Button>
+          </div>
+        )}
+
+      {run && (
+        <section className="current-stage-summary">
+          <div>
+            <span>{t('currentStage')}</span>
+            <strong>{t(`stage_${session.currentStage}`)}</strong>
+          </div>
+          <div>
+            <span>{t('phase')}</span>
+            <strong>{t(run.phase)}</strong>
+          </div>
+          <div>
+            <span>{t('notebookVersion')}</span>
+            <strong>v{run.notebookVersion}</strong>
+          </div>
+          <Link className="button" to={`/benchmarks/${run.id}`}>
+            {t('openChildRun')}
+          </Link>
+        </section>
+      )}
+
+      <div className={`session-notebooks${showOrdinary ? ' two-role' : ''}`}>
+        <NotebookPanel
+          role="life_death"
+          content={lifeNotebook.data ?? ''}
+          readOnly={showOrdinary}
+          session={session}
+          onPublish={(role) =>
+            publishNotebook(role, t('publishedNotebookName'), publish.mutate)
+          }
+        />
+        {showOrdinary && (
+          <NotebookPanel
+            role="ordinary"
+            content={ordinaryNotebook.data ?? ''}
+            readOnly={false}
+            session={session}
+            onPublish={(role) =>
+              publishNotebook(role, t('publishedNotebookName'), publish.mutate)
+            }
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StageCard({
+  stage,
+  index,
+  current,
+}: {
+  stage: BenchmarkSessionStage
+  index: number
+  current: boolean
+}) {
+  const {t} = useTranslation()
+  return (
+    <article className={`session-stage-card${current ? ' current' : ''}`}>
+      <span className="stage-number">{index + 1}</span>
+      <div>
+        <strong>{t(`stage_${stage.stageKey}`)}</strong>
+        <small>{t('attemptNumber', {attempt: stage.attempt || 1})}</small>
+      </div>
+      <StatusBadge status={stage.status} label={t(stage.status)} />
+      {stage.runId && (
+        <Link to={`/benchmarks/${stage.runId}`}>{t('childRun')}</Link>
+      )}
+      {stage.metrics && (
+        <small className="stage-metric">
+          {stage.stageKey === 'ordinary'
+            ? `${t('lingGoScore')}: ${stage.metrics.score.toFixed(1)}`
+            : `${t('firstResponseSuccessRate')}: ${((stage.metrics.firstResponseSuccessRate ?? 0) * 100).toFixed(1)}%`}
+        </small>
+      )}
+    </article>
+  )
+}
+
+function NotebookPanel({
+  role,
+  content,
+  readOnly,
+  session,
+  onPublish,
+}: {
+  role: BenchmarkNotebookRole
+  content: string
+  readOnly: boolean
+  session: BenchmarkSession
+  onPublish: (role: BenchmarkNotebookRole) => void
+}) {
+  const {t} = useTranslation()
+  const rolePath = role === 'life_death' ? 'life-death' : role
+  const publishReady = session.stages.some(
+    (stage) =>
+      stage.stageKey === (role === 'life_death' ? 'hard' : 'ordinary') &&
+      stage.status === 'completed',
+  )
+  return (
+    <section className="notebook-panel session-notebook-panel">
+      <header>
+        <div>
+          <h2>
+            {t(
+              role === 'life_death'
+                ? 'lifeDeathNotebook'
+                : 'ordinaryGameNotebook',
+            )}
+          </h2>
+          <span
+            className={`notebook-role-state ${readOnly ? 'readonly' : 'writable'}`}
+          >
+            {t(readOnly ? 'readOnlyReference' : 'activeWritableNotebook')}
+          </span>
+        </div>
+        <div className="notebook-actions">
+          {publishReady && (
+            <Button onClick={() => onPublish(role)}>{t('saveAsNew')}</Button>
+          )}
+          <a
+            className="button icon-button"
+            href={`/api/benchmark-sessions/${session.id}/notebooks/${rolePath}.md`}
+            download
+            title={t('downloadNotebook')}
+          >
+            <Download />
+          </a>
+        </div>
+      </header>
+      <Markdown source={content} />
+    </section>
+  )
+}
+
+function publishNotebook(
+  role: BenchmarkNotebookRole,
+  prompt: string,
+  publish: (input: {role: BenchmarkNotebookRole; name: string}) => void,
+) {
+  const name = window.prompt(prompt)
+  if (name?.trim()) publish({role, name: name.trim()})
+}
