@@ -314,6 +314,8 @@ export const api = {
     request<BenchmarkProblemAttempt[]>(
       `/api/benchmarks/${id}/problem-attempts`,
     ),
+  benchmarkLlmMessages: (id: string) =>
+    request<LlmMessageSet[]>(`/api/benchmarks/${id}/llm-messages`),
   benchmarkCurrentProblem: (id: string) =>
     request<BenchmarkProblemView>(`/api/benchmarks/${id}/current-problem`),
   publishBenchmarkNotebook: (

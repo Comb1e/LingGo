@@ -864,6 +864,12 @@ export function createApp(
       return reply.code(404).send({error: 'Benchmark not found'})
     return benchmarks.problemAttempts(id)
   })
+  app.get('/api/benchmarks/:id/llm-messages', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
+    return benchmarks.llmMessageSets(id)
+  })
   app.post('/api/benchmarks/:id/publish', async (request, reply) => {
     const id = (request.params as {id: string}).id
     try {

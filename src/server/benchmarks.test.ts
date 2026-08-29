@@ -1223,6 +1223,23 @@ describe('benchmark scoring and prompts', () => {
     })
 
     await promptReady.promise
+    const visibleMessages = service.llmMessageSets(created.id)
+    expect(visibleMessages).toHaveLength(1)
+    expect(visibleMessages[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining(
+            'Solve the life-and-death Go problem.',
+          ),
+        }),
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('Update the technique notebook'),
+          pending: true,
+        }),
+      ]),
+    )
     expect(prompts[0]).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )

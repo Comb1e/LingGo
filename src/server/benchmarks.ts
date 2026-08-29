@@ -17,6 +17,7 @@ import type {
   BenchmarkProblemAttempt,
   BenchmarkStageKey,
   BenchmarkNotebookRole,
+  LlmMessageSet,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
@@ -142,6 +143,20 @@ export class BenchmarkService {
     return this.store.listBenchmarkProblemAttempts(id)
   }
 
+  llmMessageSets(id: string): LlmMessageSet[] {
+    const run = this.require(id)
+    const connection = this.connection(run)
+    return [
+      {
+        color: run.config.finalColor,
+        status: run.status === 'completed' ? 'complete' : 'active',
+        providerKind: connection.kind,
+        continuationMode: 'transcript',
+        messages: run.llmMessages ?? [],
+      },
+    ]
+  }
+
   currentProblem(id: string) {
     const run = this.require(id)
     if (!run.config.problemSetId) return undefined
@@ -265,6 +280,7 @@ export class BenchmarkService {
       currentGame: 0,
       currentTurn: 0,
       gameIds: [],
+      llmMessages: [],
       usage: {
         calls: 0,
         inputTokens: 0,
@@ -1288,6 +1304,7 @@ export class BenchmarkService {
     prompt: string,
     signal: AbortSignal,
   ) {
+    this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
       run.substate =
@@ -1307,9 +1324,17 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        return await adapter.requestAction(problem.snapshot, signal, prompt)
+        const response = await adapter.requestAction(
+          problem.snapshot,
+          signal,
+          prompt,
+        )
+        this.recordLlmResponse(run, response.responseContent)
+        return response
       } catch (error) {
         if (signal.aborted) throw error
+        if (error instanceof MalformedModelOutputError)
+          this.recordLlmResponse(run, error.responseContent)
         if (
           isRepairableMoveError(error) ||
           !shouldRetryProviderError(error) ||
@@ -1565,6 +1590,7 @@ export class BenchmarkService {
       throw new Error(
         'The benchmark provider does not support notebook generation',
       )
+    this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
       run.substate =
@@ -1584,7 +1610,9 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        return await adapter.requestText(prompt, signal)
+        const response = await adapter.requestText(prompt, signal)
+        this.recordLlmResponse(run, response.text)
+        return response
       } catch (error) {
         if (signal.aborted) throw error
         lastError = publicProviderError(error)
@@ -1660,6 +1688,22 @@ export class BenchmarkService {
   private currentGame(run: InternalRun) {
     const id = run.gameIds[run.currentGame]
     return id ? this.games.get(id) : undefined
+  }
+
+  private recordLlmRequest(run: InternalRun, prompt: string) {
+    const messages = (run.llmMessages ??= [])
+    const previous = messages.at(-1)
+    if (previous?.pending && previous.content === prompt) return
+    messages.push({role: 'user', content: prompt, pending: true})
+    this.save(run)
+  }
+
+  private recordLlmResponse(run: InternalRun, content?: string) {
+    const messages = (run.llmMessages ??= [])
+    const previous = messages.at(-1)
+    if (previous?.pending) previous.pending = undefined
+    if (content !== undefined) messages.push({role: 'assistant', content})
+    this.save(run)
   }
 
   private require(id: string) {

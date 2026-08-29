@@ -563,6 +563,8 @@ export interface BenchmarkRun {
     name: string
     content: string
   }>
+  /** Visible prompts and responses exchanged during the benchmark. */
+  llmMessages?: LlmVisibleMessage[]
   metrics?: BenchmarkMetrics
   error?: string
   waitingFor?: 'credentials' | 'katago'
