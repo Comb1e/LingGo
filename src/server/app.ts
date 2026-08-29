@@ -6,6 +6,9 @@ import {z, ZodError} from 'zod'
 import {requestOptionsBody} from '../shared/requestOptions'
 import {
   benchmarkConfigSchema,
+  benchmarkNotebookRoleSchema,
+  benchmarkSessionConfigSchema,
+  benchmarkStageKeySchema,
   newGameSchema,
   playerActionSchema,
   providerKindSchema,
@@ -21,6 +24,7 @@ import {
   type KataGoAnalyzer,
 } from './katago'
 import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
+import {BenchmarkSessionService} from './benchmarkSessions'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
 import {createPlayerAdapter} from './providers'
@@ -139,6 +143,7 @@ export function createApp(
     kataGo,
     options.notebookStore,
   )
+  const benchmarkSessions = new BenchmarkSessionService(store, benchmarks)
 
   app.get('/api/health', async () => ({ok: true}))
   app.get('/api/life-death/problem-sets', async () => listProblemSets())
@@ -524,6 +529,21 @@ export function createApp(
         return reply
           .code(409)
           .send({error: 'This notebook is used by an active benchmark'})
+      if (
+        store
+          .listBenchmarkSessions()
+          .some(
+            (session) =>
+              !['completed', 'cancelled'].includes(session.status) &&
+              [
+                session.config.lifeDeathNotebookId,
+                session.config.ordinaryNotebookId,
+              ].includes(notebookId),
+          )
+      )
+        return reply
+          .code(409)
+          .send({error: 'This notebook is used by an active benchmark session'})
       return benchmarks.notebooks.delete(id, notebookId)
         ? {ok: true}
         : reply.code(404).send({error: 'Technique notebook not found'})
@@ -593,11 +613,158 @@ export function createApp(
       return reply
         .code(409)
         .send({error: 'This player profile is used by an active benchmark'})
+    if (
+      store
+        .listBenchmarkSessions()
+        .some(
+          (session) =>
+            session.profileId === id &&
+            !['completed', 'cancelled'].includes(session.status),
+        )
+    )
+      return reply.code(409).send({
+        error: 'This player profile is used by an active benchmark session',
+      })
     store.deleteProfile(id)
     return {ok: true}
   })
 
   app.get('/api/benchmarks', async () => benchmarks.list())
+  app.get('/api/benchmark-sessions', async () => benchmarkSessions.list())
+  app.post('/api/benchmark-sessions', async (request, reply) =>
+    reply
+      .code(201)
+      .send(
+        benchmarkSessions.create(
+          benchmarkSessionConfigSchema.parse(request.body),
+        ),
+      ),
+  )
+  app.get('/api/benchmark-sessions/events', async (request, reply) => {
+    reply.hijack()
+    const response = reply.raw
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = () =>
+      response.write(`data: ${JSON.stringify(benchmarkSessions.list())}\n\n`)
+    send()
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
+    benchmarkSessions.events.on('changed', send)
+    request.raw.on('close', () => {
+      clearInterval(keepAlive)
+      benchmarkSessions.events.off('changed', send)
+    })
+  })
+  app.get(
+    '/api/benchmark-sessions/:id',
+    async (request, reply) =>
+      benchmarkSessions.get((request.params as {id: string}).id) ??
+      reply.code(404).send({error: 'Benchmark session not found'}),
+  )
+  app.post('/api/benchmark-sessions/:id/continue', async (request) =>
+    benchmarkSessions.continue((request.params as {id: string}).id),
+  )
+  app.post('/api/benchmark-sessions/:id/restart-stage', async (request) =>
+    benchmarkSessions.restartStage((request.params as {id: string}).id),
+  )
+  app.post('/api/benchmark-sessions/:id/commands', async (request) => {
+    const {id} = request.params as {id: string}
+    const {type} = z
+      .object({
+        type: z.enum(['pause', 'resume', 'nextMoveAndPause', 'cancel']),
+      })
+      .parse(request.body)
+    if (type === 'pause') return benchmarkSessions.pause(id)
+    if (type === 'resume') return benchmarkSessions.resume(id)
+    if (type === 'nextMoveAndPause')
+      return benchmarkSessions.nextMoveAndPause(id)
+    return benchmarkSessions.cancel(id)
+  })
+  app.delete('/api/benchmark-sessions/:id', async (request, reply) => {
+    const deleted = benchmarkSessions.delete(
+      (request.params as {id: string}).id,
+    )
+    return deleted
+      ? {ok: true}
+      : reply.code(404).send({error: 'Benchmark session not found'})
+  })
+  app.get(
+    '/api/benchmark-sessions/:id/notebooks/:role.md',
+    async (request, reply) => {
+      const {id, role: rolePath} = request.params as {
+        id: string
+        role: string
+      }
+      const role = benchmarkNotebookRoleSchema.parse(
+        rolePath === 'life-death' ? 'life_death' : rolePath,
+      )
+      if (!benchmarkSessions.get(id))
+        return reply.code(404).send({error: 'Benchmark session not found'})
+      reply.type('text/markdown; charset=utf-8')
+      reply.header(
+        'Content-Disposition',
+        `inline; filename="linggo-${rolePath}-notebook-${id}.md"`,
+      )
+      return benchmarkSessions.notebook(id, role)
+    },
+  )
+  app.get(
+    '/api/benchmark-sessions/:id/stages/:stage/notebook-versions',
+    async (request) => {
+      const {id, stage} = request.params as {id: string; stage: string}
+      return benchmarkSessions.notebookVersions(
+        id,
+        benchmarkStageKeySchema.parse(stage),
+      )
+    },
+  )
+  app.post(
+    '/api/benchmark-sessions/:id/notebooks/:role/publish',
+    async (request) => {
+      const {id, role: rolePath} = request.params as {
+        id: string
+        role: string
+      }
+      const role = benchmarkNotebookRoleSchema.parse(
+        rolePath === 'life-death' ? 'life_death' : rolePath,
+      )
+      return benchmarkSessions.publishNotebook(
+        id,
+        role,
+        publishBenchmarkNotebookSchema.parse(request.body),
+      )
+    },
+  )
+  app.get('/api/benchmark-sessions/:id/events', async (request, reply) => {
+    const {id} = request.params as {id: string}
+    if (!benchmarkSessions.get(id))
+      return reply.code(404).send({error: 'Benchmark session not found'})
+    reply.hijack()
+    const response = reply.raw
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    })
+    const send = (value: unknown) =>
+      response.write(`data: ${JSON.stringify(value)}\n\n`)
+    send(benchmarkSessions.get(id))
+    const keepAlive = setInterval(
+      () => response.write(': keep-alive\n\n'),
+      15_000,
+    )
+    benchmarkSessions.events.on(id, send)
+    request.raw.on('close', () => {
+      clearInterval(keepAlive)
+      benchmarkSessions.events.off(id, send)
+    })
+  })
   app.get('/api/benchmark-problem-sets', async () =>
     benchmarks.listProblemSets(),
   )
@@ -767,11 +934,20 @@ export function createApp(
 
   app.addHook('onClose', async () => {
     for (const game of games.list()) games.cancel(game.id)
+    benchmarkSessions.close()
     await benchmarks.close()
     await analysis.close()
     store.close()
   })
-  return {app, games, store, analysis, kataGo, benchmarks}
+  return {
+    app,
+    games,
+    store,
+    analysis,
+    kataGo,
+    benchmarks,
+    benchmarkSessions,
+  }
 }
 
 function notFound(): never {

@@ -7,6 +7,8 @@ import type {
   Move,
   PlayerProfile,
   ProviderConnection,
+  BenchmarkNotebookRole,
+  BenchmarkStageKey,
 } from '../shared/types'
 import {asciiBoard} from './go'
 import {makeMovePromptSections} from './movePrompt'
@@ -55,6 +57,13 @@ export type LlmPromptMode =
       phase: 'training' | 'final'
       notebook: string
       trainingFeedback?: 'none' | 'structured'
+      stageKey?: BenchmarkStageKey
+      writableNotebookRole?: BenchmarkNotebookRole
+      readOnlyNotebooks?: Array<{
+        role: BenchmarkNotebookRole
+        name: string
+        content: string
+      }>
     }
 
 export function modelFingerprint(
@@ -103,6 +112,17 @@ export function makeInitialLlmPrompt(
     ].join('\n')
   }
 
+  const notebookContext = mode.writableNotebookRole
+    ? [
+        ...(mode.readOnlyNotebooks ?? []).flatMap((notebook) => [
+          `${notebook.role === 'life_death' ? 'LIFE-AND-DEATH NOTEBOOK' : 'ORDINARY-GAME NOTEBOOK'} (READ ONLY)`,
+          notebook.content.trim() || '(none)',
+          '',
+        ]),
+        `${mode.writableNotebookRole === 'ordinary' ? 'ORDINARY-GAME NOTEBOOK' : 'LIFE-AND-DEATH NOTEBOOK'} (WRITABLE)`,
+        mode.notebook.trim() || '(none)',
+      ]
+    : [mode.notebook.trim() || '(none)']
   const values = [
     ...(mode.phase === 'training'
       ? [
@@ -114,7 +134,7 @@ export function makeInitialLlmPrompt(
     ...sections.goRules,
     '',
     '2. SELF-WRITTEN SKILLS',
-    mode.notebook.trim() || '(none)',
+    ...notebookContext,
     ...(gameIntention?.trim()
       ? ['', 'GAME INTENTION', gameIntention.trim()]
       : []),

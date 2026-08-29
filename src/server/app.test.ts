@@ -916,4 +916,99 @@ describe('game API', () => {
         'This player profile already has a queued, running, or paused benchmark',
     })
   })
+
+  it('creates a four-stage session and rejects an early continue', async () => {
+    store.saveConnection({
+      id: 'session-no-key',
+      name: 'Session provider',
+      kind: 'openai',
+      supportsStructuredOutput: true,
+    })
+    store.saveProfile({
+      id: 'session-profile',
+      name: 'Session profile',
+      connectionId: 'session-no-key',
+      modelId: 'session-model',
+      temperature: 0,
+    })
+    const life = store.createNotebook('session-profile', 'Session life')
+    const ordinary = store.createNotebook('session-profile', 'Session ordinary')
+    const payload = {
+      profileId: 'session-profile',
+      lifeDeathNotebookId: life.id,
+      ordinaryNotebookId: ordinary.id,
+      finalColor: 'B',
+      trainingGameCount: 2,
+      trainingGamesWithWinRates: 1,
+      trainingGamesWithoutWinRates: 1,
+      trainingFeedback: 'structured',
+      notebookTokenBudget: 10_000,
+      trainingVisits: 25,
+      evaluationVisits: 25,
+    }
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/benchmark-sessions',
+      payload,
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toMatchObject({
+      status: 'running',
+      currentStage: 'easy',
+      stages: [
+        {stageKey: 'easy', status: 'running', attempt: 1},
+        {stageKey: 'medium', status: 'pending', attempt: 0},
+        {stageKey: 'hard', status: 'pending', attempt: 0},
+        {stageKey: 'ordinary', status: 'pending', attempt: 0},
+      ],
+    })
+    const sessionId = created.json().id
+    const early = await app.inject({
+      method: 'POST',
+      url: `/api/benchmark-sessions/${sessionId}/continue`,
+    })
+    expect(early.statusCode).toBe(400)
+    expect(early.json().error).toContain('must complete')
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/benchmark-sessions',
+      payload,
+    })
+    expect(duplicate.statusCode).toBe(409)
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/api/benchmark-sessions/${sessionId}/commands`,
+      payload: {type: 'cancel'},
+    })
+    expect(cancelled.statusCode).toBe(200)
+    expect(cancelled.json().status).toBe('cancelled')
+  })
+
+  it('rejects duplicate notebook roles at the session API boundary', async () => {
+    const notebook = store.createNotebook(
+      'builtin-fake-profile',
+      'One session notebook',
+    )
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/benchmark-sessions',
+      payload: {
+        profileId: 'builtin-fake-profile',
+        lifeDeathNotebookId: notebook.id,
+        ordinaryNotebookId: notebook.id,
+        finalColor: 'B',
+        trainingGameCount: 2,
+        trainingGamesWithWinRates: 1,
+        trainingGamesWithoutWinRates: 1,
+        trainingFeedback: 'structured',
+        notebookTokenBudget: 10_000,
+        trainingVisits: 25,
+        evaluationVisits: 25,
+      },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toContain('must be distinct')
+  })
 })

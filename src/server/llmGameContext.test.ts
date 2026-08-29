@@ -4,6 +4,7 @@ import {GameService} from './games'
 import {
   makeContinuationLlmPrompt,
   makeGameIntentionPrompt,
+  makeInitialLlmPrompt,
   makeReflectionLlmPrompt,
   modelFingerprint,
 } from './llmGameContext'
@@ -123,6 +124,36 @@ describe('persistent LLM game context', () => {
       'Build influence on the upper side while keeping the group connected.',
     )
     expect(prepared.request.transcript).toEqual([])
+  })
+
+  it('isolates role notebooks in benchmark prompts', () => {
+    const {game} = setupGame()
+    const snapshot = makeSnapshot(game.size, game.komi, game.moves)
+    const lifePrompt = makeInitialLlmPrompt(snapshot, {
+      kind: 'benchmark',
+      phase: 'training',
+      notebook: 'life-only-secret',
+      stageKey: 'easy',
+      writableNotebookRole: 'life_death',
+    })
+    expect(lifePrompt).toContain('life-only-secret')
+    expect(lifePrompt).not.toContain('ordinary-only-secret')
+
+    const ordinaryPrompt = makeInitialLlmPrompt(snapshot, {
+      kind: 'benchmark',
+      phase: 'final',
+      notebook: 'ordinary-only-secret',
+      stageKey: 'ordinary',
+      writableNotebookRole: 'ordinary',
+      readOnlyNotebooks: [
+        {role: 'life_death', name: 'Life', content: 'life-only-secret'},
+      ],
+    })
+    expect(ordinaryPrompt).toContain('LIFE-AND-DEATH NOTEBOOK (READ ONLY)')
+    expect(ordinaryPrompt).toContain('life-only-secret')
+    expect(ordinaryPrompt).toContain('ORDINARY-GAME NOTEBOOK (WRITABLE)')
+    expect(ordinaryPrompt).toContain('ordinary-only-secret')
+    expect(ordinaryPrompt.match(/^\d+\./gm)).toHaveLength(5)
   })
 
   it('advances atomically and sends only the newly observed opponent move', async () => {

@@ -15,6 +15,8 @@ import type {
   PositionAnalysis,
   TechniqueNotebook,
   BenchmarkProblemAttempt,
+  BenchmarkStageKey,
+  BenchmarkNotebookRole,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
@@ -159,7 +161,14 @@ export class BenchmarkService {
         (run) =>
           run.config.profileId === config.profileId &&
           ['queued', 'running', 'paused'].includes(run.status),
-      )
+      ) ||
+      this.store
+        .listBenchmarkSessions()
+        .some(
+          (session) =>
+            session.profileId === config.profileId &&
+            !['completed', 'cancelled'].includes(session.status),
+        )
     )
       throw new BenchmarkConflictError()
     this.reservedProfiles.add(config.profileId)
@@ -169,69 +178,7 @@ export class BenchmarkService {
       const connection = this.store.getConnection(profile.connectionId)
       if (!connection) throw new Error('Provider connection not found')
       const sourceNotebook = await this.sourceNotebook(config)
-      const now = new Date().toISOString()
-      const id = randomUUID()
-      const run: InternalRun = {
-        id,
-        protocolVersion: problemSet ? 3 : 2,
-        status: 'queued',
-        phase: problemSet ? 'solving_problem' : 'initializing_notebook',
-        substate: {kind: 'ready'},
-        config,
-        profileSnapshot: {...profile},
-        modelFingerprint: createHash('sha256')
-          .update(JSON.stringify({profile, connection}))
-          .digest('hex'),
-        kataGoFingerprint: createHash('sha256')
-          .update(
-            JSON.stringify({
-              executablePath: this.store.getKataGoSettings().executablePath,
-              modelPath: this.store.getKataGoSettings().modelPath,
-              configPath: this.store.getKataGoSettings().configPath,
-            }),
-          )
-          .digest('hex'),
-        currentGame: 0,
-        currentTurn: 0,
-        gameIds: [],
-        usage: {
-          calls: 0,
-          inputTokens: 0,
-          cachedInputTokens: 0,
-          outputTokens: 0,
-          latencyMs: 0,
-          byPhase: {},
-        },
-        notebook: {
-          profileId: profile.id,
-          notebookId: sourceNotebook?.id,
-          name: sourceNotebook?.name ?? 'Benchmark notebook',
-          currentUrl: sourceNotebook
-            ? `/api/profiles/${profile.id}/notebooks/${sourceNotebook.id}.md`
-            : undefined,
-          snapshotUrl: `/api/benchmarks/${id}/notebook.md`,
-        },
-        notebookVersion: 0,
-        notebookEstimatedTokens: 0,
-        problemCursor: 0,
-        problemSuccessStreak: 0,
-        problemSetChecksum: problemSet?.checksum,
-        metrics: problemSet
-          ? {
-              ...calculateMetrics('Void', config.finalColor, [], []),
-              problemCount: problemSet.problems.length,
-              problemAttempts: 0,
-              firstResponseSuccessRate: 0,
-              problemFailures: 0,
-              completedCleanCycles: 0,
-              kataGoGateReached: false,
-            }
-          : undefined,
-        pointLosses: [],
-        winRateLosses: [],
-        createdAt: now,
-        updatedAt: now,
-      }
+      const run = this.makeRun(config, sourceNotebook)
       try {
         run.updatedAt = new Date().toISOString()
         this.store.saveBenchmarkWithSeed(run, sourceNotebook)
@@ -240,10 +187,123 @@ export class BenchmarkService {
         if (isUniqueConstraintError(error)) throw new BenchmarkConflictError()
         throw error
       }
-      this.schedule(id)
+      this.schedule(run.id)
       return run
     } finally {
       this.reservedProfiles.delete(config.profileId)
+    }
+  }
+
+  prepareSessionChild(
+    input: BenchmarkConfig,
+    sourceNotebook: TechniqueNotebook,
+    metadata: {
+      sessionId: string
+      stageKey: BenchmarkStageKey
+      writableNotebookRole: BenchmarkNotebookRole
+      readOnlyNotebooks?: InternalRun['readOnlyNotebooks']
+    },
+  ) {
+    const config = normalizeConfig(input)
+    const problemSet = config.problemSetId
+      ? loadProblemSet(config.problemSetId)
+      : undefined
+    if (problemSet && config.problemSetChecksum !== problemSet.checksum)
+      throw new Error('Problem set checksum does not match the shipped corpus')
+    const profile = this.store.getProfile(config.profileId)
+    if (!profile) throw new Error('Player profile not found')
+    if (!this.store.getConnection(profile.connectionId))
+      throw new Error('Provider connection not found')
+    return this.makeRun(config, sourceNotebook, metadata)
+  }
+
+  activatePreparedSessionChild(run: BenchmarkRun) {
+    this.emit(run as InternalRun)
+    this.schedule(run.id)
+  }
+
+  private makeRun(
+    config: BenchmarkConfig,
+    sourceNotebook?: TechniqueNotebook,
+    metadata?: {
+      sessionId: string
+      stageKey: BenchmarkStageKey
+      writableNotebookRole: BenchmarkNotebookRole
+      readOnlyNotebooks?: InternalRun['readOnlyNotebooks']
+    },
+  ): InternalRun {
+    const problemSet = config.problemSetId
+      ? loadProblemSet(config.problemSetId)
+      : undefined
+    const profile = this.store.getProfile(config.profileId)!
+    const connection = this.store.getConnection(profile.connectionId)!
+    const now = new Date().toISOString()
+    const id = randomUUID()
+    return {
+      id,
+      protocolVersion: metadata ? 4 : problemSet ? 3 : 2,
+      status: 'queued',
+      phase: problemSet ? 'solving_problem' : 'initializing_notebook',
+      substate: {kind: 'ready'},
+      config,
+      profileSnapshot: {...profile},
+      modelFingerprint: createHash('sha256')
+        .update(JSON.stringify({profile, connection}))
+        .digest('hex'),
+      kataGoFingerprint: createHash('sha256')
+        .update(
+          JSON.stringify({
+            executablePath: this.store.getKataGoSettings().executablePath,
+            modelPath: this.store.getKataGoSettings().modelPath,
+            configPath: this.store.getKataGoSettings().configPath,
+          }),
+        )
+        .digest('hex'),
+      currentGame: 0,
+      currentTurn: 0,
+      gameIds: [],
+      usage: {
+        calls: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        latencyMs: 0,
+        byPhase: {},
+      },
+      notebook: {
+        profileId: profile.id,
+        notebookId: sourceNotebook?.id,
+        name: sourceNotebook?.name ?? 'Benchmark notebook',
+        currentUrl: sourceNotebook
+          ? `/api/profiles/${profile.id}/notebooks/${sourceNotebook.id}.md`
+          : undefined,
+        snapshotUrl: `/api/benchmarks/${id}/notebook.md`,
+      },
+      notebookVersion: 0,
+      notebookEstimatedTokens: metadata
+        ? Math.ceil(
+            Buffer.byteLength(sourceNotebook?.content ?? '', 'utf8') / 4,
+          )
+        : 0,
+      problemCursor: 0,
+      problemSuccessStreak: 0,
+      problemSetChecksum: problemSet?.checksum,
+      metrics: problemSet
+        ? {
+            ...calculateMetrics('Void', config.finalColor, [], []),
+            problemCount: problemSet.problems.length,
+            problemAttempts: 0,
+            firstResponseSuccessRate: 0,
+            problemFailures: 0,
+            completedCleanCycles: 0,
+            kataGoGateReached: false,
+          }
+        : undefined,
+      pointLosses: [],
+      winRateLosses: [],
+      ...metadata,
+      createdAt: now,
+      updatedAt: now,
     }
   }
 
@@ -251,7 +311,7 @@ export class BenchmarkService {
     const run = this.require(id)
     if (!['queued', 'running'].includes(run.status))
       throw new Error('Benchmark is not running')
-    this.controllers.get(id)?.abort()
+    this.controllers.get(run.id)?.abort()
     run.status = 'paused'
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
@@ -310,14 +370,28 @@ export class BenchmarkService {
 
   cancel(id: string) {
     const run = this.require(id)
+    return this.cancelRun(run, true)
+  }
+
+  cancelSessionChild(id: string) {
+    return this.cancelRun(this.require(id), false)
+  }
+
+  notifySessionChild(run: BenchmarkRun) {
+    this.emit(run as InternalRun)
+  }
+
+  private cancelRun(run: InternalRun, emit: boolean) {
     if (!['queued', 'running', 'paused'].includes(run.status))
       throw new Error('Benchmark has already ended')
-    this.controllers.get(id)?.abort()
+    this.controllers.get(run.id)?.abort()
     run.status = 'cancelled'
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
     run.substate = {kind: 'ready'}
-    this.save(run)
+    run.updatedAt = new Date().toISOString()
+    this.store.saveBenchmark(run)
+    if (emit) this.emit(run)
     return run
   }
 
@@ -346,6 +420,8 @@ export class BenchmarkService {
 
   async delete(id: string) {
     const run = this.require(id)
+    if (run.sessionId)
+      throw new Error('Delete the benchmark session instead of a child run')
     if (['queued', 'running'].includes(run.status))
       this.controllers.get(id)?.abort()
     const deleted = this.store.deleteBenchmark(id)
@@ -360,6 +436,10 @@ export class BenchmarkService {
     input: {mode: 'replace_source'} | {mode: 'save_new'; name: string},
   ) {
     const run = this.require(id)
+    if (run.sessionId)
+      throw new Error(
+        'Publish session notebooks with an explicit notebook role',
+      )
     if (run.status !== 'completed')
       throw new Error('The benchmark must be complete before publishing')
     const content = this.store.getNotebookSnapshot(id)?.content
@@ -410,6 +490,14 @@ export class BenchmarkService {
         const gated = await this.runProblemGate(run, controller.signal)
         if (!gated) {
           retry = Boolean(run.waitingFor)
+          return
+        }
+        if (run.sessionId && run.stageKey !== 'ordinary') {
+          run.phase = 'complete'
+          run.substate = {kind: 'ready'}
+          run.status = 'completed'
+          this.finishMetrics(run, 0)
+          this.save(run)
           return
         }
         run.phase = 'final_game'
@@ -607,6 +695,9 @@ export class BenchmarkService {
             phase: promptPhase,
             notebook,
             trainingFeedback,
+            stageKey: run.stageKey,
+            writableNotebookRole: run.writableNotebookRole,
+            readOnlyNotebooks: run.readOnlyNotebooks,
           },
           latestWinRate,
         })
@@ -644,6 +735,9 @@ export class BenchmarkService {
               phase: promptPhase,
               notebook,
               trainingFeedback,
+              stageKey: run.stageKey,
+              writableNotebookRole: run.writableNotebookRole,
+              readOnlyNotebooks: run.readOnlyNotebooks,
             },
             latestWinRate,
           })
@@ -747,6 +841,9 @@ export class BenchmarkService {
                     phase: promptPhase,
                     notebook,
                     trainingFeedback,
+                    stageKey: run.stageKey,
+                    writableNotebookRole: run.writableNotebookRole,
+                    readOnlyNotebooks: run.readOnlyNotebooks,
                   },
                   latestWinRate,
                 })
@@ -930,10 +1027,13 @@ export class BenchmarkService {
       return false
     }
     const seedSnapshot = this.store.getBenchmarkNotebookSeed(run.id)
+    const readOnlyContext = this.readOnlyNotebookContext(run)
     const seed = seedSnapshot?.content.trim()
       ? [
           '',
-          'EXISTING NOTEBOOK TO REFINE',
+          run.writableNotebookRole === 'ordinary'
+            ? 'WRITABLE ORDINARY-GAME NOTEBOOK TO REFINE'
+            : 'EXISTING NOTEBOOK TO REFINE',
           seedSnapshot.content,
           '',
           'Preserve correct, useful knowledge while improving clarity and actionability.',
@@ -943,6 +1043,14 @@ export class BenchmarkService {
       'Write a complete Markdown Go technique notebook from the authoritative rules below.',
       'Choose the organization, headings, level of detail, and writing style yourself.',
       'Do not invent lessons from games, positions, or analysis that were not supplied.',
+      ...(readOnlyContext
+        ? [
+            'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
+            '',
+            'READ-ONLY REFERENCE NOTEBOOKS',
+            readOnlyContext,
+          ]
+        : []),
       '',
       'AUTHORITATIVE GO RULES',
       ...formatCanonicalGoRules({size: 19, komi: 7.5}),
@@ -1222,6 +1330,7 @@ export class BenchmarkService {
     if (!game) throw new Error('Benchmark game not found')
     const color = run.currentGame % 2 === 0 ? 'B' : 'W'
     const priorNotebook = await this.runNotebook(run.id)
+    const readOnlyContext = this.readOnlyNotebookContext(run)
     const reasons = game.moves
       .filter((move) => move.color === color && move.comment?.trim())
       .map(
@@ -1249,10 +1358,18 @@ export class BenchmarkService {
           )
       : []
     const prompt = [
-      'Update the technique notebook using only the explicit prior notebook and game review below.',
+      'Update only the writable ordinary-game notebook using the explicit context and game review below.',
       'Generalize actionable lessons. Do not rely on conversation continuity.',
+      ...(readOnlyContext
+        ? [
+            '',
+            'READ-ONLY REFERENCE NOTEBOOKS',
+            readOnlyContext,
+            'Do not copy or replace the read-only notebooks in your response.',
+          ]
+        : []),
       '',
-      'PRIOR NOTEBOOK',
+      'WRITABLE PRIOR NOTEBOOK',
       priorNotebook,
       '',
       'GAME REVIEW',
@@ -1327,6 +1444,37 @@ export class BenchmarkService {
       this.store.getBenchmarkNotebookSeed(runId)?.content ??
       (await this.notebooks.readSnapshot(runId))
     )
+  }
+
+  private readOnlyNotebookContext(run: InternalRun) {
+    return (run.readOnlyNotebooks ?? [])
+      .map(
+        (notebook) =>
+          `${notebook.role === 'life_death' ? 'LIFE-AND-DEATH NOTEBOOK' : 'ORDINARY-GAME NOTEBOOK'} (READ ONLY)\n${notebook.content.trim() || '(none)'}`,
+      )
+      .join('\n\n')
+  }
+
+  private finishMetrics(run: InternalRun, trainingGameCount: number) {
+    const initial = this.store.listBenchmarkNotebookVersions(run.id)[0]
+    const current = this.store.listBenchmarkNotebookVersions(run.id).at(-1)
+    run.metrics = {
+      ...(run.metrics ?? {}),
+      ...calculateMetrics(
+        this.games.get(run.gameIds[trainingGameCount])?.result ?? 'Void',
+        run.config.finalColor,
+        run.pointLosses ?? [],
+        run.winRateLosses ?? [],
+      ),
+      outputRepairRate: run.outputAttempts
+        ? (run.outputRepairs ?? 0) / run.outputAttempts
+        : 0,
+      trainingReviewCount: this.store
+        .listBenchmarkNotebookVersions(run.id)
+        .filter(({sourcePhase}) => sourcePhase === 'reviewing_game').length,
+      notebookGrowthCharacters:
+        (current?.characterCount ?? 0) - (initial?.characterCount ?? 0),
+    }
   }
 
   private async requestValidNotebook(
