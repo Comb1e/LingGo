@@ -5,6 +5,9 @@ import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import type {
   BenchmarkRun,
+  BenchmarkSession,
+  BenchmarkSessionNotebookVersion,
+  BenchmarkSessionStage,
   BenchmarkMoveReview,
   BenchmarkProblemAttempt,
   BenchmarkNotebookVersion,
@@ -581,10 +584,11 @@ export class Store {
   saveBenchmark(run: BenchmarkRun) {
     this.db
       .prepare(
-        `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at, session_id, stage_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET status = excluded.status, phase = excluded.phase,
-       run_json = excluded.run_json, updated_at = excluded.updated_at`,
+       run_json = excluded.run_json, updated_at = excluded.updated_at,
+       session_id = excluded.session_id, stage_key = excluded.stage_key`,
       )
       .run(
         run.id,
@@ -594,7 +598,290 @@ export class Store {
         JSON.stringify(run),
         run.createdAt,
         run.updatedAt,
+        run.sessionId ?? null,
+        run.stageKey ?? null,
       )
+  }
+
+  listBenchmarkSessions(): BenchmarkSession[] {
+    return (
+      this.db
+        .prepare('SELECT id FROM benchmark_sessions ORDER BY created_at DESC')
+        .all() as Array<{id: string}>
+    ).map(({id}) => this.getBenchmarkSession(id)!)
+  }
+
+  getBenchmarkSession(id: string): BenchmarkSession | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM benchmark_sessions WHERE id = ?')
+      .get(id) as any
+    if (!row) return undefined
+    const stages = this.listBenchmarkSessionStages(id)
+    const snapshots = this.db
+      .prepare(
+        `SELECT role, notebook_id, notebook_name, version, estimated_tokens,
+                stage_key, updated_at
+         FROM benchmark_session_notebook_snapshots WHERE session_id = ?`,
+      )
+      .all(id) as any[]
+    const notebooks = Object.fromEntries(
+      snapshots.map((snapshot) => [
+        snapshot.role,
+        {
+          role: snapshot.role,
+          profileId: row.profile_id,
+          notebookId: snapshot.notebook_id,
+          name: snapshot.notebook_name,
+          currentUrl: `/api/profiles/${row.profile_id}/notebooks/${snapshot.notebook_id}.md`,
+          snapshotUrl: `/api/benchmark-sessions/${id}/notebooks/${snapshot.role === 'life_death' ? 'life-death' : 'ordinary'}.md`,
+          version: snapshot.version,
+          estimatedTokens: snapshot.estimated_tokens,
+          stageKey: snapshot.stage_key ?? undefined,
+          updatedAt: snapshot.updated_at,
+        },
+      ]),
+    ) as BenchmarkSession['notebooks']
+    return {
+      id: row.id,
+      profileId: row.profile_id,
+      status: row.status,
+      currentStage: row.current_stage,
+      stageIds: JSON.parse(row.stage_ids_json),
+      config: JSON.parse(row.config_json),
+      notebooks,
+      stages,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at ?? undefined,
+      error: row.error ?? undefined,
+    }
+  }
+
+  listBenchmarkSessionStages(sessionId: string): BenchmarkSessionStage[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM benchmark_session_stages WHERE session_id = ?
+           ORDER BY CASE stage_key WHEN 'easy' THEN 0 WHEN 'medium' THEN 1
+                    WHEN 'hard' THEN 2 ELSE 3 END`,
+        )
+        .all(sessionId) as any[]
+    ).map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      stageKey: row.stage_key,
+      runId: row.run_id ?? undefined,
+      attempt: row.attempt,
+      status: row.status,
+      writableNotebookRole: row.writable_notebook_role,
+      metrics: row.metrics_json ? JSON.parse(row.metrics_json) : undefined,
+      createdAt: row.created_at,
+      startedAt: row.started_at ?? undefined,
+      completedAt: row.completed_at ?? undefined,
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  findBenchmarkSessionStageByRun(runId: string) {
+    const row = this.db
+      .prepare(
+        'SELECT session_id FROM benchmark_session_stages WHERE run_id = ?',
+      )
+      .get(runId) as {session_id: string} | undefined
+    return row
+      ? this.listBenchmarkSessionStages(row.session_id).find(
+          (stage) => stage.runId === runId,
+        )
+      : undefined
+  }
+
+  saveBenchmarkSession(session: BenchmarkSession) {
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_sessions
+         (id, profile_id, status, current_stage, stage_ids_json, config_json,
+          error, created_at, updated_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET status = excluded.status,
+          current_stage = excluded.current_stage, stage_ids_json = excluded.stage_ids_json,
+          config_json = excluded.config_json, error = excluded.error,
+          updated_at = excluded.updated_at, completed_at = excluded.completed_at`,
+      )
+      .run(
+        session.id,
+        session.profileId,
+        session.status,
+        session.currentStage,
+        JSON.stringify(session.stageIds),
+        JSON.stringify(session.config),
+        session.error ?? null,
+        session.createdAt,
+        session.updatedAt,
+        session.completedAt ?? null,
+      )
+  }
+
+  saveBenchmarkSessionStage(
+    stage: BenchmarkSessionStage,
+    startNotebookContent?: string,
+  ) {
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_session_stages
+         (id, session_id, stage_key, run_id, attempt, status,
+          writable_notebook_role, start_notebook_content, metrics_json,
+          created_at, started_at, completed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id,
+          attempt = excluded.attempt, status = excluded.status,
+          start_notebook_content = COALESCE(excluded.start_notebook_content, start_notebook_content),
+          metrics_json = excluded.metrics_json, started_at = excluded.started_at,
+          completed_at = excluded.completed_at, updated_at = excluded.updated_at`,
+      )
+      .run(
+        stage.id,
+        stage.sessionId,
+        stage.stageKey,
+        stage.runId ?? null,
+        stage.attempt,
+        stage.status,
+        stage.writableNotebookRole,
+        startNotebookContent ?? null,
+        stage.metrics ? JSON.stringify(stage.metrics) : null,
+        stage.createdAt,
+        stage.startedAt ?? null,
+        stage.completedAt ?? null,
+        stage.updatedAt,
+      )
+  }
+
+  getBenchmarkStageStartContent(stageId: string) {
+    return (
+      this.db
+        .prepare(
+          'SELECT start_notebook_content AS content FROM benchmark_session_stages WHERE id = ?',
+        )
+        .get(stageId) as {content?: string} | undefined
+    )?.content
+  }
+
+  saveBenchmarkSessionNotebookSnapshot(input: {
+    sessionId: string
+    role: 'life_death' | 'ordinary'
+    notebookId: string
+    notebookName: string
+    content: string
+    version: number
+    estimatedTokens: number
+    stageKey?: string
+    updatedAt: string
+  }) {
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_session_notebook_snapshots
+         (session_id, role, notebook_id, notebook_name, content, version,
+          estimated_tokens, stage_key, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, role) DO UPDATE SET content = excluded.content,
+          version = excluded.version, estimated_tokens = excluded.estimated_tokens,
+          stage_key = excluded.stage_key, updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.sessionId,
+        input.role,
+        input.notebookId,
+        input.notebookName,
+        input.content,
+        input.version,
+        input.estimatedTokens,
+        input.stageKey ?? null,
+        input.updatedAt,
+      )
+  }
+
+  getBenchmarkSessionNotebookSnapshot(sessionId: string, role: string) {
+    return this.db
+      .prepare(
+        `SELECT notebook_id AS notebookId, notebook_name AS notebookName,
+                content, version, estimated_tokens AS estimatedTokens,
+                stage_key AS stageKey, updated_at AS updatedAt
+         FROM benchmark_session_notebook_snapshots
+         WHERE session_id = ? AND role = ?`,
+      )
+      .get(sessionId, role) as any
+  }
+
+  syncBenchmarkSessionNotebookVersions(
+    sessionId: string,
+    role: 'life_death' | 'ordinary',
+    stage: BenchmarkSessionStage,
+  ) {
+    if (!stage.runId) return
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO benchmark_session_notebook_versions
+       (session_id, role, stage_key, attempt, run_id, version, source_phase,
+        content, digest, character_count, byte_count, estimated_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    for (const version of this.listBenchmarkNotebookVersions(stage.runId))
+      insert.run(
+        sessionId,
+        role,
+        stage.stageKey,
+        stage.attempt,
+        stage.runId,
+        version.version,
+        version.sourcePhase,
+        version.content,
+        version.digest,
+        version.characterCount,
+        version.byteCount,
+        version.estimatedTokens,
+        version.createdAt,
+      )
+  }
+
+  listBenchmarkSessionNotebookVersions(
+    sessionId: string,
+    stageKey: string,
+  ): BenchmarkSessionNotebookVersion[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM benchmark_session_notebook_versions
+           WHERE session_id = ? AND stage_key = ? ORDER BY attempt, version`,
+        )
+        .all(sessionId, stageKey) as any[]
+    ).map((row) => ({
+      sessionId: row.session_id,
+      role: row.role,
+      stageKey: row.stage_key,
+      attempt: row.attempt,
+      runId: row.run_id,
+      version: row.version,
+      sourcePhase: row.source_phase,
+      content: row.content,
+      digest: row.digest,
+      characterCount: row.character_count,
+      byteCount: row.byte_count,
+      estimatedTokens: row.estimated_tokens,
+      createdAt: row.created_at,
+    }))
+  }
+
+  deleteBenchmarkSession(id: string) {
+    return this.transaction(() => {
+      const runIds = (
+        this.db
+          .prepare('SELECT id FROM benchmark_runs WHERE session_id = ?')
+          .all(id) as Array<{id: string}>
+      ).map(({id: runId}) => runId)
+      for (const runId of runIds) this.deleteBenchmark(runId)
+      return (
+        this.db.prepare('DELETE FROM benchmark_sessions WHERE id = ?').run(id)
+          .changes > 0
+      )
+    })
   }
 
   saveBenchmarkWithSnapshot(run: BenchmarkRun, notebook: TechniqueNotebook) {

@@ -1,5 +1,9 @@
 import {describe, expect, it} from 'vitest'
-import {benchmarkConfigSchema} from './types'
+import {
+  benchmarkConfigSchema,
+  benchmarkSessionConfigSchema,
+  benchmarkStageKeys,
+} from './types'
 
 const base = {
   profileId: 'profile',
@@ -93,5 +97,50 @@ describe('benchmark configuration', () => {
         trainingGamesWithWinRates: 3,
       }),
     ).toThrow('provided together')
+  })
+})
+
+describe('benchmark session configuration', () => {
+  const session = {
+    profileId: 'profile',
+    lifeDeathNotebookId: 'life',
+    ordinaryNotebookId: 'ordinary',
+    finalColor: 'B' as const,
+    trainingGameCount: 4,
+    trainingGamesWithWinRates: 2,
+    trainingGamesWithoutWinRates: 2,
+    trainingFeedback: 'structured' as const,
+    notebookTokenBudget: 10_000,
+    trainingVisits: 5_000,
+    evaluationVisits: 10_000,
+  }
+
+  it('uses the fixed four-stage order', () => {
+    expect(benchmarkStageKeys).toEqual(['easy', 'medium', 'hard', 'ordinary'])
+  })
+
+  it('accepts two role notebooks and rejects duplicate notebook IDs', () => {
+    expect(benchmarkSessionConfigSchema.parse(session)).toMatchObject(session)
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        ordinaryNotebookId: session.lifeDeathNotebookId,
+      }),
+    ).toThrow('must be distinct')
+  })
+
+  it('validates the ordinary-game count split and visit ordering', () => {
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        trainingGamesWithoutWinRates: 1,
+      }),
+    ).toThrow('add up')
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        evaluationVisits: 1_000,
+      }),
+    ).toThrow('at least training visits')
   })
 })

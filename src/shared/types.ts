@@ -360,6 +360,60 @@ export const notebookSeedSchema = z.discriminatedUnion('mode', [
 ])
 export type NotebookSeed = z.infer<typeof notebookSeedSchema>
 
+export const benchmarkStageKeys = [
+  'easy',
+  'medium',
+  'hard',
+  'ordinary',
+] as const
+export const benchmarkStageKeySchema = z.enum(benchmarkStageKeys)
+export type BenchmarkStageKey = z.infer<typeof benchmarkStageKeySchema>
+
+export const benchmarkNotebookRoleSchema = z.enum(['life_death', 'ordinary'])
+export type BenchmarkNotebookRole = z.infer<typeof benchmarkNotebookRoleSchema>
+
+export const benchmarkSessionConfigSchema = z
+  .object({
+    profileId: z.string().min(1),
+    lifeDeathNotebookId: z.string().min(1),
+    ordinaryNotebookId: z.string().min(1),
+    finalColor: z.enum(['B', 'W']),
+    trainingGameCount: z.number().int().min(1).max(1000),
+    trainingGamesWithWinRates: z.number().int().min(0).max(1000),
+    trainingGamesWithoutWinRates: z.number().int().min(0).max(1000),
+    trainingFeedback: z.enum(['none', 'structured']).default('structured'),
+    notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
+    trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
+    evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.lifeDeathNotebookId === value.ordinaryNotebookId)
+      context.addIssue({
+        code: 'custom',
+        path: ['ordinaryNotebookId'],
+        message: 'Life-and-death and ordinary-game notebooks must be distinct',
+      })
+    if (
+      value.trainingGamesWithWinRates + value.trainingGamesWithoutWinRates !==
+      value.trainingGameCount
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['trainingGameCount'],
+        message: 'Training game counts must add up to the total',
+      })
+    if (value.evaluationVisits < value.trainingVisits)
+      context.addIssue({
+        code: 'custom',
+        path: ['evaluationVisits'],
+        message: 'Evaluation visits must be at least training visits',
+      })
+  })
+export type BenchmarkSessionConfig = z.infer<
+  typeof benchmarkSessionConfigSchema
+>
+
 export const benchmarkConfigSchema = z
   .object({
     profileId: z.string().min(1),
@@ -479,7 +533,7 @@ export interface TechniqueNotebook extends TechniqueNotebookSummary {
 
 export interface BenchmarkRun {
   id: string
-  protocolVersion: 1 | 2 | 3
+  protocolVersion: 1 | 2 | 3 | 4
   status: BenchmarkStatus
   phase: BenchmarkPhase
   substate: BenchmarkSubstate
@@ -500,12 +554,77 @@ export interface BenchmarkRun {
   kataGoFingerprint: string
   sourceRunId?: string
   successorRunId?: string
+  sessionId?: string
+  stageKey?: BenchmarkStageKey
+  writableNotebookRole?: BenchmarkNotebookRole
+  readOnlyNotebooks?: Array<{
+    role: BenchmarkNotebookRole
+    notebookId: string
+    name: string
+    content: string
+  }>
   metrics?: BenchmarkMetrics
   error?: string
   waitingFor?: 'credentials' | 'katago'
   pauseAfterLlmMove?: boolean
   createdAt: string
   updatedAt: string
+}
+
+export type BenchmarkSessionStatus =
+  | 'setup'
+  | 'running'
+  | 'awaiting_continue'
+  | 'restarting_stage'
+  | 'completed'
+  | 'cancelled'
+  | 'error'
+
+export type BenchmarkSessionStageStatus =
+  'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface BenchmarkSessionStage {
+  id: string
+  sessionId: string
+  stageKey: BenchmarkStageKey
+  runId?: string
+  attempt: number
+  status: BenchmarkSessionStageStatus
+  writableNotebookRole: BenchmarkNotebookRole
+  metrics?: BenchmarkMetrics
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  updatedAt: string
+}
+
+export interface BenchmarkSessionNotebook extends NotebookMetadata {
+  role: BenchmarkNotebookRole
+  version: number
+  estimatedTokens: number
+  stageKey?: BenchmarkStageKey
+}
+
+export interface BenchmarkSession {
+  id: string
+  profileId: string
+  status: BenchmarkSessionStatus
+  currentStage: BenchmarkStageKey
+  stageIds: string[]
+  config: BenchmarkSessionConfig
+  notebooks: Record<BenchmarkNotebookRole, BenchmarkSessionNotebook>
+  stages: BenchmarkSessionStage[]
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+  error?: string
+}
+
+export interface BenchmarkSessionNotebookVersion extends BenchmarkNotebookVersion {
+  sessionId: string
+  role: BenchmarkNotebookRole
+  stageKey: BenchmarkStageKey
+  attempt: number
 }
 
 export type BenchmarkNotebookSourcePhase =
