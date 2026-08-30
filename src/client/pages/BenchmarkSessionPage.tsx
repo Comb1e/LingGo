@@ -129,7 +129,9 @@ export function BenchmarkSessionPage() {
       </div>
     )
   const run = runQuery.data
-  const showOrdinary = session.currentStage === 'ordinary'
+  const showOrdinary =
+    session.currentStage === 'ordinary_notebook' ||
+    session.currentStage === 'ordinary'
   return (
     <div className="page benchmark-session-detail">
       <PageHeader
@@ -217,7 +219,10 @@ export function BenchmarkSessionPage() {
       {currentStage &&
         ['completed', 'failed'].includes(currentStage.status) && (
           <div className="session-restart-action">
-            <Button onClick={() => action.mutate('restart')}>
+            <Button
+              disabled={action.isPending}
+              onClick={() => action.mutate('restart')}
+            >
               <RotateCcw />
               {t('restartCurrentStage')}
             </Button>

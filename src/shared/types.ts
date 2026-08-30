@@ -361,9 +361,11 @@ export const notebookSeedSchema = z.discriminatedUnion('mode', [
 export type NotebookSeed = z.infer<typeof notebookSeedSchema>
 
 export const benchmarkStageKeys = [
+  'life_death_notebook',
   'easy',
   'medium',
   'hard',
+  'ordinary_notebook',
   'ordinary',
 ] as const
 export const benchmarkStageKeySchema = z.enum(benchmarkStageKeys)

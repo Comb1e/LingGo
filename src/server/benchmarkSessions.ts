@@ -15,7 +15,10 @@ import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {loadProblemSet} from './benchmarkProblems'
 import {Store} from './database'
 
-const problemSets: Record<Exclude<BenchmarkStageKey, 'ordinary'>, string> = {
+const problemSets: Record<
+  Extract<BenchmarkStageKey, 'easy' | 'medium' | 'hard'>,
+  string
+> = {
   easy: 'gogameguru-easy',
   medium: 'gogameguru-intermediate',
   hard: 'gogameguru-hard',
@@ -59,23 +62,23 @@ export class BenchmarkSessionService {
     const stages = benchmarkStageKeys.map((stageKey) =>
       this.newStage(sessionId, stageKey, now),
     )
-    const easy = stages[0]
+    const initialization = stages[0]
     const run = this.prepareChild(
       config,
       sessionId,
-      easy.stageKey,
+      initialization.stageKey,
       lifeNotebook,
       undefined,
     )
-    easy.runId = run.id
-    easy.attempt = 1
-    easy.status = 'running'
-    easy.startedAt = now
+    initialization.runId = run.id
+    initialization.attempt = 1
+    initialization.status = 'running'
+    initialization.startedAt = now
     const session: BenchmarkSession = {
       id: sessionId,
       profileId: config.profileId,
       status: 'running',
-      currentStage: 'easy',
+      currentStage: 'life_death_notebook',
       stageIds: stages.map(({id}) => id),
       config,
       notebooks: {} as BenchmarkSession['notebooks'],
@@ -91,7 +94,7 @@ export class BenchmarkSessionService {
         for (const stage of stages)
           this.store.saveBenchmarkSessionStage(
             stage,
-            stage.id === easy.id ? lifeNotebook.content : undefined,
+            stage.id === initialization.id ? lifeNotebook.content : undefined,
           )
         this.saveInitialNotebook(sessionId, 'life_death', lifeNotebook, now)
         this.saveInitialNotebook(sessionId, 'ordinary', ordinaryNotebook, now)
@@ -498,7 +501,35 @@ function childConfig(
   stageKey: BenchmarkStageKey,
   notebookId: string,
 ): BenchmarkConfig {
-  if (stageKey !== 'ordinary') {
+  if (stageKey === 'life_death_notebook') {
+    return {
+      profileId: config.profileId,
+      finalColor: config.finalColor,
+      trainingGameCount: 1,
+      trainingGamesWithWinRates: 0,
+      trainingGamesWithoutWinRates: 1,
+      notebookSeed: {mode: 'refine_existing', notebookId},
+      trainingFeedback: 'none',
+      notebookTokenBudget: config.notebookTokenBudget,
+      trainingVisits: config.trainingVisits,
+      evaluationVisits: config.evaluationVisits,
+    }
+  }
+  if (stageKey === 'ordinary_notebook') {
+    return {
+      profileId: config.profileId,
+      finalColor: config.finalColor,
+      trainingGameCount: 1,
+      trainingGamesWithWinRates: 0,
+      trainingGamesWithoutWinRates: 1,
+      notebookSeed: {mode: 'refine_existing', notebookId},
+      trainingFeedback: 'none',
+      notebookTokenBudget: config.notebookTokenBudget,
+      trainingVisits: config.trainingVisits,
+      evaluationVisits: config.evaluationVisits,
+    }
+  }
+  if (stageKey === 'easy' || stageKey === 'medium' || stageKey === 'hard') {
     const set = loadProblemSet(problemSets[stageKey])
     return {
       profileId: config.profileId,
@@ -528,7 +559,9 @@ function childConfig(
 }
 
 function roleForStage(stageKey: BenchmarkStageKey): BenchmarkNotebookRole {
-  return stageKey === 'ordinary' ? 'ordinary' : 'life_death'
+  return stageKey === 'ordinary' || stageKey === 'ordinary_notebook'
+    ? 'ordinary'
+    : 'life_death'
 }
 
 function isUniqueConstraintError(error: unknown) {

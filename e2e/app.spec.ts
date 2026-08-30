@@ -310,7 +310,7 @@ test('tests KataGo settings and keeps a standalone benchmark readable', async ({
   )
 })
 
-test('advances a four-stage benchmark session with role notebooks', async ({
+test('advances a six-stage benchmark session with role notebooks', async ({
   page,
   request,
 }, testInfo) => {
@@ -389,7 +389,14 @@ test('advances a four-stage benchmark session with role notebooks', async ({
     return route.fulfill({json: sessionValue()})
   })
   await page.route('**/api/benchmarks/run-*/llm-messages', (route) => {
-    const stage = ['easy', 'medium', 'hard', 'ordinary'][stageIndex]
+    const stage = [
+      'life_death_notebook',
+      'easy',
+      'medium',
+      'hard',
+      'ordinary_notebook',
+      'ordinary',
+    ][stageIndex]
     return route.fulfill({
       json: [
         {
@@ -402,7 +409,7 @@ test('advances a four-stage benchmark session with role notebooks', async ({
               role: 'user',
               pending: true,
               content:
-                stage === 'ordinary'
+                stage === 'ordinary_notebook' || stage === 'ordinary'
                   ? 'Initialize the ordinary-game notebook.'
                   : 'Initialize the life-and-death notebook.',
             },
@@ -412,7 +419,14 @@ test('advances a four-stage benchmark session with role notebooks', async ({
     })
   })
   await page.route('**/api/benchmarks/run-*', (route) => {
-    const stage = ['easy', 'medium', 'hard', 'ordinary'][stageIndex]
+    const stage = [
+      'life_death_notebook',
+      'easy',
+      'medium',
+      'hard',
+      'ordinary_notebook',
+      'ordinary',
+    ][stageIndex]
     return route.fulfill({
       json: {
         id: `run-${stage}`,
@@ -429,11 +443,11 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await expect(managers).toHaveCount(2)
   await managers.nth(0).getByRole('combobox').selectOption(lifeNotebook.id)
   await managers.nth(1).getByRole('combobox').selectOption(ordinaryNotebook.id)
-  await page.getByRole('button', {name: 'Start four-stage session'}).click()
+  await page.getByRole('button', {name: 'Start six-stage session'}).click()
   await expect(page).toHaveURL(/\/benchmark-sessions\/mock-session/)
 
   await expect(page.locator('.session-stage-card.current')).toContainText(
-    'Easy life-and-death',
+    'Initialize life-and-death notebook',
   )
   await expect(page.locator('.session-notebook-panel')).toHaveCount(1)
   await expect(
@@ -441,19 +455,27 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   ).toHaveCount(0)
   const messages = page.locator('.benchmark-llm-message-inspector')
   await expect(messages).toHaveAttribute('open', '')
-  await expect(messages).toContainText('Easy life-and-death')
+  await expect(messages).toContainText('Initialize life-and-death notebook')
   await expect(
     messages.getByText('Initialize the life-and-death notebook.'),
   ).toBeVisible()
   await expect(messages).toContainText('Awaiting response')
   await expect(messages.getByText('Assistant', {exact: true})).toHaveCount(0)
 
+  await page.getByRole('button', {name: 'Continue to next stage'}).click()
+  await expect(page.locator('.session-stage-card.current')).toContainText(
+    'Easy life-and-death',
+  )
   for (const stage of ['Medium life-and-death', 'Hard life-and-death']) {
     await page.getByRole('button', {name: 'Continue to next stage'}).click()
     await expect(page.locator('.session-stage-card.current')).toContainText(
       stage,
     )
   }
+  await page.getByRole('button', {name: 'Continue to next stage'}).click()
+  await expect(page.locator('.session-stage-card.current')).toContainText(
+    'Initialize ordinary-game notebook',
+  )
   await page.getByRole('button', {name: 'Continue to next stage'}).click()
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Ordinary Go vs KataGo',
@@ -475,7 +497,7 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Attempt 2',
   )
-  await expect(page.locator('.session-stage-card')).toHaveCount(4)
+  await expect(page.locator('.session-stage-card')).toHaveCount(6)
   await expect(page.locator('.session-notebook-panel a[download]')).toHaveCount(
     2,
   )
@@ -491,7 +513,14 @@ function mockedSession(
   currentIndex: number,
   ordinaryAttempt: number,
 ) {
-  const keys = ['easy', 'medium', 'hard', 'ordinary'] as const
+  const keys = [
+    'life_death_notebook',
+    'easy',
+    'medium',
+    'hard',
+    'ordinary_notebook',
+    'ordinary',
+  ] as const
   const now = new Date().toISOString()
   const stages = keys.map((stageKey, index) => ({
     id: `stage-${stageKey}`,
@@ -501,7 +530,10 @@ function mockedSession(
     attempt:
       stageKey === 'ordinary' ? ordinaryAttempt : index <= currentIndex ? 1 : 0,
     status: index <= currentIndex ? 'completed' : 'pending',
-    writableNotebookRole: stageKey === 'ordinary' ? 'ordinary' : 'life_death',
+    writableNotebookRole:
+      stageKey === 'ordinary' || stageKey === 'ordinary_notebook'
+        ? 'ordinary'
+        : 'life_death',
     metrics: {
       result: 'Void',
       averagePointLoss: 0,
@@ -520,7 +552,7 @@ function mockedSession(
   return {
     id: 'mock-session',
     profileId: 'builtin-fake-profile',
-    status: currentIndex === 3 ? 'completed' : 'awaiting_continue',
+    status: currentIndex === 5 ? 'completed' : 'awaiting_continue',
     currentStage: keys[currentIndex],
     stageIds: stages.map(({id}) => id),
     config: {
@@ -555,7 +587,7 @@ function mockedSession(
     stages,
     createdAt: now,
     updatedAt: now,
-    completedAt: currentIndex === 3 ? now : undefined,
+    completedAt: currentIndex === 5 ? now : undefined,
   }
 }
 

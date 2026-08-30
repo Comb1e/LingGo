@@ -917,7 +917,7 @@ describe('game API', () => {
     })
   })
 
-  it('creates a four-stage session and rejects an early continue', async () => {
+  it('creates a six-stage session and rejects an early continue', async () => {
     store.saveConnection({
       id: 'session-no-key',
       name: 'Session provider',
@@ -954,11 +954,13 @@ describe('game API', () => {
     expect(created.statusCode).toBe(201)
     expect(created.json()).toMatchObject({
       status: 'running',
-      currentStage: 'easy',
+      currentStage: 'life_death_notebook',
       stages: [
-        {stageKey: 'easy', status: 'running', attempt: 1},
+        {stageKey: 'life_death_notebook', status: 'running', attempt: 1},
+        {stageKey: 'easy', status: 'pending', attempt: 0},
         {stageKey: 'medium', status: 'pending', attempt: 0},
         {stageKey: 'hard', status: 'pending', attempt: 0},
+        {stageKey: 'ordinary_notebook', status: 'pending', attempt: 0},
         {stageKey: 'ordinary', status: 'pending', attempt: 0},
       ],
     })

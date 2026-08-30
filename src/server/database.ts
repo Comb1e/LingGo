@@ -662,8 +662,9 @@ export class Store {
       this.db
         .prepare(
           `SELECT * FROM benchmark_session_stages WHERE session_id = ?
-           ORDER BY CASE stage_key WHEN 'easy' THEN 0 WHEN 'medium' THEN 1
-                    WHEN 'hard' THEN 2 ELSE 3 END`,
+           ORDER BY CASE stage_key WHEN 'life_death_notebook' THEN 0
+                    WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 WHEN 'hard' THEN 3
+                    WHEN 'ordinary_notebook' THEN 4 ELSE 5 END`,
         )
         .all(sessionId) as any[]
     ).map((row) => ({

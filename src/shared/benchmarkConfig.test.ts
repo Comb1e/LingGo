@@ -115,8 +115,15 @@ describe('benchmark session configuration', () => {
     evaluationVisits: 10_000,
   }
 
-  it('uses the fixed four-stage order', () => {
-    expect(benchmarkStageKeys).toEqual(['easy', 'medium', 'hard', 'ordinary'])
+  it('uses the fixed six-stage order', () => {
+    expect(benchmarkStageKeys).toEqual([
+      'life_death_notebook',
+      'easy',
+      'medium',
+      'hard',
+      'ordinary_notebook',
+      'ordinary',
+    ])
   })
 
   it('accepts two role notebooks and rejects duplicate notebook IDs', () => {

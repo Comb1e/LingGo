@@ -25,45 +25,49 @@ afterEach(async () => {
 })
 
 describe('benchmark sessions', () => {
-  it('starts only easy and gates every next stage in fixed order', () => {
+  it('starts only notebook initialization and gates every next stage in fixed order', () => {
     const fixture = setup()
     const session = fixture.sessions.create(fixture.config)
     const easy = session.stages[0]
-    expect(session.currentStage).toBe('easy')
+    expect(session.currentStage).toBe('life_death_notebook')
     expect(session.stages.map(({status}) => status)).toEqual([
       'running',
+      'pending',
+      'pending',
       'pending',
       'pending',
       'pending',
     ])
     expect(() => fixture.sessions.continue(session.id)).toThrow('must complete')
 
-    complete(fixture, easy.runId!, '# Life after easy')
+    complete(fixture, easy.runId!, '# Life notebook')
     expect(fixture.sessions.get(session.id)?.status).toBe('awaiting_continue')
-    const mediumSession = fixture.sessions.continue(session.id)
-    expect(mediumSession.currentStage).toBe('medium')
-    expect(mediumSession.stages[1].status).toBe('running')
+    const easySession = fixture.sessions.continue(session.id)
+    expect(easySession.currentStage).toBe('easy')
+    expect(easySession.stages[1].status).toBe('running')
     expect(
-      fixture.store.getBenchmarkNotebookSeed(mediumSession.stages[1].runId!)
+      fixture.store.getBenchmarkNotebookSeed(easySession.stages[1].runId!)
         ?.content,
-    ).toBe('# Life after easy')
-    expect(mediumSession.stages[2].runId).toBeUndefined()
+    ).toBe('# Life notebook')
+    expect(easySession.stages[2].runId).toBeUndefined()
   })
 
   it('restarts from the stage-start snapshot and preserves earlier stages', () => {
     const fixture = setup()
     let session = fixture.sessions.create(fixture.config)
-    complete(fixture, session.stages[0].runId!, '# Easy result')
+    complete(fixture, session.stages[0].runId!, '# Life initialized')
     session = fixture.sessions.continue(session.id)
-    const originalMediumRun = session.stages[1].runId!
+    complete(fixture, session.stages[1].runId!, '# Easy result')
+    session = fixture.sessions.continue(session.id)
+    const originalMediumRun = session.stages[2].runId!
     complete(fixture, originalMediumRun, '# Contaminated medium result')
 
     session = fixture.sessions.restartStage(session.id)
-    expect(session.stages[0].status).toBe('completed')
-    expect(session.stages[1].attempt).toBe(2)
-    expect(session.stages[1].runId).not.toBe(originalMediumRun)
+    expect(session.stages[1].status).toBe('completed')
+    expect(session.stages[2].attempt).toBe(2)
+    expect(session.stages[2].runId).not.toBe(originalMediumRun)
     expect(
-      fixture.store.getBenchmarkNotebookSeed(session.stages[1].runId!)?.content,
+      fixture.store.getBenchmarkNotebookSeed(session.stages[2].runId!)?.content,
     ).toBe('# Easy result')
     expect(fixture.sessions.notebook(session.id, 'life_death')).toBe(
       '# Easy result',
@@ -73,7 +77,13 @@ describe('benchmark sessions', () => {
   it('carries only life learning across problem stages and gives ordinary both roles', () => {
     const fixture = setup()
     let session = fixture.sessions.create(fixture.config)
-    for (const content of ['# Easy', '# Medium', '# Hard']) {
+    for (const content of [
+      '# Life initialized',
+      '# Easy',
+      '# Medium',
+      '# Hard',
+      '# Ordinary initialized',
+    ]) {
       const current = session.stages.find(
         ({stageKey}) => stageKey === session.currentStage,
       )!
@@ -81,16 +91,16 @@ describe('benchmark sessions', () => {
       session = fixture.sessions.continue(session.id)
     }
     expect(session.currentStage).toBe('ordinary')
-    const ordinary = fixture.benchmarks.get(session.stages[3].runId!)!
+    const ordinary = fixture.benchmarks.get(session.stages[5].runId!)!
     expect(fixture.store.getBenchmarkNotebookSeed(ordinary.id)?.content).toBe(
-      '# Ordinary seed',
+      '# Ordinary initialized',
     )
     expect(ordinary.readOnlyNotebooks).toEqual([
       expect.objectContaining({role: 'life_death', content: '# Hard'}),
     ])
     expect(fixture.sessions.notebook(session.id, 'life_death')).toBe('# Hard')
     expect(fixture.sessions.notebook(session.id, 'ordinary')).toBe(
-      '# Ordinary seed',
+      '# Ordinary initialized',
     )
     complete(fixture, ordinary.id, '# Ordinary learned')
     expect(fixture.sessions.notebook(session.id, 'life_death')).toBe('# Hard')

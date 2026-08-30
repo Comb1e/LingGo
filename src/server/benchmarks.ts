@@ -277,7 +277,9 @@ export class BenchmarkService {
       protocolVersion: metadata ? 4 : problemSet ? 3 : 2,
       status: 'queued',
       phase:
-        problemSet && metadata?.stageKey && metadata.stageKey !== 'easy'
+        problemSet &&
+        metadata?.stageKey &&
+        !isNotebookInitializationStage(metadata.stageKey)
           ? 'solving_problem'
           : 'initializing_notebook',
       substate: {kind: 'ready'},
@@ -520,6 +522,16 @@ export class BenchmarkService {
         )
         if (!initialized) {
           retry = Boolean(run.waitingFor)
+          return
+        }
+        // Session notebook stages intentionally end after initialization. The
+        // following problem/game stage receives this run's notebook snapshot.
+        if (run.sessionId && isNotebookInitializationStage(run.stageKey)) {
+          run.phase = 'complete'
+          run.substate = {kind: 'ready'}
+          run.status = 'completed'
+          this.finishMetrics(run, 0)
+          this.save(run)
           return
         }
       }
@@ -1122,7 +1134,7 @@ export class BenchmarkService {
     run.notebookVersion = version.version
     run.notebookEstimatedTokens = version.estimatedTokens
     run.notebook.updatedAt = version.createdAt
-    if (!isLifeDeath(run))
+    if (!isLifeDeath(run) && !isNotebookInitializationStage(run.stageKey))
       run.initializationContext = {
         transcript: [
           {role: 'user', content: prompt},
@@ -1987,7 +1999,15 @@ function normalizeConfig(
 }
 
 function isLifeDeath(run: BenchmarkRun) {
-  return run.protocolVersion === 3 || Boolean(run.config.problemSetId)
+  return (
+    run.protocolVersion === 3 ||
+    Boolean(run.config.problemSetId) ||
+    run.stageKey === 'life_death_notebook'
+  )
+}
+
+function isNotebookInitializationStage(stageKey?: BenchmarkStageKey) {
+  return stageKey === 'life_death_notebook' || stageKey === 'ordinary_notebook'
 }
 
 function configuredTrainingGameCount(config: BenchmarkConfig) {
