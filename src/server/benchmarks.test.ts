@@ -1322,6 +1322,9 @@ describe('benchmark scoring and prompts', () => {
     const solvingPrompt = actionPrompts[0]
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
     expect(solvingPrompt).not.toContain('GO RULES')
+    expect(solvingPrompt).not.toContain('X = Black')
+    expect(solvingPrompt).not.toContain('O = White')
+    expect(solvingPrompt).not.toContain('. = empty')
     expect(actionPrompts[1]).toContain('PREVIOUS ATTEMPT FAILED')
     expect(actionPrompts.slice(1)).toEqual(
       expect.not.arrayContaining([
@@ -1425,6 +1428,8 @@ describe('benchmark scoring and prompts', () => {
     ).toHaveLength(5)
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
     expect(patchRequest?.content.match(/feedback:/g)).toHaveLength(5)
+    expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
+    expect(patchRequest?.content).not.toContain('1. Read liberties.')
     expect(redoRequest?.transcript).toEqual([])
     expect(await service.notebooks.readSnapshot(created.id)).toBe(
       '# Life techniques\n\n1. Read every forcing reply before choosing the vital point.\n2. Preserve shape.',

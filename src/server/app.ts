@@ -863,6 +863,13 @@ export function createApp(
       return reply.code(404).send({error: 'Benchmark not found'})
     return store.listBenchmarkNotebookVersions(id)
   })
+  app.get('/api/benchmarks/:id/notebook-seed.md', async (request, reply) => {
+    const id = (request.params as {id: string}).id
+    if (!benchmarks.get(id))
+      return reply.code(404).send({error: 'Benchmark not found'})
+    reply.type('text/markdown; charset=utf-8')
+    return store.getBenchmarkNotebookSeed(id)?.content ?? ''
+  })
   app.get('/api/benchmarks/:id/move-reviews', async (request, reply) => {
     const id = (request.params as {id: string}).id
     if (!benchmarks.get(id))

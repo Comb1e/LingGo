@@ -308,6 +308,8 @@ export const api = {
     request<BenchmarkNotebookVersion[]>(
       `/api/benchmarks/${id}/notebook-versions`,
     ),
+  benchmarkNotebookSeed: (id: string) =>
+    requestText(`/api/benchmarks/${id}/notebook-seed.md`),
   benchmarkMoveReviews: (id: string) =>
     request<BenchmarkMoveReview[]>(`/api/benchmarks/${id}/move-reviews`),
   benchmarkProblemAttempts: (id: string) =>

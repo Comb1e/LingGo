@@ -26,6 +26,7 @@ import {
   StatusBadge,
 } from '../components'
 import {Markdown} from '../Markdown'
+import {NotebookChanges} from '../NotebookChanges'
 
 export function BenchmarkSessionPage() {
   const {id = ''} = useParams()
@@ -50,6 +51,20 @@ export function BenchmarkSessionPage() {
     queryKey: ['benchmark-llm-messages', currentStage?.runId],
     queryFn: () => api.benchmarkLlmMessages(currentStage!.runId!),
     enabled: Boolean(currentStage?.runId),
+  })
+  const showNotebookChanges = Boolean(
+    currentStage?.runId &&
+    ['easy', 'medium', 'hard'].includes(currentStage.stageKey),
+  )
+  const notebookSeed = useQuery({
+    queryKey: ['benchmark-notebook-seed', currentStage?.runId],
+    queryFn: () => api.benchmarkNotebookSeed(currentStage!.runId!),
+    enabled: showNotebookChanges,
+  })
+  const notebookVersions = useQuery({
+    queryKey: ['benchmark-notebook-versions', currentStage?.runId],
+    queryFn: () => api.benchmarkNotebookVersions(currentStage!.runId!),
+    enabled: showNotebookChanges,
   })
   const lifeNotebook = useQuery({
     queryKey: ['benchmark-session-notebook', id, 'life_death'],
@@ -115,6 +130,9 @@ export function BenchmarkSessionPage() {
         })
         void queryClient.invalidateQueries({
           queryKey: ['benchmark-llm-messages', stage.runId],
+        })
+        void queryClient.invalidateQueries({
+          queryKey: ['benchmark-notebook-versions', stage.runId],
         })
       }
     }
@@ -189,7 +207,9 @@ export function BenchmarkSessionPage() {
           publish.error ??
           remove.error ??
           runQuery.error ??
-          llmMessages.error
+          llmMessages.error ??
+          notebookSeed.error ??
+          notebookVersions.error
         }
       />
 
@@ -254,6 +274,14 @@ export function BenchmarkSessionPage() {
             label={t(`stage_${session.currentStage}`)}
           />
         </>
+      )}
+
+      {showNotebookChanges && (
+        <NotebookChanges
+          seed={notebookSeed.data ?? ''}
+          versions={notebookVersions.data ?? []}
+          loading={notebookSeed.isLoading || notebookVersions.isLoading}
+        />
       )}
 
       <div className={`session-notebooks${showOrdinary ? ' two-role' : ''}`}>

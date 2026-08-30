@@ -436,6 +436,38 @@ test('advances a six-stage benchmark session with role notebooks', async ({
       },
     })
   })
+  await page.route('**/api/benchmarks/run-*/notebook-seed.md', (route) =>
+    route.fulfill({
+      contentType: 'text/markdown',
+      body: '# Life notes\n\n1. Read liberties.',
+    }),
+  )
+  await page.route('**/api/benchmarks/run-*/notebook-versions', (route) =>
+    route.fulfill({
+      json: [
+        {
+          runId: `run-${
+            [
+              'life_death_notebook',
+              'easy',
+              'medium',
+              'hard',
+              'ordinary_notebook',
+              'ordinary',
+            ][stageIndex]
+          }`,
+          version: 1,
+          sourcePhase: 'problem_notebook',
+          content: '# Life notes\n\n1. Read forcing replies.',
+          digest: 'digest',
+          characterCount: 37,
+          byteCount: 37,
+          estimatedTokens: 10,
+          createdAt: '2026-08-30T12:00:00.000Z',
+        },
+      ],
+    }),
+  )
   await page.route('**/api/benchmarks', (route) => route.fulfill({json: []}))
 
   await page.goto('/benchmarks')
@@ -465,6 +497,15 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   await page.getByRole('button', {name: 'Continue to next stage'}).click()
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Easy life-and-death',
+  )
+  await expect(page.locator('.notebook-changes')).toContainText(
+    'Notebook changes',
+  )
+  await expect(page.locator('.notebook-note-change')).toContainText(
+    'Read liberties.',
+  )
+  await expect(page.locator('.notebook-note-change')).toContainText(
+    'Read forcing replies.',
   )
   for (const stage of ['Medium life-and-death', 'Hard life-and-death']) {
     await page.getByRole('button', {name: 'Continue to next stage'}).click()

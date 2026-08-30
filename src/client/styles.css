@@ -1192,6 +1192,75 @@ svg {
   display: grid;
   gap: 5px;
 }
+.notebook-changes {
+  margin: 22px 0;
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.notebook-changes > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.notebook-changes > header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.notebook-changes > header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.notebook-change-list {
+  display: grid;
+  gap: 18px;
+}
+.notebook-change-list > article {
+  display: grid;
+  gap: 10px;
+}
+.notebook-change-list > article + article {
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.notebook-change-list > article > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.notebook-change-list time,
+.notebook-note-change span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.notebook-note-change {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.notebook-note-change > strong {
+  padding-top: 9px;
+  font-size: 13px;
+}
+.notebook-note-change > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+  background: var(--surface);
+}
+.notebook-note-change p {
+  margin: 3px 0 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.notebook-note-before {
+  border-left-color: #b6584f;
+}
+.notebook-note-after {
+  border-left-color: #2d7d4b;
+}
 .notebook-role-state {
   color: #2d6d42;
   font-size: 12px;
@@ -2057,6 +2126,12 @@ svg {
   .session-notebooks.two-role,
   .current-stage-summary {
     grid-template-columns: 1fr;
+  }
+  .notebook-note-change {
+    grid-template-columns: 1fr;
+  }
+  .notebook-note-change > strong {
+    padding-top: 0;
   }
   .continue-gate {
     align-items: stretch;

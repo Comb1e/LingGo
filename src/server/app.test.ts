@@ -833,35 +833,48 @@ describe('game API', () => {
 
     const now = new Date().toISOString()
     const profile = store.getProfile('builtin-fake-profile')!
-    store.saveBenchmark({
-      id: 'notebook-user',
-      protocolVersion: 2,
-      status: 'paused',
-      phase: 'training_game',
-      substate: {kind: 'paused', previous: {kind: 'ready'}},
-      config: {
-        profileId: profile.id,
-        finalColor: 'B',
-        trainingGameCount: 1,
-        notebookSeed: {mode: 'refine_existing', notebookId: notebook.id},
-        trainingFeedback: 'none',
-        notebookTokenBudget: 8000,
-        trainingVisits: 25,
-        evaluationVisits: 25,
+    store.saveBenchmarkWithSeed(
+      {
+        id: 'notebook-user',
+        protocolVersion: 2,
+        status: 'paused',
+        phase: 'training_game',
+        substate: {kind: 'paused', previous: {kind: 'ready'}},
+        config: {
+          profileId: profile.id,
+          finalColor: 'B',
+          trainingGameCount: 1,
+          notebookSeed: {mode: 'refine_existing', notebookId: notebook.id},
+          trainingFeedback: 'none',
+          notebookTokenBudget: 8000,
+          trainingVisits: 25,
+          evaluationVisits: 25,
+        },
+        profileSnapshot: profile,
+        modelFingerprint: 'test',
+        kataGoFingerprint: 'katago',
+        currentGame: 0,
+        currentTurn: 0,
+        gameIds: [],
+        usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
+        notebook: {profileId: profile.id, notebookId: notebook.id},
+        notebookVersion: 1,
+        notebookEstimatedTokens: 1,
+        createdAt: now,
+        updatedAt: now,
       },
-      profileSnapshot: profile,
-      modelFingerprint: 'test',
-      kataGoFingerprint: 'katago',
-      currentGame: 0,
-      currentTurn: 0,
-      gameIds: [],
-      usage: {calls: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0},
-      notebook: {profileId: profile.id, notebookId: notebook.id},
-      notebookVersion: 1,
-      notebookEstimatedTokens: 1,
-      createdAt: now,
-      updatedAt: now,
+      {
+        ...store.getNotebook(profile.id, notebook.id)!,
+        content: '# Opening seed',
+      },
+    )
+    const seed = await app.inject({
+      method: 'GET',
+      url: '/api/benchmarks/notebook-user/notebook-seed.md',
     })
+    expect(seed.statusCode).toBe(200)
+    expect(seed.headers['content-type']).toContain('text/markdown')
+    expect(seed.body).toBe('# Opening seed')
     const conflict = await app.inject({
       method: 'DELETE',
       url: `/api/profiles/builtin-fake-profile/notebooks/${notebook.id}`,

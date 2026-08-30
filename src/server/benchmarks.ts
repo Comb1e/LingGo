@@ -1447,8 +1447,6 @@ export class BenchmarkService {
         'Update the technique notebook after this life-and-death problem attempt.',
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'Use the complete solving conversation in this context, including every failed answer and its feedback, to choose the most useful existing note to improve.',
-        'PRIOR NOTEBOOK',
-        prior,
         'PROBLEM',
         asciiBoard(problem.snapshot),
         `MODEL ANSWER: ${pending.actions?.length ? JSON.stringify(pending.actions) : pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,

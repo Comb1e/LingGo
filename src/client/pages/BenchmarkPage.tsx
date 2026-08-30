@@ -24,6 +24,7 @@ import {
   StatusBadge,
 } from '../components'
 import {Markdown} from '../Markdown'
+import {NotebookChanges} from '../NotebookChanges'
 
 export function BenchmarkPage() {
   const {id = ''} = useParams()
@@ -39,6 +40,16 @@ export function BenchmarkPage() {
     queryKey: ['benchmark-notebook', id],
     queryFn: () => api.benchmarkNotebook(id),
     enabled: Boolean(id),
+  })
+  const notebookSeed = useQuery({
+    queryKey: ['benchmark-notebook-seed', id],
+    queryFn: () => api.benchmarkNotebookSeed(id),
+    enabled: Boolean(id && query.data?.config.problemSetId),
+  })
+  const notebookVersions = useQuery({
+    queryKey: ['benchmark-notebook-versions', id],
+    queryFn: () => api.benchmarkNotebookVersions(id),
+    enabled: Boolean(id && query.data?.config.problemSetId),
   })
   const lifeNotebook = useQuery({
     queryKey: [
@@ -104,6 +115,10 @@ export function BenchmarkPage() {
       if (run.config.problemSetId)
         void queryClient.invalidateQueries({
           queryKey: ['benchmark-current-problem', id],
+        })
+      if (run.config.problemSetId)
+        void queryClient.invalidateQueries({
+          queryKey: ['benchmark-notebook-versions', id],
         })
       void queryClient.invalidateQueries({
         queryKey: ['benchmark-llm-messages', id],
@@ -186,7 +201,14 @@ export function BenchmarkPage() {
         }
       />
       <ErrorBanner
-        error={command.error ?? publish.error ?? remove.error ?? query.error}
+        error={
+          command.error ??
+          publish.error ??
+          remove.error ??
+          query.error ??
+          notebookSeed.error ??
+          notebookVersions.error
+        }
       />
       {run.error && <div className="banner warning-banner">{run.error}</div>}
       <section className="benchmark-progress">
@@ -481,6 +503,13 @@ export function BenchmarkPage() {
           </section>
         )}
       </div>
+      {run.config.problemSetId && (
+        <NotebookChanges
+          seed={notebookSeed.data ?? ''}
+          versions={notebookVersions.data ?? []}
+          loading={notebookSeed.isLoading || notebookVersions.isLoading}
+        />
+      )}
     </div>
   )
 }
