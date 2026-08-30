@@ -1267,13 +1267,18 @@ export class GameService {
     if (prepared.request.output === 'notebook') {
       if (!adapter.requestText)
         throw new Error('The selected provider cannot create reflections')
-      const result = await adapter.requestText(prepared.request.content, signal)
+      const result = await adapter.requestText(
+        prepared.request.content,
+        signal,
+        prepared.request.cacheKey,
+      )
       return {...result, providerKind: prepared.context.providerKind}
     }
     const result = await adapter.requestAction(
       prepared.snapshot,
       signal,
       prepared.request.content,
+      prepared.request.cacheKey,
     )
     return {
       text:

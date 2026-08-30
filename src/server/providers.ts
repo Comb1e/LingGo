@@ -76,6 +76,7 @@ export interface PlayerAdapter {
     snapshot: GameSnapshot,
     signal: AbortSignal,
     promptOverride?: string,
+    cacheKey?: string,
   ): Promise<LlmActionResult>
   requestTurn?(
     request: LlmTurnRequest,
@@ -84,6 +85,7 @@ export interface PlayerAdapter {
   requestText?(
     prompt: string,
     signal: AbortSignal,
+    cacheKey?: string,
   ): Promise<{
     text: string
     latencyMs: number
@@ -211,10 +213,12 @@ export class FakePlayerAdapter implements PlayerAdapter {
     snapshot: GameSnapshot,
     signal: AbortSignal,
     promptOverride?: string,
+    _cacheKey?: string,
   ): Promise<LlmActionResult> {
     signal.throwIfAborted()
     const started = Date.now()
     void promptOverride
+    void _cacheKey
     const action = this.fakeAction(snapshot)
     return {
       action,
@@ -278,6 +282,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     snapshot: GameSnapshot,
     signal: AbortSignal,
     promptOverride?: string,
+    cacheKey?: string,
   ): Promise<LlmActionResult> {
     const started = Date.now()
     const prompt =
@@ -285,7 +290,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     const result =
       this.connection.kind === 'deepseek'
         ? await this.requestDeepSeek(prompt, signal)
-        : await this.requestActionWithSdk(prompt, signal)
+        : await this.requestActionWithSdk(prompt, signal, cacheKey)
     const parsed = parseJsonActionResult(result.text, snapshot.size)
     return {
       ...parsed,
@@ -330,7 +335,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     }
   }
 
-  async requestText(prompt: string, signal: AbortSignal) {
+  async requestText(prompt: string, signal: AbortSignal, cacheKey?: string) {
     const started = Date.now()
     const result =
       this.connection.kind === 'deepseek'
@@ -340,6 +345,11 @@ export class LlmPlayerAdapter implements PlayerAdapter {
               model: this.createModel(),
               prompt,
               temperature: this.temperature(),
+              providerOptions: providerTurnOptions(
+                this.connection.kind,
+                undefined,
+                cacheKey,
+              ) as any,
               maxRetries: 0,
               abortSignal: signal,
               timeout: {totalMs: this.timeoutMs},
@@ -356,11 +366,15 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     }
   }
 
-  private requestActionWithSdk(prompt: string, signal: AbortSignal) {
+  private requestActionWithSdk(
+    prompt: string,
+    signal: AbortSignal,
+    cacheKey?: string,
+  ) {
     return this.requestWithSdk(
       [{role: 'user', content: prompt}],
       undefined,
-      undefined,
+      cacheKey,
       signal,
     )
   }

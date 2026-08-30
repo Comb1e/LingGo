@@ -18,6 +18,7 @@ import type {
   BenchmarkStageKey,
   BenchmarkNotebookRole,
   LlmMessageSet,
+  GameSnapshot,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
@@ -48,7 +49,7 @@ import {
   listProblemSets,
   loadProblemSet,
   problemView,
-  scoreProblemAction,
+  scoreProblemSequence,
   type BenchmarkProblem,
 } from './benchmarkProblems'
 import {
@@ -85,6 +86,16 @@ type InternalRun = BenchmarkRun & {
     promptDigest: string
     responseDigest?: string
     notebookVersionBefore: number
+    actions?: PlayerAction[]
+    step?: number
+  }
+  problemProgress?: {
+    problemId: string
+    cursor: number
+    actions: PlayerAction[]
+    step: number
+    lastFailureAction?: PlayerAction
+    lastFailureReason?: string
   }
 }
 
@@ -1224,17 +1235,57 @@ export class BenchmarkService {
           this.save(run)
           return false
         }
-        let failureFeedback: string | undefined
-        let lastFailureAction: PlayerAction | undefined
-        let lastFailureReason: string | undefined
+        const progress =
+          run.problemProgress?.problemId === problem.id &&
+          run.problemProgress.cursor === cursor
+            ? run.problemProgress
+            : {
+                problemId: problem.id,
+                cursor,
+                actions: [],
+                step: 0,
+              }
+        run.problemProgress = progress
+        let failureFeedback = progress.lastFailureReason
+          ? [
+              `Your previous action was ${progress.lastFailureAction ? JSON.stringify(progress.lastFailureAction) : 'missing or malformed'}.`,
+              `It failed because: ${progress.lastFailureReason}.`,
+              'Return one corrected JSON action for the unchanged current problem position.',
+            ].join(' ')
+          : undefined
+        let lastFailureAction = progress.lastFailureAction
+        let lastFailureReason = progress.lastFailureReason
         for (
           let responseAttempt = 0;
           responseAttempt < MAX_LIFE_DEATH_PROBLEM_ATTEMPTS;
           responseAttempt += 1
         ) {
-          const notebook = await this.runNotebook(run.id)
+          const currentSnapshot = problemSnapshotAt(problem, progress.actions)
+          const expectedAction = problem.solution[progress.step]
+          const firstResponse =
+            progress.actions.length === 0 && !progress.lastFailureReason
+          if (!expectedAction) {
+            run.pendingProblem = {
+              problemId: problem.id,
+              cursor,
+              actualAction: progress.actions.at(-1),
+              legal: true,
+              correct: true,
+              promptDigest: '',
+              notebookVersionBefore: run.notebookVersion,
+              actions: progress.actions,
+              step: progress.step,
+            }
+            break
+          }
+          const notebook =
+            !progress.actions.length && !failureFeedback
+              ? await this.runNotebook(run.id)
+              : ''
           const prompt = [
-            'Solve the life-and-death Go problem. Use exactly one legal action.',
+            progress.actions.length
+              ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
+              : 'Solve the life-and-death Go problem. Use exactly one legal action.',
             'OUTPUT JSON SCHEMA',
             '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
             'Return exactly one JSON action object and no other fields or prose.',
@@ -1242,24 +1293,23 @@ export class BenchmarkService {
               ? ['', 'PREVIOUS ATTEMPT FAILED', failureFeedback]
               : []),
             'CURRENT PROBLEM',
-            `Expected side to move: ${problem.sideToMove}`,
-            `Captures: Black ${problem.snapshot.captures.B}, White ${problem.snapshot.captures.W}.`,
-            asciiBoard(problem.snapshot),
+            `Expected side to move: ${currentSnapshot.toMove}`,
+            `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
+            asciiBoard(currentSnapshot),
             'Move list:',
-            problem.snapshot.moves.length
-              ? problem.snapshot.moves
+            progress.actions.length
+              ? progress.actions
                   .map(
-                    (move) =>
-                      `${move.number}. ${move.color} ${move.coordinate ?? move.action}`,
+                    (move, index) =>
+                      `${index + 1}. ${index % 2 === 0 ? problem.sideToMove : problem.sideToMove === 'B' ? 'W' : 'B'} ${move.action === 'play' ? move.coordinate : move.action}`,
                   )
                   .join('\n')
               : '(none)',
-            '',
-            'SELF-WRITTEN SKILLS',
-            notebook,
+            ...(notebook ? ['', 'SELF-WRITTEN SKILLS', notebook] : []),
           ].join('\n')
           const digest = createHash('sha256').update(prompt).digest('hex')
-          if (responseAttempt === 0) this.clearProblemContext(run)
+          if (responseAttempt === 0 && !progress.actions.length)
+            this.clearProblemContext(run)
           let actual: PlayerAction | undefined
           let responseDigest: string | undefined
           let failureReason: string | undefined
@@ -1269,8 +1319,9 @@ export class BenchmarkService {
             const response = await this.requestProblemAction(
               run,
               adapter,
-              problem,
+              currentSnapshot,
               prompt,
+              `linggo:benchmark:${run.id}:problem:${problem.id}`,
               signal,
             )
             addUsage(run, response, 'solving_problem')
@@ -1278,14 +1329,23 @@ export class BenchmarkService {
             responseDigest = createHash('sha256')
               .update(response.responseContent ?? JSON.stringify(actual))
               .digest('hex')
-            const score = scoreProblemAction(
-              actual,
-              problem.expected as PlayerAction,
+            const sequence = [...progress.actions, ...(actual ? [actual] : [])]
+            const score = scoreProblemSequence(
+              sequence,
+              problem.solution,
               problem.snapshot,
             )
             legal = score.legal
             correct = score.correct
             failureReason = score.reason
+            if (correct) {
+              progress.actions.push(actual!)
+              progress.step = progress.actions.length
+              progress.lastFailureAction = undefined
+              progress.lastFailureReason = undefined
+              run.problemProgress = progress
+              this.save(run)
+            }
           } catch (error) {
             if (signal.aborted) throw error
             failureReason =
@@ -1298,10 +1358,10 @@ export class BenchmarkService {
             problemId: problem.id,
             cursor,
             actualAction: actual,
-            expectedAction: problem.expected as PlayerAction,
+            expectedAction,
             legal,
             correct,
-            firstResponse: responseAttempt === 0,
+            firstResponse,
             failureReason,
             notebookVersionBefore: run.notebookVersion,
             promptDigest: digest,
@@ -1309,29 +1369,40 @@ export class BenchmarkService {
             createdAt: new Date().toISOString(),
           }
           this.store.saveBenchmarkProblemAttempt(attempt)
-          if (correct) {
+          if (correct && progress.step >= problem.solution.length) {
             run.problemSuccessStreak = (run.problemSuccessStreak ?? 0) + 1
             run.pendingProblem = {
               problemId: problem.id,
               cursor,
               actualAction: actual,
               legal,
-              correct,
+              correct: true,
               failureReason,
               promptDigest: digest,
               responseDigest,
               notebookVersionBefore: run.notebookVersion,
+              actions: progress.actions,
+              step: progress.step,
             }
+            run.problemProgress = undefined
             this.save(run)
             break
+          }
+          if (correct) {
+            failureFeedback = undefined
+            responseAttempt = -1
+            continue
           }
           run.problemSuccessStreak = 0
           lastFailureAction = actual
           lastFailureReason = failureReason
+          progress.lastFailureAction = actual
+          progress.lastFailureReason = failureReason
+          run.problemProgress = progress
           failureFeedback = [
             `Your previous action was ${actual ? JSON.stringify(actual) : 'missing or malformed'}.`,
             `It failed because: ${failureReason ?? 'the action was incorrect'}.`,
-            'Solve the original problem again from the unchanged position and return one corrected JSON action.',
+            'Return one corrected JSON action for the unchanged current problem position.',
           ].join(' ')
           this.save(run)
         }
@@ -1345,7 +1416,10 @@ export class BenchmarkService {
             failureReason: lastFailureReason ?? failureFeedback,
             promptDigest: '',
             notebookVersionBefore: run.notebookVersion,
+            actions: progress.actions,
+            step: progress.step,
           }
+          run.problemProgress = undefined
           this.save(run)
         }
       }
@@ -1359,8 +1433,8 @@ export class BenchmarkService {
         prior,
         'PROBLEM',
         asciiBoard(problem.snapshot),
-        `MODEL ANSWER: ${pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
-        `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.expected)}`,
+        `MODEL ANSWER: ${pending.actions?.length ? JSON.stringify(pending.actions) : pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
+        `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.solution)}`,
         'Return only numbered point edits in the form N. concise lesson.',
         'Replace an existing point by its number or add a new point number. Do not rewrite or repeat unchanged points.',
       ].join('\n')
@@ -1385,6 +1459,7 @@ export class BenchmarkService {
       run.notebook.updatedAt = version.createdAt
       const solved = pending.correct
       run.pendingProblem = undefined
+      run.problemProgress = undefined
       run.problemCursor = solved ? (cursor + 1) % required : cursor
       this.store.saveBenchmarkNotebookVersion(run, version)
       await this.notebooks.writeRunSnapshot(run.id, content)
@@ -1428,8 +1503,9 @@ export class BenchmarkService {
   private async requestProblemAction(
     run: InternalRun,
     adapter: ReturnType<BenchmarkService['adapter']> & {},
-    problem: BenchmarkProblem,
+    snapshot: GameSnapshot,
     prompt: string,
+    cacheKey: string,
     signal: AbortSignal,
   ) {
     this.recordLlmRequest(run, prompt)
@@ -1453,9 +1529,10 @@ export class BenchmarkService {
       this.save(run)
       try {
         const response = await adapter.requestAction(
-          problem.snapshot,
+          snapshot,
           signal,
           prompt,
+          cacheKey,
         )
         this.recordLlmResponse(run, response.responseContent)
         return response
@@ -1738,7 +1815,11 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        const response = await adapter.requestText(prompt, signal)
+        const response = await adapter.requestText(
+          prompt,
+          signal,
+          `linggo:benchmark:${run.id}:notebook:${operation}`,
+        )
         this.recordLlmResponse(run, response.text)
         return response
       } catch (error) {
@@ -2094,6 +2175,65 @@ function notebookVersion(
 function scoreLeadResult(lead: number) {
   if (Math.abs(lead) < 0.05) return 'Draw'
   return `${lead > 0 ? 'B' : 'W'}+${Math.abs(lead).toFixed(1)}`
+}
+
+function problemSnapshotAt(
+  problem: BenchmarkProblem,
+  actions: PlayerAction[],
+): GameSnapshot {
+  if (!actions.length) return problem.snapshot
+  const result = scoreProblemSequence(
+    actions,
+    problem.solution,
+    problem.snapshot,
+  )
+  let toMove = problem.snapshot.toMove
+  for (const action of actions)
+    if (action.action !== 'resign') toMove = toMove === 'B' ? 'W' : 'B'
+  const initialCounts = countStones(problem.snapshot.board)
+  const currentCounts = countStones(result.board ?? problem.snapshot.board)
+  const played = {B: 0, W: 0}
+  actions.forEach((action, index) => {
+    if (action.action !== 'resign')
+      played[
+        index % 2 === 0
+          ? problem.snapshot.toMove
+          : problem.snapshot.toMove === 'B'
+            ? 'W'
+            : 'B'
+      ] += 1
+  })
+  return {
+    ...problem.snapshot,
+    board: result.board ?? problem.snapshot.board,
+    toMove,
+    moves: [],
+    captures: {
+      B:
+        problem.snapshot.captures.B +
+        initialCounts.W +
+        played.W -
+        currentCounts.W,
+      W:
+        problem.snapshot.captures.W +
+        initialCounts.B +
+        played.B -
+        currentCounts.B,
+    },
+  }
+}
+
+function countStones(board: number[][]) {
+  return board.reduce(
+    (counts, row) => {
+      for (const stone of row) {
+        if (stone === 1) counts.B += 1
+        if (stone === 2) counts.W += 1
+      }
+      return counts
+    },
+    {B: 0, W: 0},
+  )
 }
 
 export function reviewCandidate(result: {moveInfos?: Array<{move: string}>}) {
