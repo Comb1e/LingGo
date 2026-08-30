@@ -205,6 +205,8 @@ const resources = {
       benchmarkRuns: 'Benchmark runs',
       noBenchmarks: 'No benchmark runs yet',
       deleteBenchmarkConfirm: 'Delete this benchmark and all linked games?',
+      deleteBenchmarkSessionConfirm:
+        'Delete this benchmark session and all linked runs and games?',
       pauseBenchmark: 'Pause benchmark',
       resumeBenchmark: 'Resume benchmark',
       queued: 'Queued',
@@ -505,6 +507,8 @@ const resources = {
       benchmarkRuns: '测试记录',
       noBenchmarks: '暂无基准测试',
       deleteBenchmarkConfirm: '要删除此测试及其所有关联对局吗？',
+      deleteBenchmarkSessionConfirm:
+        '要删除此基准测试会话及其所有关联测试和对局吗？',
       pauseBenchmark: '暂停基准测试',
       resumeBenchmark: '继续基准测试',
       queued: '排队中',

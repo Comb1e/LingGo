@@ -327,6 +327,7 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   const ordinaryNotebook = await ordinaryResponse.json()
   let stageIndex = 0
   let ordinaryAttempt = 1
+  let sessionDeleted = false
   const sessionValue = () =>
     mockedSession(
       lifeNotebook.id,
@@ -338,6 +339,13 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await page.route('**/api/benchmark-sessions**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
+    if (
+      path === '/api/benchmark-sessions/mock-session' &&
+      route.request().method() === 'DELETE'
+    ) {
+      sessionDeleted = true
+      return route.fulfill({json: {ok: true}})
+    }
     if (path.endsWith('/notebooks/life-death.md'))
       return route.fulfill({
         contentType: 'text/markdown',
@@ -436,6 +444,10 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await expect(page.locator('.session-notebook-panel a[download]')).toHaveCount(
     2,
   )
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByTitle('Delete').click()
+  await expect(page).toHaveURL(/\/benchmarks$/)
+  expect(sessionDeleted).toBe(true)
 })
 
 function mockedSession(

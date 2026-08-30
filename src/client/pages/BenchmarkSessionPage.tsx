@@ -5,11 +5,12 @@ import {
   Play,
   RotateCcw,
   SkipForward,
+  Trash2,
   XCircle,
 } from 'lucide-react'
 import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
-import {Link, useParams} from 'react-router-dom'
+import {Link, useNavigate, useParams} from 'react-router-dom'
 import type {
   BenchmarkNotebookRole,
   BenchmarkSession,
@@ -28,6 +29,7 @@ import {Markdown} from '../Markdown'
 export function BenchmarkSessionPage() {
   const {id = ''} = useParams()
   const {t} = useTranslation()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const sessionQuery = useQuery({
     queryKey: ['benchmark-session', id],
@@ -76,6 +78,15 @@ export function BenchmarkSessionPage() {
       queryClient.invalidateQueries({
         queryKey: ['notebooks', session?.profileId],
       }),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.deleteBenchmarkSession(id),
+    onSuccess: () => {
+      queryClient.removeQueries({queryKey: ['benchmark-session', id]})
+      void queryClient.invalidateQueries({queryKey: ['benchmark-sessions']})
+      void queryClient.invalidateQueries({queryKey: ['benchmarks']})
+      navigate('/benchmarks')
+    },
   })
 
   useEffect(() => {
@@ -146,10 +157,23 @@ export function BenchmarkSessionPage() {
                 {t('cancel')}
               </Button>
             )}
+            <Button
+              className="icon-button danger-quiet"
+              title={t('delete')}
+              disabled={remove.isPending}
+              onClick={() => {
+                if (window.confirm(t('deleteBenchmarkSessionConfirm')))
+                  remove.mutate()
+              }}
+            >
+              <Trash2 />
+            </Button>
           </>
         }
       />
-      <ErrorBanner error={action.error ?? publish.error ?? runQuery.error} />
+      <ErrorBanner
+        error={action.error ?? publish.error ?? remove.error ?? runQuery.error}
+      />
 
       <section className="session-stage-band">
         {session.stages.map((stage, index) => (
