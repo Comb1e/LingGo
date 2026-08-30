@@ -1314,6 +1314,9 @@ export class BenchmarkService {
                 'The previous attempt failed.',
                 `Reason: ${failureFeedback}`,
                 'Redo the problem from this current position.',
+                'OUTPUT JSON SCHEMA',
+                '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
+                'Return exactly one JSON action object and no other fields or prose.',
                 ...position,
               ].join('\n')
             : [

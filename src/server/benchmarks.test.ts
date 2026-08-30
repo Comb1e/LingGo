@@ -1336,7 +1336,10 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[1]).toContain(
       'Redo the problem from this current position.',
     )
-    expect(actionPrompts[1]).not.toContain('OUTPUT JSON SCHEMA')
+    expect(actionPrompts[1]).toContain('OUTPUT JSON SCHEMA')
+    expect(actionPrompts[1]).toContain(
+      '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
+    )
     expect(actionPrompts[1]).not.toContain('Your previous action was')
     expect(actionPrompts[1]).not.toContain('Move list:')
     expect(actionPrompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
