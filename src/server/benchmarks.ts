@@ -144,6 +144,7 @@ const LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION = [
   '  "additionalProperties": {"type": "string", "minLength": 1}',
   '}',
   'Return exactly one JSON object matching this schema and no other text.',
+  'You may edit multiple notes in one response when the attempt supports more than one independent lesson; include every supported edit in the same JSON object.',
   'Each key must be the number of an existing notebook note to replace, or a new positive integer note number to add.',
   "Each value must be the note's complete content without the leading number and period.",
   'Choose the existing note that is least perfect or is flawed according to the attempt, and improve only the lesson supported by the evidence; do not default to note 1.',
@@ -1270,11 +1271,7 @@ export class BenchmarkService {
               }
         run.problemProgress = progress
         let failureFeedback = progress.lastFailureReason
-          ? [
-              `Your previous action was ${progress.lastFailureAction ? JSON.stringify(progress.lastFailureAction) : 'missing or malformed'}.`,
-              `It failed because: ${progress.lastFailureReason}.`,
-              'Return one corrected JSON action for the unchanged current problem position.',
-            ].join(' ')
+          ? progress.lastFailureReason
           : undefined
         let lastFailureAction = progress.lastFailureAction
         let lastFailureReason = progress.lastFailureReason
@@ -1301,35 +1298,43 @@ export class BenchmarkService {
             }
             break
           }
+          const retry = Boolean(failureFeedback)
           const notebook =
-            !progress.actions.length && !failureFeedback
+            !progress.actions.length && !retry
               ? await this.runNotebook(run.id)
               : ''
-          const prompt = [
-            progress.actions.length
-              ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
-              : 'Solve the life-and-death Go problem. Use exactly one legal action.',
-            'OUTPUT JSON SCHEMA',
-            '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
-            'Return exactly one JSON action object and no other fields or prose.',
-            ...(failureFeedback
-              ? ['', 'PREVIOUS ATTEMPT FAILED', failureFeedback]
-              : []),
-            ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
-            'CURRENT PROBLEM',
+          const position = [
+            'CURRENT BOARD',
             `Expected side to move: ${currentSnapshot.toMove}`,
             `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
             asciiBoard(currentSnapshot),
-            'Move list:',
-            progress.actions.length
-              ? progress.actions
-                  .map(
-                    (move, index) =>
-                      `${index + 1}. ${index % 2 === 0 ? problem.sideToMove : problem.sideToMove === 'B' ? 'W' : 'B'} ${move.action === 'play' ? move.coordinate : move.action}`,
-                  )
-                  .join('\n')
-              : '(none)',
-          ].join('\n')
+          ]
+          const prompt = retry
+            ? [
+                'The previous attempt failed.',
+                `Reason: ${failureFeedback}`,
+                'Redo the problem from this current position.',
+                ...position,
+              ].join('\n')
+            : [
+                progress.actions.length
+                  ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
+                  : 'Solve the life-and-death Go problem. Use exactly one legal action.',
+                'OUTPUT JSON SCHEMA',
+                '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
+                'Return exactly one JSON action object and no other fields or prose.',
+                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
+                ...position,
+                'Move list:',
+                progress.actions.length
+                  ? progress.actions
+                      .map(
+                        (move, index) =>
+                          `${index + 1}. ${index % 2 === 0 ? problem.sideToMove : problem.sideToMove === 'B' ? 'W' : 'B'} ${move.action === 'play' ? move.coordinate : move.action}`,
+                      )
+                      .join('\n')
+                  : '(none)',
+              ].join('\n')
           const digest = createHash('sha256').update(prompt).digest('hex')
           if (responseAttempt === 0 && !progress.actions.length)
             this.clearProblemContext(run)
@@ -1346,6 +1351,7 @@ export class BenchmarkService {
               prompt,
               `linggo:benchmark:${run.id}:problem:${problem.id}`,
               signal,
+              retry ? [] : undefined,
             )
             addUsage(run, response, 'solving_problem')
             actual = response.action
@@ -1422,11 +1428,7 @@ export class BenchmarkService {
           progress.lastFailureAction = actual
           progress.lastFailureReason = failureReason
           run.problemProgress = progress
-          failureFeedback = [
-            `Your previous action was ${actual ? JSON.stringify(actual) : 'missing or malformed'}.`,
-            `It failed because: ${failureReason ?? 'the action was incorrect'}.`,
-            'Return one corrected JSON action for the unchanged current problem position.',
-          ].join(' ')
+          failureFeedback = failureReason ?? 'the action was incorrect'
           this.save(run)
         }
         if (!run.pendingProblem) {
@@ -1465,17 +1467,16 @@ export class BenchmarkService {
           ? 'UPDATE TRIGGER: SUCCESS. The complete problem solution was correct.'
           : `UPDATE TRIGGER: FAILED_AFTER_${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS}_ATTEMPTS. The problem was not solved after ${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS} attempts.`,
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
-        'Use the complete solving conversation in this context, including every failed answer and its feedback, to choose the most useful existing note to improve.',
+        'Use the current problem position and failure feedback to choose the most useful existing note to improve.',
         'PROBLEM',
         asciiBoard(problem.snapshot),
-        `MODEL ANSWER: ${pending.actions?.length ? JSON.stringify(pending.actions) : pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
-        `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.solution)}`,
+        `RESULT: ${pending.correct ? 'solved' : 'not solved'}`,
         ...(failedAttempts.length
           ? [
               'FAILED ATTEMPTS',
               ...failedAttempts.map(
                 (attempt, index) =>
-                  `${index + 1}. Answer ${attempt.actualAction ? JSON.stringify(attempt.actualAction) : '(malformed)'}; feedback: ${attempt.failureReason ?? 'incorrect'}`,
+                  `${index + 1}. Feedback: ${attempt.failureReason ?? 'incorrect'}`,
               ),
             ]
           : []),
@@ -1550,8 +1551,9 @@ export class BenchmarkService {
     prompt: string,
     cacheKey: string,
     signal: AbortSignal,
+    transcriptOverride?: VisibleLlmMessage[],
   ) {
-    const transcript = completedLlmTranscript(run)
+    const transcript = transcriptOverride ?? completedLlmTranscript(run)
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
@@ -1773,6 +1775,7 @@ export class BenchmarkService {
         {
           snapshot,
           cacheKey: `linggo:benchmark:${run.id}:problem:${run.currentProblemId}`,
+          includeTranscript: false,
         },
       )
       addUsage(run, response, 'updating_problem_notebook')
@@ -1907,13 +1910,20 @@ export class BenchmarkService {
     operation:
       'initialize' | 'compress' | 'review' | 'problem' | 'problem_notebook',
     signal: AbortSignal,
-    context?: {snapshot: GameSnapshot; cacheKey: string},
+    context?: {
+      snapshot: GameSnapshot
+      cacheKey: string
+      includeTranscript?: boolean
+    },
   ) {
     if (!adapter.requestText && !(context && adapter.requestTurn))
       throw new Error(
         'The benchmark provider does not support notebook generation',
       )
-    const transcript = context ? completedLlmTranscript(run) : []
+    const transcript =
+      context && context.includeTranscript !== false
+        ? completedLlmTranscript(run)
+        : []
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {

@@ -70,6 +70,12 @@ describe('benchmark scoring and prompts', () => {
     expect(applyLifeDeathNotebookPatch(prior, '{"3":"New note."}')).toBe(
       '# Life notes\n\n1. Read liberties.\n2. Keep shape.\n3. New note.',
     )
+    expect(
+      applyLifeDeathNotebookPatch(
+        prior,
+        '{"1":"Read forcing replies.","2":"Preserve eye shape."}',
+      ),
+    ).toBe('# Life notes\n\n1. Read forcing replies.\n2. Preserve eye shape.')
   })
 
   it('applies all point-loss score bands and combines result equally', () => {
@@ -1325,9 +1331,16 @@ describe('benchmark scoring and prompts', () => {
     expect(solvingPrompt).not.toContain('X = Black')
     expect(solvingPrompt).not.toContain('O = White')
     expect(solvingPrompt).not.toContain('. = empty')
-    expect(actionPrompts[1]).toContain('PREVIOUS ATTEMPT FAILED')
+    expect(actionPrompts[1]).toContain('The previous attempt failed.')
+    expect(actionPrompts[1]).toContain('Reason:')
+    expect(actionPrompts[1]).toContain(
+      'Redo the problem from this current position.',
+    )
+    expect(actionPrompts[1]).not.toContain('OUTPUT JSON SCHEMA')
+    expect(actionPrompts[1]).not.toContain('Your previous action was')
+    expect(actionPrompts[1]).not.toContain('Move list:')
     expect(actionPrompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
-      actionPrompts[0].indexOf('CURRENT PROBLEM'),
+      actionPrompts[0].indexOf('CURRENT BOARD'),
     )
     expect(actionPrompts.slice(1)).toEqual(
       expect.not.arrayContaining([
@@ -1425,16 +1438,16 @@ describe('benchmark scoring and prompts', () => {
     await redoReady.promise
     expect(actionCalls).toBe(6)
     expect(service.problemAttempts(created.id)).toHaveLength(5)
-    expect(patchRequest?.transcript).toHaveLength(10)
-    expect(
-      patchRequest?.transcript.filter(({role}) => role === 'assistant'),
-    ).toHaveLength(5)
+    expect(patchRequest?.transcript).toEqual([])
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
-    expect(patchRequest?.content.match(/feedback:/g)).toHaveLength(5)
+    expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(5)
     expect(patchRequest?.content).toContain(
       'UPDATE TRIGGER: FAILED_AFTER_5_ATTEMPTS',
     )
     expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+    expect(patchRequest?.content).toContain(
+      'You may edit multiple notes in one response',
+    )
     expect(patchRequest?.content).toContain('"minProperties": 1')
     expect(patchRequest?.content).toContain(
       'or a new positive integer note number to add.',
@@ -1451,6 +1464,7 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
     expect(patchRequest?.content).not.toContain('1. Read liberties.')
+    expect(patchRequest?.content).not.toContain('MODEL ANSWER')
     expect(redoRequest?.transcript).toEqual([])
     expect(await service.notebooks.readSnapshot(created.id)).toBe(
       '# Life techniques\n\n1. Read every forcing reply before choosing the vital point.\n2. Preserve shape.',
@@ -1530,7 +1544,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts).toHaveLength(problem.solution.length)
     expect(prompts[0]).toContain('SELF-WRITTEN SKILLS')
     expect(prompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
-      prompts[0].indexOf('CURRENT PROBLEM'),
+      prompts[0].indexOf('CURRENT BOARD'),
     )
     expect(
       prompts
