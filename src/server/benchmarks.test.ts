@@ -1133,6 +1133,15 @@ describe('benchmark scoring and prompts', () => {
       phase: 'initializing_notebook',
       gameIds: [],
     })
+    expect(service.llmMessageSets(created.id)[0].messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining(
+          'Write a complete Markdown Go technique notebook',
+        ),
+        pending: true,
+      }),
+    ])
     const moveRules = makeInitialLlmPrompt(makeSnapshot(19, 7.5, []), {
       kind: 'benchmark',
       phase: 'training',
@@ -1170,6 +1179,12 @@ describe('benchmark scoring and prompts', () => {
       '# Original source',
     )
     const run = service.get(created.id)!
+    expect(service.llmMessageSets(created.id)[0].messages.at(-1)).toMatchObject(
+      {
+        role: 'assistant',
+        content: '# Learned notebook',
+      },
+    )
     expect(run.usage.byPhase?.initializing_notebook?.calls).toBe(1)
     expect(run.usage.byPhase?.reviewing_game?.calls).toBe(1)
     expect(store.listBenchmarkMoveReviews(created.id)).toHaveLength(2)

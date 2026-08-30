@@ -17,6 +17,7 @@ import type {
   BenchmarkSessionStage,
 } from '../../shared/types'
 import {api} from '../api'
+import {BenchmarkLlmMessageInspector} from '../BenchmarkLlmMessageInspector'
 import {
   Button,
   ErrorBanner,
@@ -43,6 +44,11 @@ export function BenchmarkSessionPage() {
   const runQuery = useQuery({
     queryKey: ['benchmark', currentStage?.runId],
     queryFn: () => api.benchmark(currentStage!.runId!),
+    enabled: Boolean(currentStage?.runId),
+  })
+  const llmMessages = useQuery({
+    queryKey: ['benchmark-llm-messages', currentStage?.runId],
+    queryFn: () => api.benchmarkLlmMessages(currentStage!.runId!),
     enabled: Boolean(currentStage?.runId),
   })
   const lifeNotebook = useQuery({
@@ -103,10 +109,14 @@ export function BenchmarkSessionPage() {
       const stage = next.stages.find(
         ({stageKey}) => stageKey === next.currentStage,
       )
-      if (stage?.runId)
+      if (stage?.runId) {
         void queryClient.invalidateQueries({
           queryKey: ['benchmark', stage.runId],
         })
+        void queryClient.invalidateQueries({
+          queryKey: ['benchmark-llm-messages', stage.runId],
+        })
+      }
     }
     return () => events.close()
   }, [id, queryClient])
@@ -172,7 +182,13 @@ export function BenchmarkSessionPage() {
         }
       />
       <ErrorBanner
-        error={action.error ?? publish.error ?? remove.error ?? runQuery.error}
+        error={
+          action.error ??
+          publish.error ??
+          remove.error ??
+          runQuery.error ??
+          llmMessages.error
+        }
       />
 
       <section className="session-stage-band">
@@ -209,23 +225,30 @@ export function BenchmarkSessionPage() {
         )}
 
       {run && (
-        <section className="current-stage-summary">
-          <div>
-            <span>{t('currentStage')}</span>
-            <strong>{t(`stage_${session.currentStage}`)}</strong>
-          </div>
-          <div>
-            <span>{t('phase')}</span>
-            <strong>{t(run.phase)}</strong>
-          </div>
-          <div>
-            <span>{t('notebookVersion')}</span>
-            <strong>v{run.notebookVersion}</strong>
-          </div>
-          <Link className="button" to={`/benchmarks/${run.id}`}>
-            {t('openChildRun')}
-          </Link>
-        </section>
+        <>
+          <section className="current-stage-summary">
+            <div>
+              <span>{t('currentStage')}</span>
+              <strong>{t(`stage_${session.currentStage}`)}</strong>
+            </div>
+            <div>
+              <span>{t('phase')}</span>
+              <strong>{t(run.phase)}</strong>
+            </div>
+            <div>
+              <span>{t('notebookVersion')}</span>
+              <strong>v{run.notebookVersion}</strong>
+            </div>
+            <Link className="button" to={`/benchmarks/${run.id}`}>
+              {t('openChildRun')}
+            </Link>
+          </section>
+          <BenchmarkLlmMessageInspector
+            sets={llmMessages.data ?? []}
+            loading={llmMessages.isLoading}
+            label={t(`stage_${session.currentStage}`)}
+          />
+        </>
       )}
 
       <div className={`session-notebooks${showOrdinary ? ' two-role' : ''}`}>

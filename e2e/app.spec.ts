@@ -388,6 +388,29 @@ test('advances a four-stage benchmark session with role notebooks', async ({
     if (path.includes('/stages/')) return route.fulfill({json: []})
     return route.fulfill({json: sessionValue()})
   })
+  await page.route('**/api/benchmarks/run-*/llm-messages', (route) => {
+    const stage = ['easy', 'medium', 'hard', 'ordinary'][stageIndex]
+    return route.fulfill({
+      json: [
+        {
+          color: 'B',
+          status: 'active',
+          providerKind: 'fake',
+          continuationMode: 'transcript',
+          messages: [
+            {
+              role: 'user',
+              pending: true,
+              content:
+                stage === 'ordinary'
+                  ? 'Initialize the ordinary-game notebook.'
+                  : 'Initialize the life-and-death notebook.',
+            },
+          ],
+        },
+      ],
+    })
+  })
   await page.route('**/api/benchmarks/run-*', (route) => {
     const stage = ['easy', 'medium', 'hard', 'ordinary'][stageIndex]
     return route.fulfill({
@@ -416,6 +439,14 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await expect(
     page.getByRole('heading', {name: 'Ordinary-game notebook'}),
   ).toHaveCount(0)
+  const messages = page.locator('.benchmark-llm-message-inspector')
+  await expect(messages).toHaveAttribute('open', '')
+  await expect(messages).toContainText('Easy life-and-death')
+  await expect(
+    messages.getByText('Initialize the life-and-death notebook.'),
+  ).toBeVisible()
+  await expect(messages).toContainText('Awaiting response')
+  await expect(messages.getByText('Assistant', {exact: true})).toHaveCount(0)
 
   for (const stage of ['Medium life-and-death', 'Hard life-and-death']) {
     await page.getByRole('button', {name: 'Continue to next stage'}).click()
@@ -430,6 +461,10 @@ test('advances a four-stage benchmark session with role notebooks', async ({
   await expect(page.locator('.session-notebook-panel')).toHaveCount(2)
   await expect(page.getByText('Read-only reference')).toBeVisible()
   await expect(page.getByText('Active benchmark notebook')).toBeVisible()
+  await expect(messages).toContainText('Ordinary Go vs KataGo')
+  await expect(messages).toContainText('Initialize the ordinary-game notebook.')
+  await expect(messages).toContainText('Awaiting response')
+  await expect(messages.getByText('Assistant', {exact: true})).toHaveCount(0)
   await expect(
     page
       .locator('.session-stage-card')
