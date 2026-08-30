@@ -24,7 +24,7 @@ export const runtimeConfigSchema = z.object({
   modelRepairRetryLimit: z.number().int().nonnegative().default(3),
   proxyConnectTimeoutMs: z.number().int().positive().default(3_000),
   notebookTokenBudget: z.number().int().positive().default(3_000),
-  benchmarkProblemAttempts: z.number().int().positive().default(3),
+  benchmarkProblemAttempts: z.number().int().positive().default(5),
   fakeKatago: z.boolean().default(false),
 })
 

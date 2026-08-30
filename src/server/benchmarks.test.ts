@@ -10,6 +10,7 @@ import {GameService} from './games'
 import {
   BenchmarkConflictError,
   BenchmarkService,
+  applyLifeDeathNotebookPatch,
   calculateMetrics,
   compareMoveReviews,
   formatReviewCandidates,
@@ -19,7 +20,11 @@ import {
   reviewCandidateChoices,
 } from './benchmarks'
 import {NotebookStore} from './notebooks'
-import {MalformedModelOutputError, type PlayerAdapter} from './providers'
+import {
+  MalformedModelOutputError,
+  type LlmTurnRequest,
+  type PlayerAdapter,
+} from './providers'
 import {makeSnapshot} from './go'
 import {makeInitialLlmPrompt, perspectiveOutcome} from './llmGameContext'
 import {formatCanonicalGoRules} from './movePrompt'
@@ -49,6 +54,24 @@ const fakeKataGo: KataGoAnalyzer = {
 }
 
 describe('benchmark scoring and prompts', () => {
+  it('applies only JSON-addressed life-and-death notebook edits', () => {
+    const prior = '# Life notes\n\n1. Read liberties.\n2. Keep shape.'
+    expect(
+      applyLifeDeathNotebookPatch(
+        prior,
+        '{"1":"Read forcing replies before choosing the vital point."}',
+      ),
+    ).toBe(
+      '# Life notes\n\n1. Read forcing replies before choosing the vital point.\n2. Keep shape.',
+    )
+    expect(() =>
+      applyLifeDeathNotebookPatch(prior, '# Rewritten notebook'),
+    ).toThrow('Patch is not valid JSON')
+    expect(() =>
+      applyLifeDeathNotebookPatch(prior, '{"3":"New note."}'),
+    ).toThrow('Notebook note 3 does not exist')
+  })
+
   it('applies all point-loss score bands and combines result equally', () => {
     expect([0.5, 1.5, 3, 6, 12, 13].map(pointLossQuality)).toEqual([
       100, 85, 65, 40, 15, 0,
@@ -1313,6 +1336,102 @@ describe('benchmark scoring and prompts', () => {
     )
     service.pause(created.id)
     responseGate.resolve()
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
+    ).toBe(true)
+    await service.close()
+  })
+
+  it('updates one notebook note after five failures and retries with a new context', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-life-context-reset-'))
+    const set = loadProblemSet('gogameguru-easy')
+    const problem = set.problems[0]
+    const redoReady = deferred()
+    const redoGate = deferred()
+    let actionCalls = 0
+    let patchRequest: LlmTurnRequest | undefined
+    let redoRequest: LlmTurnRequest | undefined
+    const adapter = {
+      async requestAction() {
+        throw new Error('Transcript turn path should be used')
+      },
+      async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
+        signal.throwIfAborted()
+        if (request.output === 'notebook') {
+          patchRequest = request
+          return {
+            text: '{"1":"Read every forcing reply before choosing the vital point."}',
+            latencyMs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: 'test-model',
+            providerKind: 'fake' as const,
+          }
+        }
+        actionCalls += 1
+        if (actionCalls === 6) {
+          redoRequest = request
+          redoReady.resolve()
+          await redoGate.promise
+          signal.throwIfAborted()
+        }
+        const action =
+          actionCalls <= 5
+            ? ({action: 'pass', comment: 'Guess by passing.'} as const)
+            : problem.solution[0]
+        return {
+          text: JSON.stringify({
+            move: action.action === 'play' ? action.coordinate : action.action,
+            reason: action.comment ?? 'Continue reading.',
+          }),
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          providerKind: 'fake' as const,
+        }
+      },
+      async requestText(_prompt: string, signal: AbortSignal) {
+        signal.throwIfAborted()
+        return {
+          text: '# Life techniques\n\n1. Read liberties.\n2. Preserve shape.',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: set.id,
+      problemSetChecksum: set.checksum,
+    })
+
+    await redoReady.promise
+    expect(actionCalls).toBe(6)
+    expect(service.problemAttempts(created.id)).toHaveLength(5)
+    expect(patchRequest?.transcript).toHaveLength(10)
+    expect(
+      patchRequest?.transcript.filter(({role}) => role === 'assistant'),
+    ).toHaveLength(5)
+    expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
+    expect(patchRequest?.content.match(/feedback:/g)).toHaveLength(5)
+    expect(redoRequest?.transcript).toEqual([])
+    expect(await service.notebooks.readSnapshot(created.id)).toBe(
+      '# Life techniques\n\n1. Read every forcing reply before choosing the vital point.\n2. Preserve shape.',
+    )
+
+    service.pause(created.id)
+    redoGate.resolve()
     expect(
       await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
     ).toBe(true)

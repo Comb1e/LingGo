@@ -1,6 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto'
 import {EventEmitter} from 'node:events'
 import {NoOutputGeneratedError} from 'ai'
+import {z} from 'zod'
 import type {
   BenchmarkConfig,
   BenchmarkMoveReview,
@@ -127,6 +128,12 @@ const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
 ].join('\n')
 
 const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = runtimeConfig.benchmarkProblemAttempts
+
+const lifeDeathNotebookPatchSchema = z
+  .record(z.string().regex(/^[1-9]\d*$/), z.string().trim().min(1))
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'At least one numbered note edit is required',
+  })
 
 export class BenchmarkConflictError extends Error {
   constructor() {
@@ -1426,17 +1433,38 @@ export class BenchmarkService {
       run.phase = 'updating_problem_notebook'
       const pending = run.pendingProblem!
       const prior = await this.runNotebook(run.id)
+      const failedAttempts = this.store
+        .listBenchmarkProblemAttempts(run.id)
+        .filter(
+          (attempt) =>
+            attempt.problemId === problem.id &&
+            attempt.cursor === cursor &&
+            attempt.notebookVersionBefore === pending.notebookVersionBefore &&
+            !attempt.correct,
+        )
+        .slice(-MAX_LIFE_DEATH_PROBLEM_ATTEMPTS)
       const updatePrompt = [
         'Update the technique notebook after this life-and-death problem attempt.',
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
+        'Use the complete solving conversation in this context, including every failed answer and its feedback, to choose the most useful existing note to improve.',
         'PRIOR NOTEBOOK',
         prior,
         'PROBLEM',
         asciiBoard(problem.snapshot),
         `MODEL ANSWER: ${pending.actions?.length ? JSON.stringify(pending.actions) : pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
         `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.solution)}`,
-        'Return only numbered point edits in the form N. concise lesson.',
-        'Replace an existing point by its number or add a new point number. Do not rewrite or repeat unchanged points.',
+        ...(failedAttempts.length
+          ? [
+              'FAILED ATTEMPTS',
+              ...failedAttempts.map(
+                (attempt, index) =>
+                  `${index + 1}. Answer ${attempt.actualAction ? JSON.stringify(attempt.actualAction) : '(malformed)'}; feedback: ${attempt.failureReason ?? 'incorrect'}`,
+              ),
+            ]
+          : []),
+        'Return only one JSON object whose keys are existing note numbers and whose string values are their complete replacement content.',
+        'Example: {"1":"replacement content"}',
+        'Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or any prose outside the JSON object.',
       ].join('\n')
       const notebookAdapter = this.adapter(run)
       if (!notebookAdapter) {
@@ -1445,14 +1473,14 @@ export class BenchmarkService {
         this.save(run)
         return false
       }
-      const notebookEdits = await this.requestValidNotebook(
+      const content = await this.requestValidProblemNotebookPatch(
         run,
         notebookAdapter,
         updatePrompt,
-        'problem_notebook',
+        prior,
+        problem.snapshot,
         signal,
       )
-      const content = mergeLifeDeathNotebookEdits(prior, notebookEdits)
       const version = notebookVersion(run, 'problem_notebook', content)
       run.notebookVersion = version.version
       run.notebookEstimatedTokens = version.estimatedTokens
@@ -1508,6 +1536,7 @@ export class BenchmarkService {
     cacheKey: string,
     signal: AbortSignal,
   ) {
+    const transcript = completedLlmTranscript(run)
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
@@ -1528,12 +1557,32 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        const response = await adapter.requestAction(
-          snapshot,
-          signal,
-          prompt,
-          cacheKey,
-        )
+        const response = adapter.requestTurn
+          ? await adapter
+              .requestTurn(
+                {
+                  kind: transcript.length ? 'continuation' : 'initial',
+                  content: prompt,
+                  transcript,
+                  cacheKey,
+                  snapshot,
+                  output: 'action',
+                },
+                signal,
+              )
+              .then((turn) => ({
+                ...parseJsonActionResult(turn.text, snapshot.size),
+                responseContent: turn.text,
+                reasoning: turn.reasoning,
+                latencyMs: turn.latencyMs,
+                inputTokens: turn.inputTokens,
+                cachedInputTokens: turn.cachedInputTokens,
+                outputTokens: turn.outputTokens,
+                model: turn.model,
+                providerKind: turn.providerKind,
+                retries: 0,
+              }))
+          : await adapter.requestAction(snapshot, signal, prompt, cacheKey)
         this.recordLlmResponse(run, response.responseContent)
         return response
       } catch (error) {
@@ -1690,6 +1739,61 @@ export class BenchmarkService {
       .join('\n\n')
   }
 
+  private async requestValidProblemNotebookPatch(
+    run: InternalRun,
+    adapter: ReturnType<BenchmarkService['adapter']> & {},
+    initialPrompt: string,
+    prior: string,
+    snapshot: GameSnapshot,
+    signal: AbortSignal,
+  ) {
+    let prompt = initialPrompt
+    for (let invalidAttempt = 1; invalidAttempt <= 3; invalidAttempt++) {
+      const response = await this.requestNotebookText(
+        run,
+        adapter,
+        prompt,
+        'problem_notebook',
+        signal,
+        {
+          snapshot,
+          cacheKey: `linggo:benchmark:${run.id}:problem:${run.currentProblemId}`,
+        },
+      )
+      addUsage(run, response, 'updating_problem_notebook')
+      try {
+        const content = applyLifeDeathNotebookPatch(prior, response.text)
+        const estimatedTokens = Math.ceil(
+          Buffer.byteLength(content, 'utf8') / 4,
+        )
+        if (estimatedTokens > run.config.notebookTokenBudget)
+          throw new Error(
+            `The patched notebook exceeds the ${run.config.notebookTokenBudget.toLocaleString()} estimated-token budget`,
+          )
+        return content
+      } catch (error) {
+        if (invalidAttempt === 3)
+          throw new Error(
+            `The model returned an invalid life-and-death notebook patch after three attempts. The benchmark has been paused. Last error: ${publicError(error)}`,
+            {cause: error},
+          )
+        run.substate = {
+          kind: 'compressing',
+          attempt: invalidAttempt + 1,
+          maxAttempts: 3,
+        }
+        this.save(run)
+        prompt = [
+          `Your previous notebook patch was invalid: ${publicError(error)}.`,
+          'Return only one JSON object whose keys are existing note numbers and whose string values are their complete replacement content.',
+          'Example: {"1":"replacement content"}',
+          'Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or any prose outside the JSON object.',
+        ].join('\n')
+      }
+    }
+    throw new Error('Life-and-death notebook patch validation failed')
+  }
+
   private finishMetrics(run: InternalRun, trainingGameCount: number) {
     const initial = this.store.listBenchmarkNotebookVersions(run.id)[0]
     const current = this.store.listBenchmarkNotebookVersions(run.id).at(-1)
@@ -1790,11 +1894,13 @@ export class BenchmarkService {
     operation:
       'initialize' | 'compress' | 'review' | 'problem' | 'problem_notebook',
     signal: AbortSignal,
+    context?: {snapshot: GameSnapshot; cacheKey: string},
   ) {
-    if (!adapter.requestText)
+    if (!adapter.requestText && !(context && adapter.requestTurn))
       throw new Error(
         'The benchmark provider does not support notebook generation',
       )
+    const transcript = context ? completedLlmTranscript(run) : []
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
@@ -1815,11 +1921,25 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        const response = await adapter.requestText(
-          prompt,
-          signal,
-          `linggo:benchmark:${run.id}:notebook:${operation}`,
-        )
+        const response =
+          context && adapter.requestTurn
+            ? await adapter.requestTurn(
+                {
+                  kind: transcript.length ? 'continuation' : 'initial',
+                  content: prompt,
+                  transcript,
+                  cacheKey: context.cacheKey,
+                  snapshot: context.snapshot,
+                  output: 'notebook',
+                },
+                signal,
+              )
+            : await adapter.requestText!(
+                prompt,
+                signal,
+                context?.cacheKey ??
+                  `linggo:benchmark:${run.id}:notebook:${operation}`,
+              )
         this.recordLlmResponse(run, response.text)
         return response
       } catch (error) {
@@ -1949,24 +2069,36 @@ function isRepairableMoveError(error: unknown) {
   )
 }
 
-function mergeLifeDeathNotebookEdits(prior: string, edits: string) {
-  const pointEdits = edits
-    .split('\n')
-    .map((line) => line.trim())
-    .map((line) => /^(\d+)\.\s+(.+)$/.exec(line))
-    .filter((match): match is RegExpExecArray => Boolean(match))
-    .map((match) => ({
-      number: Number(match[1]),
-      line: `${match[1]}. ${match[2]}`,
-    }))
-  if (!pointEdits.length) return prior.trim()
-  const lines = prior.trim().split('\n')
-  for (const edit of pointEdits) {
-    const index = lines.findIndex((line) =>
-      new RegExp(`^${edit.number}\\.\\s+`).test(line.trim()),
+function completedLlmTranscript(run: InternalRun) {
+  return (run.llmMessages ?? [])
+    .filter((message) => !message.pending)
+    .map(({role, content}) => ({role, content}))
+}
+
+export function applyLifeDeathNotebookPatch(prior: string, response: string) {
+  let json: unknown
+  try {
+    json = JSON.parse(response.trim())
+  } catch (error) {
+    throw new Error(`Patch is not valid JSON: ${publicError(error)}`, {
+      cause: error,
+    })
+  }
+  const parsed = lifeDeathNotebookPatchSchema.safeParse(json)
+  if (!parsed.success)
+    throw new Error(
+      `Patch must map positive integer note numbers to non-empty strings: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
     )
-    if (index >= 0) lines[index] = edit.line
-    else lines.push(edit.line)
+  const lines = prior.trim().split('\n')
+  for (const [number, replacement] of Object.entries(parsed.data)) {
+    const index = lines.findIndex((line) =>
+      new RegExp(`^${number}\\.\\s+`).test(line.trim()),
+    )
+    if (index < 0)
+      throw new Error(
+        `Notebook note ${number} does not exist and cannot be edited`,
+      )
+    lines[index] = `${number}. ${replacement}`
   }
   return lines.join('\n').trim()
 }

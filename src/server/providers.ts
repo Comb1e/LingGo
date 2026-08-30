@@ -171,6 +171,18 @@ export class FakePlayerAdapter implements PlayerAdapter {
         model: 'deterministic-v1',
         providerKind: 'fake' as const,
       }
+    if (
+      request.output === 'notebook' &&
+      request.content.includes('JSON object whose keys are note numbers')
+    )
+      return {
+        text: '{"1":"Check liberties before choosing a vital point."}',
+        latencyMs: Date.now() - started,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: 'deterministic-v1',
+        providerKind: 'fake' as const,
+      }
     if (request.output === 'notebook')
       return {
         text: '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
@@ -257,10 +269,14 @@ export class FakePlayerAdapter implements PlayerAdapter {
     }
   }
 
-  async requestText(_prompt: string, signal: AbortSignal) {
+  async requestText(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return {
-      text: '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
+      text: prompt.includes('JSON object whose keys are note numbers')
+        ? '{"1":"Check liberties before choosing a vital point."}'
+        : prompt.includes('Markdown life-and-death Go technique notebook')
+          ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
+          : '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
       latencyMs: 0,
       inputTokens: 0,
       outputTokens: 0,
