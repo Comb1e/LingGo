@@ -144,10 +144,11 @@ const LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION = [
   '  "additionalProperties": {"type": "string", "minLength": 1}',
   '}',
   'Return exactly one JSON object matching this schema and no other text.',
-  'Each key must be the number of an existing notebook note to replace.',
-  "Each value must be that note's complete replacement content without the leading number and period.",
-  'Example: {"1":"Read every forcing reply before choosing the vital point."}',
-  'Include only notes that need improvement. Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or prose outside the JSON object.',
+  'Each key must be the number of an existing notebook note to replace, or a new positive integer note number to add.',
+  "Each value must be the note's complete content without the leading number and period.",
+  'Choose the existing note that is least perfect or is flawed according to the attempt, and improve only the lesson supported by the evidence; do not default to note 1.',
+  'Add a new numbered note only when no existing note captures the lesson. Include only notes that need improvement or are genuinely new.',
+  'Do not return Markdown, the whole notebook, unchanged notes, duplicate note numbers, or prose outside the JSON object.',
 ].join('\n')
 
 export class BenchmarkConflictError extends Error {
@@ -2101,16 +2102,13 @@ export function applyLifeDeathNotebookPatch(prior: string, response: string) {
     throw new Error(
       `Patch must map positive integer note numbers to non-empty strings: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
     )
-  const lines = prior.trim().split('\n')
+  const lines = prior.trim() ? prior.trim().split('\n') : []
   for (const [number, replacement] of Object.entries(parsed.data)) {
     const index = lines.findIndex((line) =>
       new RegExp(`^${number}\\.\\s+`).test(line.trim()),
     )
-    if (index < 0)
-      throw new Error(
-        `Notebook note ${number} does not exist and cannot be edited`,
-      )
-    lines[index] = `${number}. ${replacement}`
+    if (index < 0) lines.push(`${number}. ${replacement}`)
+    else lines[index] = `${number}. ${replacement}`
   }
   return lines.join('\n').trim()
 }

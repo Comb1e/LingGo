@@ -173,10 +173,10 @@ export class FakePlayerAdapter implements PlayerAdapter {
       }
     if (
       request.output === 'notebook' &&
-      request.content.includes('JSON object whose keys are note numbers')
+      request.content.includes('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
     )
       return {
-        text: '{"1":"Check liberties before choosing a vital point."}',
+        text: fakeNotebookPatch(request),
         latencyMs: Date.now() - started,
         inputTokens: 0,
         outputTokens: 0,
@@ -272,7 +272,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
   async requestText(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return {
-      text: prompt.includes('JSON object whose keys are note numbers')
+      text: prompt.includes('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
         ? '{"1":"Check liberties before choosing a vital point."}'
         : prompt.includes('Markdown life-and-death Go technique notebook')
           ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
@@ -283,6 +283,28 @@ export class FakePlayerAdapter implements PlayerAdapter {
       model: 'deterministic-v1',
     }
   }
+}
+
+function fakeNotebookPatch(request: LlmTurnRequest) {
+  const notebook = request.transcript
+    .map(
+      ({content}) =>
+        content.match(/SELF-WRITTEN SKILLS\n([\s\S]*?)\nCURRENT PROBLEM/)?.[1],
+    )
+    .find(Boolean)
+  const noteNumbers = notebook
+    ? [...notebook.matchAll(/^\s*(\d+)\.\s+/gm)].map((match) => match[1])
+    : []
+  const selector = [...request.content].reduce(
+    (sum, character) => sum + character.charCodeAt(0),
+    0,
+  )
+  const number = noteNumbers.length
+    ? noteNumbers[selector % noteNumbers.length]
+    : '1'
+  return JSON.stringify({
+    [number]: 'Review forcing replies before choosing the vital point.',
+  })
 }
 
 export class LlmPlayerAdapter implements PlayerAdapter {

@@ -54,7 +54,7 @@ const fakeKataGo: KataGoAnalyzer = {
 }
 
 describe('benchmark scoring and prompts', () => {
-  it('applies only JSON-addressed life-and-death notebook edits', () => {
+  it('applies partial JSON-addressed life-and-death notebook edits', () => {
     const prior = '# Life notes\n\n1. Read liberties.\n2. Keep shape.'
     expect(
       applyLifeDeathNotebookPatch(
@@ -67,9 +67,9 @@ describe('benchmark scoring and prompts', () => {
     expect(() =>
       applyLifeDeathNotebookPatch(prior, '# Rewritten notebook'),
     ).toThrow('Patch is not valid JSON')
-    expect(() =>
-      applyLifeDeathNotebookPatch(prior, '{"3":"New note."}'),
-    ).toThrow('Notebook note 3 does not exist')
+    expect(applyLifeDeathNotebookPatch(prior, '{"3":"New note."}')).toBe(
+      '# Life notes\n\n1. Read liberties.\n2. Keep shape.\n3. New note.',
+    )
   })
 
   it('applies all point-loss score bands and combines result equally', () => {
@@ -1437,10 +1437,17 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
     expect(patchRequest?.content).toContain('"minProperties": 1')
     expect(patchRequest?.content).toContain(
-      'Each key must be the number of an existing notebook note to replace.',
+      'or a new positive integer note number to add.',
     )
     expect(patchRequest?.content).toContain(
-      'Do not return Markdown, the whole notebook, unchanged notes',
+      'least perfect or is flawed according to the attempt',
+    )
+    expect(patchRequest?.content).toContain('do not default to note 1')
+    expect(patchRequest?.content).not.toContain(
+      '{"1":"Read every forcing reply before choosing the vital point."}',
+    )
+    expect(patchRequest?.content).toContain(
+      'Add a new numbered note only when no existing note captures the lesson.',
     )
     expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
     expect(patchRequest?.content).not.toContain('1. Read liberties.')
@@ -1551,7 +1558,7 @@ describe('benchmark scoring and prompts', () => {
     expect(notebookUpdatePrompt).toContain('UPDATE TRIGGER: SUCCESS')
     expect(notebookUpdatePrompt).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
     expect(notebookUpdatePrompt).toContain(
-      'Include only notes that need improvement. Do not return Markdown, the whole notebook',
+      'Include only notes that need improvement or are genuinely new.',
     )
 
     service.pause(created.id)

@@ -2,7 +2,9 @@ import {afterEach, describe, expect, it, vi} from 'vitest'
 import type {GameSnapshot, ProviderKind} from '../shared/types'
 import {emptyBoard} from './go'
 import {
+  FakePlayerAdapter,
   LlmPlayerAdapter,
+  type LlmTurnRequest,
   MalformedModelOutputError,
   isOpenAiReasoningModel,
   makePrompt,
@@ -14,6 +16,49 @@ import {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('provider normalization', () => {
+  it('varies fake life-and-death notebook patch notes by problem context', async () => {
+    const adapter = new FakePlayerAdapter()
+    const snapshot = {
+      size: 9 as const,
+      board: emptyBoard(9),
+      toMove: 'B' as const,
+      moves: [],
+      captures: {B: 0, W: 0},
+      komi: 7.5,
+      rules: 'Chinese',
+    }
+    const transcript = [
+      {
+        role: 'user' as const,
+        content:
+          'SELF-WRITTEN SKILLS\n1. First lesson.\n2. Second lesson.\nCURRENT PROBLEM',
+      },
+    ]
+    const request = (content: string): LlmTurnRequest => ({
+      kind: 'continuation',
+      content: `NOTEBOOK PATCH OUTPUT JSON SCHEMA\n${content}`,
+      transcript,
+      cacheKey: 'test',
+      snapshot,
+      output: 'notebook',
+    })
+    const first = await adapter.requestTurn(
+      request('Problem A'),
+      new AbortController().signal,
+    )
+    const second = await adapter.requestTurn(
+      request('Problem B'),
+      new AbortController().signal,
+    )
+
+    expect(first.text).not.toBe(second.text)
+    const firstNumber = Object.keys(JSON.parse(first.text))[0]
+    const secondNumber = Object.keys(JSON.parse(second.text))[0]
+    expect(['1', '2']).toContain(firstNumber)
+    expect(['1', '2']).toContain(secondNumber)
+    expect(firstNumber).not.toBe(secondNumber)
+  })
+
   it('identifies OpenAI models that do not support temperature', () => {
     expect(isOpenAiReasoningModel('gpt-5.6-luna')).toBe(true)
     expect(isOpenAiReasoningModel('gpt-5.6-sol')).toBe(true)
