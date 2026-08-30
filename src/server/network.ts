@@ -1,8 +1,9 @@
 import * as http from 'node:http'
 import {createConnection, type Socket} from 'node:net'
 import {connect as createTlsConnection} from 'node:tls'
+import {runtimeConfig} from './config'
 
-export const MAX_PROVIDER_API_ATTEMPTS = 5
+export const MAX_PROVIDER_API_ATTEMPTS = runtimeConfig.providerRetryLimit
 
 export type ProviderRetryWait = (
   failedAttempts: number,
@@ -11,12 +12,7 @@ export type ProviderRetryWait = (
 ) => Promise<void>
 
 export type ProviderFailureKind =
-  | 'network'
-  | 'rate-limit'
-  | 'timeout'
-  | 'server'
-  | 'request'
-  | 'unknown'
+  'network' | 'rate-limit' | 'timeout' | 'server' | 'request' | 'unknown'
 
 export interface ProviderFailure {
   kind: ProviderFailureKind
@@ -44,9 +40,7 @@ export function configureNetworkProxy(env: NodeJS.ProcessEnv = process.env) {
   }
   if (!httpProxy && !httpsProxy) return false
   if (typeof http.setGlobalProxyFromEnv !== 'function')
-    throw new Error(
-      'Proxy support requires Node.js 24.14 or newer',
-    )
+    throw new Error('Proxy support requires Node.js 24.14 or newer')
   http.setGlobalProxyFromEnv(proxyEnv)
   return true
 }
@@ -60,7 +54,7 @@ export async function verifyDedicatedProxy(
   const url = validateProxyUrl(value)
   const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80))
   try {
-    await connect(url, 3_000)
+    await connect(url, runtimeConfig.proxyConnectTimeoutMs)
   } catch (error) {
     throw new Error(
       `Cannot establish an HTTPS tunnel through LINGGO_PROXY_URL at ${url.hostname}:${port}. Check Clash Verge's current HTTP or Mixed port. With WSL mirrored networking, use http://127.0.0.1:<port>.`,
@@ -77,8 +71,7 @@ export async function waitForProviderRetry(
   const failure = providerFailure(error)
   if (failure.kind === 'network') configureNetworkProxy()
   const delayMs =
-    failure.retryAfterMs ??
-    Math.min(30_000, 2_000 * 2 ** (failedAttempts - 1))
+    failure.retryAfterMs ?? Math.min(30_000, 2_000 * 2 ** (failedAttempts - 1))
   await new Promise<void>((resolve, reject) => {
     const finish = () => {
       signal.removeEventListener('abort', abort)
@@ -132,24 +125,28 @@ export function providerFailure(
   const codes = chain
     .map((value) => value.code)
     .filter((code): code is string => Boolean(code))
-  const details = [...new Set([...messages, ...codes.map((code) => `[${code}]`)])]
+  const details = [
+    ...new Set([...messages, ...codes.map((code) => `[${code}]`)]),
+  ]
   const message = details.length ? details.join(' Caused by: ') : fallback
   const text = `${messages.join(' ')} ${codes.join(' ')}`
   const network =
     /network|socket|tls|fetch failed|failed to fetch|connection (?:reset|refused)|econnreset|econnrefused|epipe|enotfound|und_err/i.test(
       text,
     )
-  const timeout =
-    /timeout|timed out|abortsignal\.timeout|etimedout/i.test(text)
-  const rateLimit = statusCode === 429 || /rate.?limit|too many requests/i.test(text)
+  const timeout = /timeout|timed out|abortsignal\.timeout|etimedout/i.test(text)
+  const rateLimit =
+    statusCode === 429 || /rate.?limit|too many requests/i.test(text)
   const server = statusCode !== undefined && statusCode >= 500
+  const likelyTransientUnknown =
+    /temporary|temporarily|transient|unavailable|retry|try again/i.test(text)
   const retryable =
     apiError?.isRetryable ??
     (network ||
       timeout ||
       rateLimit ||
       server ||
-      statusCode === undefined)
+      (statusCode === undefined && likelyTransientUnknown))
 
   return {
     kind: network
@@ -272,7 +269,8 @@ function connectToProxy(proxy: URL, timeoutMs: number) {
       if (!response.includes('\r\n\r\n')) return
       const status = /^HTTP\/\d(?:\.\d)? (\d{3})/.exec(response)?.[1]
       if (status?.startsWith('2')) finish()
-      else finish(new Error(`Proxy CONNECT returned HTTP ${status ?? 'unknown'}`))
+      else
+        finish(new Error(`Proxy CONNECT returned HTTP ${status ?? 'unknown'}`))
     })
     socket.once('error', (error) => finish(error))
     socket.once('end', () =>

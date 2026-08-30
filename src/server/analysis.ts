@@ -167,25 +167,37 @@ export class AnalysisService {
           if (controller.signal.aborted) return
           const latest = this.games.get(game.id)
           if (!latest || turn > latest.moves.length) continue
+          const expectedHash = positionHash(latest, turn)
           const result = await this.engine.analyze(
             {...gamePosition(latest, turn), visits},
             controller.signal,
           )
+          // Analysis is asynchronous. Undo, replacement moves, or deletion
+          // may have changed the position while KataGo was working; never
+          // persist a result whose source position is no longer current.
+          const current = this.games.get(game.id)
+          if (
+            !current ||
+            turn > current.moves.length ||
+            positionHash(current, turn) !== expectedHash
+          )
+            continue
           this.store.savePositionAnalysis({
             gameId: game.id,
             turn,
             ...rootFromBlack(result),
-            positionHash: positionHash(latest, turn),
+            positionHash: expectedHash,
             createdAt: new Date().toISOString(),
           })
           this.emit(game.id)
         }
-        this.store.setGameAnalysisState(game.id, {
-          status: 'complete',
-          error: null,
-        })
+        if (this.games.get(game.id))
+          this.store.setGameAnalysisState(game.id, {
+            status: 'complete',
+            error: null,
+          })
       } catch (error) {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted && this.games.get(game.id))
           this.store.setGameAnalysisState(game.id, {
             status: 'error',
             error: error instanceof Error ? error.message : 'Analysis failed',

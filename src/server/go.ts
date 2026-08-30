@@ -273,7 +273,11 @@ export function scoreBoard(board: Board, komi: number, dead: Point[]): Score {
   }
   const margin = Math.abs(black - white)
   const result =
-    black > white ? `B+${formatMargin(margin)}` : `W+${formatMargin(margin)}`
+    black === white
+      ? 'Draw'
+      : black > white
+        ? `B+${formatMargin(margin)}`
+        : `W+${formatMargin(margin)}`
   return {black, white, territory, result}
 }
 

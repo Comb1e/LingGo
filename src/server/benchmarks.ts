@@ -29,7 +29,11 @@ import {
   replay,
   scoreBoard,
 } from './go'
-import {GameService, MAX_MODEL_OUTPUT_ATTEMPTS} from './games'
+import {
+  GameService,
+  MAX_MODEL_OUTPUT_ATTEMPTS,
+  MAX_MODEL_OUTPUT_RETRIES,
+} from './games'
 import {
   gamePosition,
   rootFromBlack,
@@ -61,6 +65,7 @@ import {
   MalformedModelOutputError,
   parseJsonActionResult,
 } from './providers'
+import {runtimeConfig} from './config'
 
 type InternalRun = BenchmarkRun & {
   pointLosses?: number[]
@@ -110,7 +115,7 @@ const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
   'Choose the organization, headings, level of detail, and writing style yourself.',
 ].join('\n')
 
-const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = 3
+const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = runtimeConfig.benchmarkProblemAttempts
 
 export class BenchmarkConflictError extends Error {
   constructor() {
@@ -128,6 +133,8 @@ export class BenchmarkService {
   private controllers = new Map<string, AbortController>()
   private activeRuns = new Map<string, InternalRun>()
   private reservedProfiles = new Set<string>()
+  private generations = new Map<string, number>()
+  private deletedRuns = new Set<string>()
 
   constructor(
     readonly store: Store,
@@ -461,8 +468,10 @@ export class BenchmarkService {
     const run = this.require(id)
     if (run.sessionId)
       throw new Error('Delete the benchmark session instead of a child run')
-    if (['queued', 'running'].includes(run.status))
-      this.controllers.get(id)?.abort()
+    this.deletedRuns.add(id)
+    this.generations.set(id, (this.generations.get(id) ?? 0) + 1)
+    this.controllers.get(id)?.abort()
+    await this.waitForRunTermination(id)
     const deleted = this.store.deleteBenchmark(id)
     await this.notebooks.deleteSnapshot(id)
     this.events.emit(id, null)
@@ -491,7 +500,19 @@ export class BenchmarkService {
     this.controllers.clear()
   }
 
+  async waitForRunTermination(id: string) {
+    while (this.activeRuns.has(id))
+      await new Promise<void>((resolve) => setTimeout(resolve, 5))
+  }
+
+  invalidateForDeletion(id: string) {
+    this.deletedRuns.add(id)
+    this.generations.set(id, (this.generations.get(id) ?? 0) + 1)
+    this.controllers.get(id)?.abort()
+  }
+
   private schedule(id: string, delay = 0) {
+    if (this.deletedRuns.has(id)) return
     if (this.scheduled.has(id)) {
       this.reschedule.add(id)
       return
@@ -503,11 +524,18 @@ export class BenchmarkService {
   }
 
   private async run(id: string) {
+    if (this.deletedRuns.has(id)) return
+    const generation = this.generations.get(id) ?? 0
     const controller = new AbortController()
     this.controllers.set(id, controller)
     let retry = false
     try {
       const run = this.require(id)
+      if (
+        this.deletedRuns.has(id) ||
+        (this.generations.get(id) ?? 0) !== generation
+      )
+        return
       if (!['queued', 'running'].includes(run.status)) return
       this.activeRuns.set(id, run)
       run.status = 'running'
@@ -661,8 +689,15 @@ export class BenchmarkService {
       this.controllers.delete(id)
       this.activeRuns.delete(id)
       this.scheduled.delete(id)
-      if (this.reschedule.delete(id)) this.schedule(id)
-      else if (retry) this.schedule(id, 3_000)
+      if (
+        !this.deletedRuns.has(id) &&
+        this.generations.get(id) === generation
+      ) {
+        if (this.reschedule.delete(id)) this.schedule(id)
+        else if (retry) this.schedule(id, 3_000)
+      } else {
+        this.reschedule.delete(id)
+      }
     }
   }
 
@@ -804,7 +839,7 @@ export class BenchmarkService {
           maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
         })
         try {
-          while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
+          while (outputFailures <= MAX_MODEL_OUTPUT_RETRIES) {
             let responseContent = ''
             let turnResponse: LlmTurnResponse | undefined
             try {
@@ -943,9 +978,15 @@ export class BenchmarkService {
               run.outputAttempts = (run.outputAttempts ?? 0) + 1
               run.outputRepairs = (run.outputRepairs ?? 0) + 1
               const feedback = publicProviderError(error, 'Invalid action')
+              this.games.setAutomatedTurnState(game.id, {
+                phase: 'repairing',
+                attempt: outputFailures + 1,
+                maxAttempts: MAX_MODEL_OUTPUT_ATTEMPTS,
+                lastError: feedback,
+              })
               if (error instanceof IllegalMoveError) illegalMoveFailures += 1
               if (
-                illegalMoveFailures >= MAX_MODEL_OUTPUT_ATTEMPTS &&
+                illegalMoveFailures > MAX_MODEL_OUTPUT_RETRIES &&
                 error instanceof IllegalMoveError
               ) {
                 const score = scoreBoard(game.board as any, game.komi, [])
@@ -959,7 +1000,7 @@ export class BenchmarkService {
                 this.save(run)
                 return true
               }
-              if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS)
+              if (outputFailures > MAX_MODEL_OUTPUT_RETRIES)
                 throw new Error(
                   `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`,
                   {cause: error},
@@ -1804,6 +1845,7 @@ export class BenchmarkService {
   }
 
   private save(run: InternalRun) {
+    if (this.deletedRuns.has(run.id)) return
     run.updatedAt = new Date().toISOString()
     this.store.saveBenchmark(run)
     this.emit(run)
@@ -1992,7 +2034,7 @@ function normalizeConfig(
     trainingGamesWithoutWinRates: input.includeTrainingWinRates
       ? 0
       : input.trainingGameCount,
-    notebookTokenBudget: 3000,
+    notebookTokenBudget: runtimeConfig.notebookTokenBudget,
     trainingVisits: input.visits,
     evaluationVisits: input.visits,
   }

@@ -28,6 +28,7 @@ import {
 import {playStone, replay} from './go'
 import type {VisibleLlmMessage} from './llmGameContext'
 import {makeMovePromptSections} from './movePrompt'
+import {runtimeConfig} from './config'
 
 const modelMoveSchema = z
   .object({
@@ -66,8 +67,9 @@ const deepSeekStreamEventSchema = z
   })
   .passthrough()
 
-const DEFAULT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS = 60_000
-const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60_000
+const DEFAULT_PROVIDER_FIRST_TOKEN_TIMEOUT_MS =
+  runtimeConfig.providerFirstTokenTimeoutMs
+const DEFAULT_PROVIDER_TIMEOUT_MS = runtimeConfig.providerTimeoutMs
 
 export interface PlayerAdapter {
   requestAction(
@@ -652,7 +654,16 @@ function updateDeepSeekStream(
 }
 
 function deepSeekChatCompletionsUrl(baseUrl?: string) {
-  return `${(baseUrl ?? 'https://api.deepseek.com').replace(/\/+$/, '')}/chat/completions`
+  const value = baseUrl ?? 'https://api.deepseek.com'
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('Provider base URL must be a valid http or https URL')
+  }
+  if (!['http:', 'https:'].includes(url.protocol))
+    throw new Error('Provider base URL must use http or https')
+  return `${url.toString().replace(/\/+$/, '')}/chat/completions`
 }
 
 async function deepSeekApiError(response: Response) {
@@ -758,9 +769,22 @@ export function createPlayerAdapter(
   vault: SecretVault,
 ): PlayerAdapter {
   if (connection.kind === 'fake') return new FakePlayerAdapter()
+  if (connection.baseUrl) validateProviderBaseUrl(connection.baseUrl)
   const key = vault.get(connection)
   if (!key) throw new Error(`No API key configured for ${connection.name}`)
   return new LlmPlayerAdapter(connection, profile, key)
+}
+
+export function validateProviderBaseUrl(value: string) {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('Provider base URL must be a valid http or https URL')
+  }
+  if (!['http:', 'https:'].includes(url.protocol))
+    throw new Error('Provider base URL must use http or https')
+  return url
 }
 
 export function parseJsonAction(text: string, size: BoardSize): PlayerAction {

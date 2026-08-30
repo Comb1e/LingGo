@@ -256,8 +256,7 @@ export class BenchmarkSessionService {
     const stage = this.currentStage(session)
     if (stage.runId) {
       const run = this.benchmarks.get(stage.runId)
-      if (run && ['queued', 'running'].includes(run.status))
-        this.benchmarks.cancel(run.id)
+      if (run) this.benchmarks.invalidateForDeletion(run.id)
     }
     const deleted = this.store.deleteBenchmarkSession(id)
     this.events.emit(id, null)

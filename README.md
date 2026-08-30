@@ -71,7 +71,7 @@ The built-in deterministic local profile requires no credentials and is useful f
 
 Each model prompt contains the Go rules, the profile's optional style prompt, a single-move instruction, the exact `{"move":"D4","reason":"..."}` response schema, and the current board and move list. Moves use the letter-number coordinates printed on the board (columns skip I); `"pass"` means pass and `"resign"` means resign.
 
-For a manual provider smoke test, create a connection, enter a session key, create a profile with an available model ID, then start a 9x9 human-vs-model game. Confirm that the model produces one legal move, its comment appears when enabled, and usage is added once. Repeat for each configured provider. Transient network/provider errors retry five times with exponential backoff. The game page shows retry progress and the latest failure; after the fifth failure, processing pauses for operator recovery.
+For a manual provider smoke test, create a connection, enter a session key, create a profile with an available model ID, then start a 9x9 human-vs-model game. Confirm that the model produces one legal move, its comment appears when enabled, and usage is added once. Repeat for each configured provider. Transient network/provider errors retry up to five attempts with exponential backoff. Repairable or illegal model output receives at most three repair retries after the initial response. The game page shows provider retry progress and the latest failure; after the provider retry limit or repair limit, processing pauses for operator recovery.
 
 ### WSL with Clash Verge
 

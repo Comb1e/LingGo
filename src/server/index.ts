@@ -1,7 +1,8 @@
 import {createApp} from './app'
+import {loadRuntimeConfig} from './config'
 import {configureNetworkProxy, verifyDedicatedProxy} from './network'
 
-const port = Number(process.env.PORT ?? 4173)
+const port = loadRuntimeConfig().port
 
 try {
   configureNetworkProxy()

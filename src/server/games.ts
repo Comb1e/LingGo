@@ -56,7 +56,10 @@ import {
 } from './network'
 import type {ImportedRecord} from './sgf'
 
-export const MAX_MODEL_OUTPUT_ATTEMPTS = 5
+/** Maximum number of repair retries after the initial provider response. */
+export const MAX_MODEL_OUTPUT_RETRIES = 3
+/** Total model responses allowed for one unchanged position. */
+export const MAX_MODEL_OUTPUT_ATTEMPTS = MAX_MODEL_OUTPUT_RETRIES + 1
 
 type PlayerAdapterFactory = (
   ...args: Parameters<typeof createPlayerAdapter>
@@ -717,8 +720,15 @@ export class GameService {
     if (command.type === 'change-profile') {
       if (!command.color || !command.profileId)
         throw new Error('Color and profile are required')
+      if (game.benchmarkRunId)
+        throw new Error('Benchmark games are controlled by their benchmark run')
+      if (['scoring', 'finished'].includes(game.status))
+        throw new Error('Profile changes are unavailable after scoring begins')
       if (!this.store.getProfile(command.profileId))
         throw new Error('Profile not found')
+      // Abort before changing the seat so an in-flight response cannot be
+      // committed using the previous profile identity.
+      this.cancel(id)
       const key = command.color === 'B' ? 'black' : 'white'
       game[key] = {
         type: 'llm',
@@ -741,6 +751,9 @@ export class GameService {
     }
 
     if (command.type === 'force-pass') {
+      if (game.benchmarkRunId)
+        throw new Error('Benchmark games are controlled by their benchmark run')
+      this.cancel(id)
       game.status = 'active'
       game.error = undefined
       game.autoplay = false
@@ -797,6 +810,8 @@ export class GameService {
     this.controllers.get(id)?.abort()
     this.controllers.delete(id)
     this.scheduled.delete(id)
+    this.modelTurns.delete(id)
+    this.emit(id)
   }
 
   private accept(
@@ -902,7 +917,7 @@ export class GameService {
       let rebasedProviderContext = false
       const retryErrors = [...(this.requireGame(id).providerErrors ?? [])]
       let prepared: PreparedLlmTurn | undefined
-      while (outputFailures < MAX_MODEL_OUTPUT_ATTEMPTS) {
+      while (outputFailures <= MAX_MODEL_OUTPUT_RETRIES) {
         const game = this.requireGame(id)
         if (game.status !== 'active' || !game.autoplay) return
         const seat = this.seat(game)
@@ -978,7 +993,11 @@ export class GameService {
             prepared,
             controller.signal,
           )
-          if (controller.signal.aborted) return
+          if (
+            controller.signal.aborted ||
+            this.controllers.get(id) !== controller
+          )
+            return
           const parsed = parseJsonActionResult(response.text, snapshot.size)
           const result: LlmActionResult = {
             action: parsed.action,
@@ -1077,7 +1096,14 @@ export class GameService {
             reason: feedback,
             truncated: retained.length < content.length,
           })
-          if (outputFailures >= MAX_MODEL_OUTPUT_ATTEMPTS) {
+          this.modelTurns.set(id, {
+            phase: 'repairing',
+            attempt: outputFailures + 1,
+            maxAttempts: MAX_MODEL_OUTPUT_ATTEMPTS,
+            lastError: feedback,
+          })
+          this.emit(id)
+          if (outputFailures > MAX_MODEL_OUTPUT_RETRIES) {
             const latest = this.requireGame(id)
             latest.status = 'error'
             latest.error = `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`
@@ -1101,11 +1127,14 @@ export class GameService {
         }
       }
     } finally {
-      this.controllers.delete(id)
-      this.scheduled.delete(id)
-      this.modelTurns.delete(id)
-      this.emit(id)
-      this.schedule(id)
+      const current = this.controllers.get(id) === controller
+      if (current) {
+        this.controllers.delete(id)
+        this.scheduled.delete(id)
+        this.modelTurns.delete(id)
+        this.emit(id)
+        this.schedule(id)
+      }
     }
   }
 

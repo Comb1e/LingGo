@@ -21,11 +21,13 @@ import type {
   TechniqueNotebookSummary,
 } from '../shared/types'
 import type {LlmGameContext} from './llmGameContext'
+import {KATAGO_LEGACY_DEFAULTS, KATAGO_PORTABLE_DEFAULTS} from './config'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
 export class Store {
   readonly db: Database.Database
+  private deletedBenchmarkIds = new Set<string>()
 
   constructor(
     filename = process.env.LINGGO_DB_PATH ??
@@ -36,9 +38,47 @@ export class Store {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
     this.migrate()
+    this.reconcileLegacyKataGoSettings()
     this.seedFakeProvider()
     this.importLegacyNotebooks()
     this.migrateActiveV1Benchmarks()
+  }
+
+  private reconcileLegacyKataGoSettings() {
+    const executablePath =
+      process.env.LINGGO_KATAGO_EXECUTABLE_PATH ??
+      process.env.LINGGO_KATAGO_PATH ??
+      KATAGO_PORTABLE_DEFAULTS.executablePath
+    const modelPath =
+      process.env.LINGGO_KATAGO_MODEL_PATH ??
+      process.env.LINGGO_KATAGO_MODEL ??
+      KATAGO_PORTABLE_DEFAULTS.modelPath
+    const configPath =
+      process.env.LINGGO_KATAGO_CONFIG_PATH ??
+      process.env.LINGGO_KATAGO_CONFIG ??
+      KATAGO_PORTABLE_DEFAULTS.configPath
+    this.db
+      .prepare(
+        `UPDATE katago_settings
+         SET executable_path = CASE WHEN executable_path = ? THEN ? ELSE executable_path END,
+             model_path = CASE WHEN model_path = ? THEN ? ELSE model_path END,
+             config_path = CASE WHEN config_path = ? THEN ? ELSE config_path END,
+             updated_at = CASE
+               WHEN executable_path = ? OR model_path = ? OR config_path = ?
+               THEN CURRENT_TIMESTAMP ELSE updated_at END
+         WHERE singleton = 1`,
+      )
+      .run(
+        KATAGO_LEGACY_DEFAULTS.executablePath,
+        executablePath,
+        KATAGO_LEGACY_DEFAULTS.modelPath,
+        modelPath,
+        KATAGO_LEGACY_DEFAULTS.configPath,
+        configPath,
+        KATAGO_LEGACY_DEFAULTS.executablePath,
+        KATAGO_LEGACY_DEFAULTS.modelPath,
+        KATAGO_LEGACY_DEFAULTS.configPath,
+      )
   }
 
   private importLegacyNotebooks() {
@@ -435,6 +475,7 @@ export class Store {
   }
 
   deleteAllForTests() {
+    this.deletedBenchmarkIds.clear()
     this.db.exec(
       'DELETE FROM benchmark_runs; DELETE FROM games; DELETE FROM technique_notebooks; DELETE FROM player_profiles; DELETE FROM provider_connections;',
     )
@@ -582,6 +623,7 @@ export class Store {
   }
 
   saveBenchmark(run: BenchmarkRun) {
+    if (this.deletedBenchmarkIds.has(run.id)) return
     this.db
       .prepare(
         `INSERT INTO benchmark_runs (id, status, phase, profile_id, run_json, created_at, updated_at, session_id, stage_key)
@@ -1143,6 +1185,7 @@ export class Store {
   }
 
   deleteBenchmark(id: string) {
+    this.deletedBenchmarkIds.add(id)
     const transaction = this.db.transaction(() => {
       this.db
         .prepare(

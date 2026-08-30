@@ -28,6 +28,7 @@ import {BenchmarkSessionService} from './benchmarkSessions'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
 import {createPlayerAdapter} from './providers'
+import {loadRuntimeConfig} from './config'
 import {
   listProblemSets,
   loadProblemSet,
@@ -41,7 +42,16 @@ const connectionSchema = z
     id: z.string().optional(),
     name: z.string().min(1),
     kind: providerKindSchema.exclude(['fake']),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z
+      .string()
+      .url()
+      .refine(
+        (value) => ['http:', 'https:'].includes(new URL(value).protocol),
+        {
+          message: 'Base URL must use http or https',
+        },
+      )
+      .optional(),
     supportsStructuredOutput: z.boolean().default(false),
     apiKey: z.string().optional(),
   })
@@ -125,12 +135,13 @@ export function createApp(
     clientDir?: string
   } = {},
 ) {
+  const runtime = loadRuntimeConfig()
   const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
   const store = options.store ?? new Store()
   const games = new GameService(store)
   const kataGo: KataGoAnalyzer =
     options.kataGo ??
-    (process.env.LINGGO_FAKE_KATAGO === '1'
+    (runtime.fakeKatago
       ? new DeterministicKataGo()
       : new KataGoEngine(store.getKataGoSettings()))
   const analysis = new AnalysisService(store, games, kataGo)
@@ -220,11 +231,11 @@ export function createApp(
   )
   app.get('/api/games/:id/positions/:turn', async (request) => {
     const {id, turn} = request.params as {id: string; turn: string}
-    return games.position(id, Number(turn))
+    return games.position(id, parseTurn(turn))
   })
   app.post('/api/games/:id/positions/:turn/katago', async (request) => {
     const {id, turn: rawTurn} = request.params as {id: string; turn: string}
-    const turn = Number(rawTurn)
+    const turn = parseTurn(rawTurn)
     const position = games.position(id, turn)
     const game = games.get(id)!
     const result = await kataGo.analyze({
@@ -324,7 +335,7 @@ export function createApp(
     send(analysis.open(id))
     const keepAlive = setInterval(
       () => response.write(': keep-alive\n\n'),
-      15_000,
+      runtime.sseKeepAliveMs,
     )
     analysis.events.on(id, send)
     request.raw.on('close', () => {
@@ -958,6 +969,15 @@ export function createApp(
 
 function notFound(): never {
   throw new Error('Game not found')
+}
+
+function parseTurn(value: string) {
+  if (!/^\d+$/.test(value))
+    throw new Error('Turn must be a non-negative integer')
+  const turn = Number(value)
+  if (!Number.isSafeInteger(turn))
+    throw new Error('Turn must be a non-negative integer')
+  return turn
 }
 
 function unfinishedGameUsesProfile(store: Store, profileIds: Set<string>) {

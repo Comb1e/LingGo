@@ -94,6 +94,12 @@ export type ModelTurnState =
       maxAttempts: number
       lastError: string
     }
+  | {
+      phase: 'repairing'
+      attempt: number
+      maxAttempts: number
+      lastError: string
+    }
 
 export interface LlmVisibleMessage {
   role: 'user' | 'assistant'

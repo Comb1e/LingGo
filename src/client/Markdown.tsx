@@ -6,7 +6,13 @@ export function Markdown({source}: {source: string}) {
   let list: string[] = []
   const flush = () => {
     if (!list.length) return
-    nodes.push(<ul key={`list-${nodes.length}`}>{list.map((value, index) => <li key={index}>{value}</li>)}</ul>)
+    nodes.push(
+      <ul key={`list-${nodes.length}`}>
+        {list.map((value, index) => (
+          <li key={index}>{value}</li>
+        ))}
+      </ul>,
+    )
     list = []
   }
   lines.forEach((line, index) => {
@@ -23,5 +29,9 @@ export function Markdown({source}: {source: string}) {
     } else if (line.trim()) nodes.push(<p key={index}>{line}</p>)
   })
   flush()
-  return <div className="markdown">{nodes.length ? nodes : <Fragment>(none)</Fragment>}</div>
+  return (
+    <div className="markdown">
+      {nodes.length ? nodes : <Fragment>(none)</Fragment>}
+    </div>
+  )
 }

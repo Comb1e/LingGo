@@ -679,15 +679,25 @@ export function GamePage() {
                 </span>
                 {game.modelTurn && (
                   <span className="model-turn-progress" role="status">
-                    {t('modelRequestAttempt', {
-                      attempt: game.modelTurn.attempt,
-                      maxAttempts: game.modelTurn.maxAttempts,
-                    })}
+                    {t(
+                      game.modelTurn.phase === 'repairing'
+                        ? 'modelRepairAttempt'
+                        : 'modelRequestAttempt',
+                      {
+                        attempt: game.modelTurn.attempt,
+                        maxAttempts: game.modelTurn.maxAttempts,
+                      },
+                    )}
                     {game.modelTurn.phase === 'retrying' && (
                       <small>
                         {t('modelRequestRetrying', {
                           error: game.modelTurn.lastError,
                         })}
+                      </small>
+                    )}
+                    {game.modelTurn.phase === 'repairing' && (
+                      <small>
+                        {t('modelRepairing', {error: game.modelTurn.lastError})}
                       </small>
                     )}
                   </span>
