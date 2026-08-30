@@ -1129,8 +1129,10 @@ export class BenchmarkService {
           'Preserve correct, useful knowledge while improving clarity and actionability.',
         ]
       : []
+    const notebookBudgetInstruction = `Keep the complete Markdown notebook to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`
     const prompt = isLifeDeath(run)
       ? [
+          notebookBudgetInstruction,
           LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION,
           ...(readOnlyContext
             ? [
@@ -1146,6 +1148,7 @@ export class BenchmarkService {
           'Return only the complete Markdown notebook.',
         ].join('\n')
       : [
+          notebookBudgetInstruction,
           'Write a complete Markdown Go technique notebook from the authoritative rules below.',
           'Choose the organization, headings, level of detail, and writing style yourself.',
           'Do not invent lessons from games, positions, or analysis that were not supplied.',

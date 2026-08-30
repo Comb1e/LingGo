@@ -1153,6 +1153,12 @@ describe('benchmark scoring and prompts', () => {
       expect(moveRules).toContain(rule)
     }
     expect(prompts[0]).toContain('# Original source')
+    expect(prompts[0].split('\n', 1)[0]).toBe(
+      'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
+    )
+    expect(prompts[0].indexOf('at most 8,000 estimated tokens')).toBeLessThan(
+      prompts[0].indexOf('Write a complete Markdown Go technique notebook'),
+    )
     expect(prompts[0]).not.toContain('Use exactly this Markdown structure')
     expect(prompts[0]).not.toContain('## Opening')
     expect(prompts[0]).not.toContain('## Fighting')
@@ -1276,6 +1282,9 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(prompts[0]).toContain(
       'A life-and-death problem is a local tactical position',
+    )
+    expect(prompts[0].split('\n', 1)[0]).toBe(
+      'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
     )
     expect(prompts[0]).toContain('A defender aims for unconditional life')
     expect(prompts[0]).toContain(
