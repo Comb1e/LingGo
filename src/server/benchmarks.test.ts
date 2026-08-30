@@ -1326,6 +1326,9 @@ describe('benchmark scoring and prompts', () => {
     expect(solvingPrompt).not.toContain('O = White')
     expect(solvingPrompt).not.toContain('. = empty')
     expect(actionPrompts[1]).toContain('PREVIOUS ATTEMPT FAILED')
+    expect(actionPrompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
+      actionPrompts[0].indexOf('CURRENT PROBLEM'),
+    )
     expect(actionPrompts.slice(1)).toEqual(
       expect.not.arrayContaining([
         expect.stringContaining('SELF-WRITTEN SKILLS'),
@@ -1428,6 +1431,17 @@ describe('benchmark scoring and prompts', () => {
     ).toHaveLength(5)
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
     expect(patchRequest?.content.match(/feedback:/g)).toHaveLength(5)
+    expect(patchRequest?.content).toContain(
+      'UPDATE TRIGGER: FAILED_AFTER_5_ATTEMPTS',
+    )
+    expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+    expect(patchRequest?.content).toContain('"minProperties": 1')
+    expect(patchRequest?.content).toContain(
+      'Each key must be the number of an existing notebook note to replace.',
+    )
+    expect(patchRequest?.content).toContain(
+      'Do not return Markdown, the whole notebook, unchanged notes',
+    )
     expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
     expect(patchRequest?.content).not.toContain('1. Read liberties.')
     expect(redoRequest?.transcript).toEqual([])
@@ -1453,6 +1467,7 @@ describe('benchmark scoring and prompts', () => {
     const prompts: string[] = []
     const snapshots: GameSnapshot[] = []
     const cacheKeys: Array<string | undefined> = []
+    let notebookUpdatePrompt = ''
     let actionIndex = 0
     const adapter = {
       async requestAction(
@@ -1477,6 +1492,7 @@ describe('benchmark scoring and prompts', () => {
       },
       async requestText(prompt: string, signal: AbortSignal) {
         if (prompt.includes('Update the technique notebook')) {
+          notebookUpdatePrompt = prompt
           updateReady.resolve()
           await updateGate.promise
         }
@@ -1506,6 +1522,9 @@ describe('benchmark scoring and prompts', () => {
     await updateReady.promise
     expect(prompts).toHaveLength(problem.solution.length)
     expect(prompts[0]).toContain('SELF-WRITTEN SKILLS')
+    expect(prompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
+      prompts[0].indexOf('CURRENT PROBLEM'),
+    )
     expect(
       prompts
         .slice(1)
@@ -1529,6 +1548,11 @@ describe('benchmark scoring and prompts', () => {
     expect(snapshots[1].board[firstPoint![1]][firstPoint![0]]).toBe(1)
     expect(snapshots[2].board[secondPoint![1]][secondPoint![0]]).toBe(2)
     expect(service.get(created.id)?.usage.cachedInputTokens).toBe(16)
+    expect(notebookUpdatePrompt).toContain('UPDATE TRIGGER: SUCCESS')
+    expect(notebookUpdatePrompt).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+    expect(notebookUpdatePrompt).toContain(
+      'Include only notes that need improvement. Do not return Markdown, the whole notebook',
+    )
 
     service.pause(created.id)
     updateGate.resolve()

@@ -135,6 +135,21 @@ const lifeDeathNotebookPatchSchema = z
     message: 'At least one numbered note edit is required',
   })
 
+const LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION = [
+  'NOTEBOOK PATCH OUTPUT JSON SCHEMA',
+  '{',
+  '  "type": "object",',
+  '  "minProperties": 1,',
+  '  "propertyNames": {"pattern": "^[1-9]\\\\d*$"},',
+  '  "additionalProperties": {"type": "string", "minLength": 1}',
+  '}',
+  'Return exactly one JSON object matching this schema and no other text.',
+  'Each key must be the number of an existing notebook note to replace.',
+  "Each value must be that note's complete replacement content without the leading number and period.",
+  'Example: {"1":"Read every forcing reply before choosing the vital point."}',
+  'Include only notes that need improvement. Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or prose outside the JSON object.',
+].join('\n')
+
 export class BenchmarkConflictError extends Error {
   constructor() {
     super(
@@ -1299,6 +1314,7 @@ export class BenchmarkService {
             ...(failureFeedback
               ? ['', 'PREVIOUS ATTEMPT FAILED', failureFeedback]
               : []),
+            ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
             'CURRENT PROBLEM',
             `Expected side to move: ${currentSnapshot.toMove}`,
             `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
@@ -1312,7 +1328,6 @@ export class BenchmarkService {
                   )
                   .join('\n')
               : '(none)',
-            ...(notebook ? ['', 'SELF-WRITTEN SKILLS', notebook] : []),
           ].join('\n')
           const digest = createHash('sha256').update(prompt).digest('hex')
           if (responseAttempt === 0 && !progress.actions.length)
@@ -1445,6 +1460,9 @@ export class BenchmarkService {
         .slice(-MAX_LIFE_DEATH_PROBLEM_ATTEMPTS)
       const updatePrompt = [
         'Update the technique notebook after this life-and-death problem attempt.',
+        pending.correct
+          ? 'UPDATE TRIGGER: SUCCESS. The complete problem solution was correct.'
+          : `UPDATE TRIGGER: FAILED_AFTER_${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS}_ATTEMPTS. The problem was not solved after ${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS} attempts.`,
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'Use the complete solving conversation in this context, including every failed answer and its feedback, to choose the most useful existing note to improve.',
         'PROBLEM',
@@ -1460,9 +1478,7 @@ export class BenchmarkService {
               ),
             ]
           : []),
-        'Return only one JSON object whose keys are existing note numbers and whose string values are their complete replacement content.',
-        'Example: {"1":"replacement content"}',
-        'Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or any prose outside the JSON object.',
+        LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION,
       ].join('\n')
       const notebookAdapter = this.adapter(run)
       if (!notebookAdapter) {
@@ -1783,9 +1799,7 @@ export class BenchmarkService {
         this.save(run)
         prompt = [
           `Your previous notebook patch was invalid: ${publicError(error)}.`,
-          'Return only one JSON object whose keys are existing note numbers and whose string values are their complete replacement content.',
-          'Example: {"1":"replacement content"}',
-          'Do not return Markdown, the whole notebook, unchanged notes, new note numbers, or any prose outside the JSON object.',
+          LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION,
         ].join('\n')
       }
     }
