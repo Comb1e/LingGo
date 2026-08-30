@@ -3,7 +3,8 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {afterEach, describe, expect, it} from 'vitest'
 import type {KataGoAnalyzer} from './katago'
-import type {PlayerAction} from '../shared/types'
+import type {GameSnapshot} from '../shared/types'
+import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
 import {GameService} from './games'
 import {
@@ -1229,7 +1230,7 @@ describe('benchmark scoring and prompts', () => {
         const action =
           actionCalls === 1
             ? ({action: 'pass', comment: 'Pass.'} as const)
-            : (set.problems[0].expected as PlayerAction)
+            : set.problems[0].solution[actionCalls - 2]
         return {
           action,
           latencyMs: 0,
@@ -1294,11 +1295,16 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).not.toContain('komi')
     expect(prompts[0]).not.toContain('passing')
     expect(prompts[0]).not.toContain('resignation')
-    expect(actionPrompts).toHaveLength(2)
+    expect(actionPrompts).toHaveLength(4)
     const solvingPrompt = actionPrompts[0]
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
     expect(solvingPrompt).not.toContain('GO RULES')
     expect(actionPrompts[1]).toContain('PREVIOUS ATTEMPT FAILED')
+    expect(actionPrompts.slice(1)).toEqual(
+      expect.not.arrayContaining([
+        expect.stringContaining('SELF-WRITTEN SKILLS'),
+      ]),
+    )
     expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )
@@ -1310,6 +1316,98 @@ describe('benchmark scoring and prompts', () => {
     expect(
       await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
     ).toBe(true)
+    await service.close()
+  })
+
+  it('caches problem turns and advances the board after each correct step', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-life-progression-'))
+    const set = loadProblemSet('gogameguru-easy')
+    const problem = set.problems[0]
+    const updateReady = deferred()
+    const updateGate = deferred()
+    const prompts: string[] = []
+    const snapshots: GameSnapshot[] = []
+    const cacheKeys: Array<string | undefined> = []
+    let actionIndex = 0
+    const adapter = {
+      async requestAction(
+        snapshot: GameSnapshot,
+        signal: AbortSignal,
+        prompt?: string,
+        cacheKey?: string,
+      ) {
+        signal.throwIfAborted()
+        snapshots.push(snapshot)
+        prompts.push(prompt ?? '')
+        cacheKeys.push(cacheKey)
+        return {
+          action: problem.solution[actionIndex++],
+          latencyMs: 0,
+          inputTokens: 10,
+          cachedInputTokens: actionIndex > 1 ? 8 : 0,
+          outputTokens: 1,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+      async requestText(prompt: string, signal: AbortSignal) {
+        if (prompt.includes('Update the technique notebook')) {
+          updateReady.resolve()
+          await updateGate.promise
+        }
+        signal.throwIfAborted()
+        return {
+          text: '# Life techniques',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: set.id,
+      problemSetChecksum: set.checksum,
+    })
+
+    await updateReady.promise
+    expect(prompts).toHaveLength(problem.solution.length)
+    expect(prompts[0]).toContain('SELF-WRITTEN SKILLS')
+    expect(
+      prompts
+        .slice(1)
+        .every((prompt) => !prompt.includes('SELF-WRITTEN SKILLS')),
+    ).toBe(true)
+    expect(prompts[1]).toContain('Continue solving')
+    expect(prompts[1]).toContain('Expected side to move: W')
+    expect(prompts[2]).toContain('Expected side to move: B')
+    expect(new Set(cacheKeys)).toEqual(
+      new Set([`linggo:benchmark:${created.id}:problem:${problem.id}`]),
+    )
+    const [firstPoint, secondPoint] = problem.solution
+      .slice(0, 2)
+      .map((action) =>
+        action.action === 'play'
+          ? coordinateToPoint(action.coordinate, problem.size)
+          : undefined,
+      )
+    expect(firstPoint).toBeDefined()
+    expect(secondPoint).toBeDefined()
+    expect(snapshots[1].board[firstPoint![1]][firstPoint![0]]).toBe(1)
+    expect(snapshots[2].board[secondPoint![1]][secondPoint![0]]).toBe(2)
+    expect(service.get(created.id)?.usage.cachedInputTokens).toBe(16)
+
+    service.pause(created.id)
+    updateGate.resolve()
     await service.close()
   })
 
