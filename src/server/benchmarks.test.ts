@@ -3,6 +3,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {afterEach, describe, expect, it} from 'vitest'
 import type {KataGoAnalyzer} from './katago'
+import type {PlayerAction} from '../shared/types'
 import {Store} from './database'
 import {GameService} from './games'
 import {
@@ -1209,10 +1210,22 @@ describe('benchmark scoring and prompts', () => {
     const promptReady = deferred()
     const responseGate = deferred()
     const prompts: string[] = []
+    const actionPrompts: string[] = []
+    let actionCalls = 0
     const adapter = {
-      async requestAction() {
+      async requestAction(
+        _snapshot: unknown,
+        _signal: AbortSignal,
+        promptOverride?: string,
+      ) {
+        actionCalls += 1
+        if (promptOverride) actionPrompts.push(promptOverride)
+        const action =
+          actionCalls === 1
+            ? ({action: 'pass', comment: 'Pass.'} as const)
+            : (set.problems[0].expected as PlayerAction)
         return {
-          action: {action: 'pass' as const, comment: 'Pass.'},
+          action,
           latencyMs: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -1222,8 +1235,10 @@ describe('benchmark scoring and prompts', () => {
       },
       async requestText(prompt: string, signal: AbortSignal) {
         prompts.push(prompt)
-        promptReady.resolve()
-        await responseGate.promise
+        if (prompt.includes('Update the technique notebook')) {
+          promptReady.resolve()
+          await responseGate.promise
+        }
         signal.throwIfAborted()
         return {
           text: '# Life techniques',
@@ -1254,21 +1269,31 @@ describe('benchmark scoring and prompts', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'user',
-          content: expect.stringContaining(
-            'Solve the life-and-death Go problem.',
-          ),
-        }),
-        expect.objectContaining({
-          role: 'user',
           content: expect.stringContaining('Update the technique notebook'),
           pending: true,
         }),
       ]),
     )
     expect(prompts[0]).toContain(
+      'A life-and-death problem is a local tactical position',
+    )
+    expect(prompts[0]).toContain('A defender aims for unconditional life')
+    expect(prompts[0]).toContain(
+      'Record reusable reading techniques, shapes, vital points, liberties, eye-space concepts, and move-order principles.',
+    )
+    expect(prompts[0]).not.toContain('AUTHORITATIVE GO RULES')
+    expect(prompts[0]).not.toContain('komi')
+    expect(prompts[0]).not.toContain('passing')
+    expect(prompts[0]).not.toContain('resignation')
+    expect(actionPrompts).toHaveLength(2)
+    const solvingPrompt = actionPrompts[0]
+    expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
+    expect(solvingPrompt).not.toContain('GO RULES')
+    expect(actionPrompts[1]).toContain('PREVIOUS ATTEMPT FAILED')
+    expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )
-    expect(prompts[0]).toContain(
+    expect(prompts.at(-1)).toContain(
       "do not include the problem's answer coordinate or a step-by-step solution sequence.",
     )
     service.pause(created.id)

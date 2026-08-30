@@ -36,7 +36,7 @@ export function BenchmarksPage() {
     DEFAULT_BENCHMARK_TRAINING_VISITS,
   )
   const [evaluationVisits, setEvaluationVisits] = useState(10_000)
-  const [notebookTokenBudget, setNotebookTokenBudget] = useState(10_000)
+  const [notebookTokenBudget, setNotebookTokenBudget] = useState(3_000)
   const [withWinRates, setWithWinRates] = useState(5)
   const [withoutWinRates, setWithoutWinRates] = useState(5)
   const profileNotebooks = useQuery({

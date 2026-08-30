@@ -97,6 +97,21 @@ class KataGoUnavailableError extends Error {}
 const LIFE_DEATH_NOTEBOOK_INSTRUCTION =
   "Do not write the direct answer to an individual life-and-death problem in this notebook. Record only generalizable techniques and reasoning patterns; do not include the problem's answer coordinate or a step-by-step solution sequence."
 
+const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
+  'Write a complete Markdown life-and-death Go technique notebook.',
+  'A life-and-death problem is a local tactical position about whether an unsettled group can survive or be captured under best play.',
+  "The side to move must find the correct first move and read the opponent's strongest resistance.",
+  'A defender aims for unconditional life, normally through two independent eyes, a safe connection, or escape.',
+  'An attacker aims to prevent life and force capture. Ko and seki should be recognized where relevant.',
+  'Record reusable reading techniques, shapes, vital points, liberties, eye-space concepts, and move-order principles.',
+  'Write the reusable knowledge as individually numbered points such as 1. ... and 2. ... so later lessons can be edited by point number.',
+  LIFE_DEATH_NOTEBOOK_INSTRUCTION,
+  'Do not record individual problem coordinates, positions, or solution sequences.',
+  'Choose the organization, headings, level of detail, and writing style yourself.',
+].join('\n')
+
+const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = 3
+
 export class BenchmarkConflictError extends Error {
   constructor() {
     super(
@@ -261,7 +276,10 @@ export class BenchmarkService {
       id,
       protocolVersion: metadata ? 4 : problemSet ? 3 : 2,
       status: 'queued',
-      phase: problemSet ? 'solving_problem' : 'initializing_notebook',
+      phase:
+        problemSet && metadata?.stageKey && metadata.stageKey !== 'easy'
+          ? 'solving_problem'
+          : 'initializing_notebook',
       substate: {kind: 'ready'},
       config,
       profileSnapshot: {...profile},
@@ -1052,32 +1070,47 @@ export class BenchmarkService {
           '',
           run.writableNotebookRole === 'ordinary'
             ? 'WRITABLE ORDINARY-GAME NOTEBOOK TO REFINE'
-            : 'EXISTING NOTEBOOK TO REFINE',
+            : 'WRITABLE LIFE-AND-DEATH NOTEBOOK TO REFINE',
           seedSnapshot.content,
           '',
           'Preserve correct, useful knowledge while improving clarity and actionability.',
         ]
       : []
-    const prompt = [
-      'Write a complete Markdown Go technique notebook from the authoritative rules below.',
-      'Choose the organization, headings, level of detail, and writing style yourself.',
-      'Do not invent lessons from games, positions, or analysis that were not supplied.',
-      ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
-      ...(readOnlyContext
-        ? [
-            'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
-            '',
-            'READ-ONLY REFERENCE NOTEBOOKS',
-            readOnlyContext,
-          ]
-        : []),
-      '',
-      'AUTHORITATIVE GO RULES',
-      ...formatCanonicalGoRules({size: 19, komi: 7.5}),
-      ...seed,
-      '',
-      'Return only the complete Markdown notebook.',
-    ].join('\n')
+    const prompt = isLifeDeath(run)
+      ? [
+          LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION,
+          ...(readOnlyContext
+            ? [
+                '',
+                'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
+                '',
+                'READ-ONLY REFERENCE NOTEBOOKS',
+                readOnlyContext,
+              ]
+            : []),
+          ...seed,
+          '',
+          'Return only the complete Markdown notebook.',
+        ].join('\n')
+      : [
+          'Write a complete Markdown Go technique notebook from the authoritative rules below.',
+          'Choose the organization, headings, level of detail, and writing style yourself.',
+          'Do not invent lessons from games, positions, or analysis that were not supplied.',
+          ...(readOnlyContext
+            ? [
+                'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
+                '',
+                'READ-ONLY REFERENCE NOTEBOOKS',
+                readOnlyContext,
+              ]
+            : []),
+          '',
+          'AUTHORITATIVE GO RULES',
+          ...formatCanonicalGoRules({size: 19, komi: 7.5}),
+          ...seed,
+          '',
+          'Return only the complete Markdown notebook.',
+        ].join('\n')
     const content = await this.requestValidNotebook(
       run,
       adapter,
@@ -1089,12 +1122,13 @@ export class BenchmarkService {
     run.notebookVersion = version.version
     run.notebookEstimatedTokens = version.estimatedTokens
     run.notebook.updatedAt = version.createdAt
-    run.initializationContext = {
-      transcript: [
-        {role: 'user', content: prompt},
-        {role: 'assistant', content},
-      ],
-    }
+    if (!isLifeDeath(run))
+      run.initializationContext = {
+        transcript: [
+          {role: 'user', content: prompt},
+          {role: 'assistant', content},
+        ],
+      }
     run.phase = isLifeDeath(run) ? 'solving_problem' : 'training_game'
     run.substate = {kind: 'ready'}
     run.updatedAt = version.createdAt
@@ -1127,30 +1161,6 @@ export class BenchmarkService {
       run.substate = {kind: 'ready'}
       this.save(run)
       if (!run.pendingProblem) {
-        const notebook = await this.runNotebook(run.id)
-        const prompt = [
-          'Solve the life-and-death Go problem. Use exactly one legal action and return the JSON action format.',
-          'AUTHORITATIVE GO RULES',
-          ...formatCanonicalGoRules(problem.snapshot),
-          'CURRENT PROBLEM',
-          `Expected side to move: ${problem.sideToMove}`,
-          `Captures: Black ${problem.snapshot.captures.B}, White ${problem.snapshot.captures.W}.`,
-          asciiBoard(problem.snapshot),
-          'Move list:',
-          problem.snapshot.moves.length
-            ? problem.snapshot.moves
-                .map(
-                  (move) =>
-                    `${move.number}. ${move.color} ${move.coordinate ?? move.action}`,
-                )
-                .join('\n')
-            : '(none)',
-          '',
-          'Return exactly one action.',
-          'SELF-WRITTEN SKILLS',
-          notebook,
-        ].join('\n')
-        const digest = createHash('sha256').update(prompt).digest('hex')
         const adapter = this.adapter(run)
         if (!adapter) {
           run.waitingFor = 'credentials'
@@ -1158,74 +1168,136 @@ export class BenchmarkService {
           this.save(run)
           return false
         }
-        let actual: PlayerAction | undefined
-        let responseDigest: string | undefined
-        let failureReason: string | undefined
-        let legal = false
-        let correct = false
-        try {
-          const response = await this.requestProblemAction(
-            run,
-            adapter,
-            problem,
-            prompt,
-            signal,
-          )
-          addUsage(run, response, 'solving_problem')
-          actual = response.action
-          responseDigest = createHash('sha256')
-            .update(response.responseContent ?? JSON.stringify(actual))
-            .digest('hex')
-          const score = scoreProblemAction(
-            actual,
-            problem.expected as PlayerAction,
-            problem.snapshot,
-          )
-          legal = score.legal
-          correct = score.correct
-          failureReason = score.reason
-        } catch (error) {
-          if (signal.aborted) throw error
-          failureReason =
-            error instanceof Error ? error.message : 'Malformed action'
+        let failureFeedback: string | undefined
+        let lastFailureAction: PlayerAction | undefined
+        let lastFailureReason: string | undefined
+        for (
+          let responseAttempt = 0;
+          responseAttempt < MAX_LIFE_DEATH_PROBLEM_ATTEMPTS;
+          responseAttempt += 1
+        ) {
+          const notebook = await this.runNotebook(run.id)
+          const prompt = [
+            'Solve the life-and-death Go problem. Use exactly one legal action.',
+            'OUTPUT JSON SCHEMA',
+            '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
+            'Return exactly one JSON action object and no other fields or prose.',
+            ...(failureFeedback
+              ? ['', 'PREVIOUS ATTEMPT FAILED', failureFeedback]
+              : []),
+            'CURRENT PROBLEM',
+            `Expected side to move: ${problem.sideToMove}`,
+            `Captures: Black ${problem.snapshot.captures.B}, White ${problem.snapshot.captures.W}.`,
+            asciiBoard(problem.snapshot),
+            'Move list:',
+            problem.snapshot.moves.length
+              ? problem.snapshot.moves
+                  .map(
+                    (move) =>
+                      `${move.number}. ${move.color} ${move.coordinate ?? move.action}`,
+                  )
+                  .join('\n')
+              : '(none)',
+            '',
+            'SELF-WRITTEN SKILLS',
+            notebook,
+          ].join('\n')
+          const digest = createHash('sha256').update(prompt).digest('hex')
+          if (responseAttempt === 0) this.clearProblemContext(run)
+          let actual: PlayerAction | undefined
+          let responseDigest: string | undefined
+          let failureReason: string | undefined
+          let legal = false
+          let correct = false
+          try {
+            const response = await this.requestProblemAction(
+              run,
+              adapter,
+              problem,
+              prompt,
+              signal,
+            )
+            addUsage(run, response, 'solving_problem')
+            actual = response.action
+            responseDigest = createHash('sha256')
+              .update(response.responseContent ?? JSON.stringify(actual))
+              .digest('hex')
+            const score = scoreProblemAction(
+              actual,
+              problem.expected as PlayerAction,
+              problem.snapshot,
+            )
+            legal = score.legal
+            correct = score.correct
+            failureReason = score.reason
+          } catch (error) {
+            if (signal.aborted) throw error
+            failureReason =
+              error instanceof Error ? error.message : 'Malformed action'
+          }
+          const attempt: BenchmarkProblemAttempt = {
+            runId: run.id,
+            sequence:
+              this.store.listBenchmarkProblemAttempts(run.id).length + 1,
+            problemId: problem.id,
+            cursor,
+            actualAction: actual,
+            expectedAction: problem.expected as PlayerAction,
+            legal,
+            correct,
+            firstResponse: responseAttempt === 0,
+            failureReason,
+            notebookVersionBefore: run.notebookVersion,
+            promptDigest: digest,
+            responseDigest,
+            createdAt: new Date().toISOString(),
+          }
+          this.store.saveBenchmarkProblemAttempt(attempt)
+          if (correct) {
+            run.problemSuccessStreak = (run.problemSuccessStreak ?? 0) + 1
+            run.pendingProblem = {
+              problemId: problem.id,
+              cursor,
+              actualAction: actual,
+              legal,
+              correct,
+              failureReason,
+              promptDigest: digest,
+              responseDigest,
+              notebookVersionBefore: run.notebookVersion,
+            }
+            this.save(run)
+            break
+          }
+          run.problemSuccessStreak = 0
+          lastFailureAction = actual
+          lastFailureReason = failureReason
+          failureFeedback = [
+            `Your previous action was ${actual ? JSON.stringify(actual) : 'missing or malformed'}.`,
+            `It failed because: ${failureReason ?? 'the action was incorrect'}.`,
+            'Solve the original problem again from the unchanged position and return one corrected JSON action.',
+          ].join(' ')
+          this.save(run)
         }
-        if (!correct) run.problemSuccessStreak = 0
-        else run.problemSuccessStreak = (run.problemSuccessStreak ?? 0) + 1
-        run.pendingProblem = {
-          problemId: problem.id,
-          cursor,
-          actualAction: actual,
-          legal,
-          correct,
-          failureReason,
-          promptDigest: digest,
-          responseDigest,
-          notebookVersionBefore: run.notebookVersion,
+        if (!run.pendingProblem) {
+          run.pendingProblem = {
+            problemId: problem.id,
+            cursor,
+            actualAction: lastFailureAction,
+            legal: false,
+            correct: false,
+            failureReason: lastFailureReason ?? failureFeedback,
+            promptDigest: '',
+            notebookVersionBefore: run.notebookVersion,
+          }
+          this.save(run)
         }
-        const attempt: BenchmarkProblemAttempt = {
-          runId: run.id,
-          sequence: this.store.listBenchmarkProblemAttempts(run.id).length + 1,
-          problemId: problem.id,
-          cursor,
-          actualAction: actual,
-          expectedAction: problem.expected as PlayerAction,
-          legal,
-          correct,
-          firstResponse: true,
-          failureReason,
-          notebookVersionBefore: run.notebookVersion,
-          promptDigest: digest,
-          responseDigest,
-          createdAt: new Date().toISOString(),
-        }
-        this.store.saveBenchmarkProblemAttempt(attempt)
-        this.save(run)
       }
       run.phase = 'updating_problem_notebook'
       const pending = run.pendingProblem!
       const prior = await this.runNotebook(run.id)
       const updatePrompt = [
-        'Update the technique notebook based on this one life-and-death problem.',
+        'Update the technique notebook after this life-and-death problem attempt.',
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'PRIOR NOTEBOOK',
         prior,
@@ -1233,7 +1305,8 @@ export class BenchmarkService {
         asciiBoard(problem.snapshot),
         `MODEL ANSWER: ${pending.actualAction ? JSON.stringify(pending.actualAction) : '(malformed)'}`,
         `CORRECT: ${pending.correct}; EXPECTED: ${JSON.stringify(problem.expected)}`,
-        'Return only the complete replacement Markdown notebook.',
+        'Return only numbered point edits in the form N. concise lesson.',
+        'Replace an existing point by its number or add a new point number. Do not rewrite or repeat unchanged points.',
       ].join('\n')
       const notebookAdapter = this.adapter(run)
       if (!notebookAdapter) {
@@ -1242,21 +1315,24 @@ export class BenchmarkService {
         this.save(run)
         return false
       }
-      const content = await this.requestValidNotebook(
+      const notebookEdits = await this.requestValidNotebook(
         run,
         notebookAdapter,
         updatePrompt,
         'problem_notebook',
         signal,
       )
+      const content = mergeLifeDeathNotebookEdits(prior, notebookEdits)
       const version = notebookVersion(run, 'problem_notebook', content)
       run.notebookVersion = version.version
       run.notebookEstimatedTokens = version.estimatedTokens
       run.notebook.updatedAt = version.createdAt
+      const solved = pending.correct
       run.pendingProblem = undefined
-      run.problemCursor = (cursor + 1) % required
+      run.problemCursor = solved ? (cursor + 1) % required : cursor
       this.store.saveBenchmarkNotebookVersion(run, version)
       await this.notebooks.writeRunSnapshot(run.id, content)
+      this.clearProblemContext(run)
       const attempts = this.store.listBenchmarkProblemAttempts(run.id)
       const last = attempts.at(-1)!
       last.notebookVersionAfter = version.version
@@ -1266,9 +1342,7 @@ export class BenchmarkService {
         ...(run.metrics ?? ({} as any)),
         problemCount: required,
         problemAttempts: allAttempts.length,
-        firstResponseSuccessRate:
-          allAttempts.filter((attempt) => attempt.correct).length /
-          Math.max(1, allAttempts.length),
+        firstResponseSuccessRate: firstResponseSuccessRate(allAttempts),
         problemFailures: allAttempts.filter((attempt) => !attempt.correct)
           .length,
         completedCleanCycles: 0,
@@ -1281,11 +1355,9 @@ export class BenchmarkService {
         ...(run.metrics ?? ({} as any)),
         problemCount: required,
         problemAttempts: this.store.listBenchmarkProblemAttempts(run.id).length,
-        firstResponseSuccessRate:
-          this.store
-            .listBenchmarkProblemAttempts(run.id)
-            .filter((a) => a.correct).length /
-          Math.max(1, this.store.listBenchmarkProblemAttempts(run.id).length),
+        firstResponseSuccessRate: firstResponseSuccessRate(
+          this.store.listBenchmarkProblemAttempts(run.id),
+        ),
         problemFailures: this.store
           .listBenchmarkProblemAttempts(run.id)
           .filter((a) => !a.correct).length,
@@ -1698,6 +1770,13 @@ export class BenchmarkService {
     this.save(run)
   }
 
+  private clearProblemContext(run: InternalRun) {
+    run.llmMessages = []
+    run.updatedAt = new Date().toISOString()
+    this.store.saveBenchmark(run)
+    this.emit(run)
+  }
+
   private recordLlmResponse(run: InternalRun, content?: string) {
     const messages = (run.llmMessages ??= [])
     const previous = messages.at(-1)
@@ -1730,6 +1809,28 @@ function isRepairableMoveError(error: unknown) {
     error instanceof MalformedModelOutputError ||
     error instanceof NoOutputGeneratedError
   )
+}
+
+function mergeLifeDeathNotebookEdits(prior: string, edits: string) {
+  const pointEdits = edits
+    .split('\n')
+    .map((line) => line.trim())
+    .map((line) => /^(\d+)\.\s+(.+)$/.exec(line))
+    .filter((match): match is RegExpExecArray => Boolean(match))
+    .map((match) => ({
+      number: Number(match[1]),
+      line: `${match[1]}. ${match[2]}`,
+    }))
+  if (!pointEdits.length) return prior.trim()
+  const lines = prior.trim().split('\n')
+  for (const edit of pointEdits) {
+    const index = lines.findIndex((line) =>
+      new RegExp(`^${edit.number}\\.\\s+`).test(line.trim()),
+    )
+    if (index >= 0) lines[index] = edit.line
+    else lines.push(edit.line)
+  }
+  return lines.join('\n').trim()
 }
 
 function isUniqueConstraintError(error: unknown) {
@@ -1814,6 +1915,14 @@ function average(values: number[]) {
     : 0
 }
 
+function firstResponseSuccessRate(attempts: BenchmarkProblemAttempt[]) {
+  const firstResponses = attempts.filter((attempt) => attempt.firstResponse)
+  return (
+    firstResponses.filter((attempt) => attempt.correct).length /
+    Math.max(1, firstResponses.length)
+  )
+}
+
 function addUsage(
   run: InternalRun,
   value: {
@@ -1871,7 +1980,7 @@ function normalizeConfig(
     trainingGamesWithoutWinRates: input.includeTrainingWinRates
       ? 0
       : input.trainingGameCount,
-    notebookTokenBudget: 8000,
+    notebookTokenBudget: 3000,
     trainingVisits: input.visits,
     evaluationVisits: input.visits,
   }

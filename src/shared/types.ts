@@ -382,7 +382,7 @@ export const benchmarkSessionConfigSchema = z
     trainingGamesWithWinRates: z.number().int().min(0).max(1000),
     trainingGamesWithoutWinRates: z.number().int().min(0).max(1000),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
-    notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
+    notebookTokenBudget: z.number().int().min(256).max(100_000).default(3_000),
     trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
   })
@@ -423,7 +423,7 @@ export const benchmarkConfigSchema = z
     trainingGamesWithoutWinRates: z.number().int().min(0).max(1000).optional(),
     notebookSeed: notebookSeedSchema.default({mode: 'rules_only'}),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
-    notebookTokenBudget: z.number().int().min(256).max(100_000).default(10_000),
+    notebookTokenBudget: z.number().int().min(256).max(100_000).default(3_000),
     trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
     problemSetId: z.string().min(1).optional(),

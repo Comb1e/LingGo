@@ -60,7 +60,7 @@ describe('benchmark configuration', () => {
     ).toMatchObject({
       notebookSeed: {mode: 'rules_only'},
       trainingFeedback: 'structured',
-      notebookTokenBudget: 10_000,
+      notebookTokenBudget: 3_000,
       trainingVisits: 10_000,
       evaluationVisits: 10_000,
     })
