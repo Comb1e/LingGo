@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {existsSync} from 'node:fs'
 
 const booleanEnv = z
   .enum(['0', '1', 'true', 'false'])
@@ -83,3 +84,32 @@ export const KATAGO_PORTABLE_DEFAULTS = {
   modelPath: 'model.bin.gz',
   configPath: 'analysis_config.cfg',
 } as const
+
+/**
+ * Resolve the built-in KataGo paths without replacing an installed local
+ * bundle with placeholders that cannot be launched from the project cwd.
+ */
+export function resolveKataGoDefaults(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = existsSync,
+) {
+  const executablePath =
+    env.LINGGO_KATAGO_EXECUTABLE_PATH ?? env.LINGGO_KATAGO_PATH
+  const modelPath = env.LINGGO_KATAGO_MODEL_PATH ?? env.LINGGO_KATAGO_MODEL
+  const configPath = env.LINGGO_KATAGO_CONFIG_PATH ?? env.LINGGO_KATAGO_CONFIG
+  const hasOverrides = Boolean(executablePath || modelPath || configPath)
+  const hasLegacyInstall = [
+    KATAGO_LEGACY_DEFAULTS.executablePath,
+    KATAGO_LEGACY_DEFAULTS.modelPath,
+    KATAGO_LEGACY_DEFAULTS.configPath,
+  ].every((path) => exists(path))
+  const defaults =
+    !hasOverrides && hasLegacyInstall
+      ? KATAGO_LEGACY_DEFAULTS
+      : KATAGO_PORTABLE_DEFAULTS
+  return {
+    executablePath: executablePath ?? defaults.executablePath,
+    modelPath: modelPath ?? defaults.modelPath,
+    configPath: configPath ?? defaults.configPath,
+  }
+}

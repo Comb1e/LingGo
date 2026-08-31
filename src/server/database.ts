@@ -21,7 +21,11 @@ import type {
   TechniqueNotebookSummary,
 } from '../shared/types'
 import type {LlmGameContext} from './llmGameContext'
-import {KATAGO_LEGACY_DEFAULTS, KATAGO_PORTABLE_DEFAULTS} from './config'
+import {
+  KATAGO_LEGACY_DEFAULTS,
+  KATAGO_PORTABLE_DEFAULTS,
+  resolveKataGoDefaults,
+} from './config'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -45,40 +49,46 @@ export class Store {
   }
 
   private reconcileLegacyKataGoSettings() {
-    const executablePath =
-      process.env.LINGGO_KATAGO_EXECUTABLE_PATH ??
-      process.env.LINGGO_KATAGO_PATH ??
-      KATAGO_PORTABLE_DEFAULTS.executablePath
-    const modelPath =
-      process.env.LINGGO_KATAGO_MODEL_PATH ??
-      process.env.LINGGO_KATAGO_MODEL ??
-      KATAGO_PORTABLE_DEFAULTS.modelPath
-    const configPath =
-      process.env.LINGGO_KATAGO_CONFIG_PATH ??
-      process.env.LINGGO_KATAGO_CONFIG ??
-      KATAGO_PORTABLE_DEFAULTS.configPath
+    const defaults = resolveKataGoDefaults()
+    const row = this.db
+      .prepare('SELECT * FROM katago_settings WHERE singleton = 1')
+      .get() as
+      | {
+          executable_path: string
+          model_path: string
+          config_path: string
+        }
+      | undefined
+    if (!row) return
+    const next = {
+      executablePath:
+        row.executable_path === KATAGO_LEGACY_DEFAULTS.executablePath ||
+        row.executable_path === KATAGO_PORTABLE_DEFAULTS.executablePath
+          ? defaults.executablePath
+          : row.executable_path,
+      modelPath:
+        row.model_path === KATAGO_LEGACY_DEFAULTS.modelPath ||
+        row.model_path === KATAGO_PORTABLE_DEFAULTS.modelPath
+          ? defaults.modelPath
+          : row.model_path,
+      configPath:
+        row.config_path === KATAGO_LEGACY_DEFAULTS.configPath ||
+        row.config_path === KATAGO_PORTABLE_DEFAULTS.configPath
+          ? defaults.configPath
+          : row.config_path,
+    }
+    if (
+      next.executablePath === row.executable_path &&
+      next.modelPath === row.model_path &&
+      next.configPath === row.config_path
+    )
+      return
     this.db
       .prepare(
-        `UPDATE katago_settings
-         SET executable_path = CASE WHEN executable_path = ? THEN ? ELSE executable_path END,
-             model_path = CASE WHEN model_path = ? THEN ? ELSE model_path END,
-             config_path = CASE WHEN config_path = ? THEN ? ELSE config_path END,
-             updated_at = CASE
-               WHEN executable_path = ? OR model_path = ? OR config_path = ?
-               THEN CURRENT_TIMESTAMP ELSE updated_at END
-         WHERE singleton = 1`,
+        `UPDATE katago_settings SET executable_path = ?, model_path = ?,
+         config_path = ?, updated_at = CURRENT_TIMESTAMP WHERE singleton = 1`,
       )
-      .run(
-        KATAGO_LEGACY_DEFAULTS.executablePath,
-        executablePath,
-        KATAGO_LEGACY_DEFAULTS.modelPath,
-        modelPath,
-        KATAGO_LEGACY_DEFAULTS.configPath,
-        configPath,
-        KATAGO_LEGACY_DEFAULTS.executablePath,
-        KATAGO_LEGACY_DEFAULTS.modelPath,
-        KATAGO_LEGACY_DEFAULTS.configPath,
-      )
+      .run(next.executablePath, next.modelPath, next.configPath)
   }
 
   private importLegacyNotebooks() {
