@@ -87,14 +87,7 @@ export interface PlayerAdapter {
     signal: AbortSignal,
     cacheKey?: string,
     maxOutputTokens?: number,
-  ): Promise<{
-    text: string
-    latencyMs: number
-    inputTokens: number
-    cachedInputTokens?: number
-    outputTokens: number
-    model: string
-  }>
+  ): Promise<LlmTextResponse>
   requestTextTurn?(
     request: TextTurnRequest,
     signal: AbortSignal,
@@ -129,6 +122,119 @@ export interface LlmTurnResponse {
   outputTokens: number
   model: string
   providerKind?: ProviderConnection['kind']
+}
+
+export interface LlmTextResponse {
+  text: string
+  latencyMs: number
+  inputTokens: number
+  cachedInputTokens?: number
+  outputTokens: number
+  model: string
+}
+
+export type LlmRequest =
+  | {type: 'turn'; request: LlmTurnRequest}
+  | {type: 'textTurn'; request: TextTurnRequest}
+  | {
+      type: 'text'
+      content: string
+      cacheKey?: string
+      maxOutputTokens?: number
+    }
+
+export function requestLlm(
+  adapter: PlayerAdapter,
+  request: Extract<LlmRequest, {type: 'turn'}>,
+  signal: AbortSignal,
+): Promise<LlmTurnResponse>
+export function requestLlm(
+  adapter: PlayerAdapter,
+  request: Extract<LlmRequest, {type: 'text'}>,
+  signal: AbortSignal,
+): Promise<LlmTextResponse>
+export function requestLlm(
+  adapter: PlayerAdapter,
+  request: Extract<LlmRequest, {type: 'textTurn'}>,
+  signal: AbortSignal,
+): Promise<LlmTurnResponse | LlmTextResponse>
+export async function requestLlm(
+  adapter: PlayerAdapter,
+  request: LlmRequest,
+  signal: AbortSignal,
+): Promise<LlmTurnResponse | LlmTextResponse> {
+  if (request.type === 'text') {
+    if (!adapter.requestText)
+      throw new Error('The selected provider cannot generate text')
+    return adapter.requestText(
+      request.content,
+      signal,
+      request.cacheKey,
+      request.maxOutputTokens,
+    )
+  }
+
+  if (request.type === 'textTurn') {
+    if (adapter.requestTextTurn)
+      return adapter.requestTextTurn(request.request, signal)
+    if (!adapter.requestText)
+      throw new Error('The selected provider cannot generate text')
+    return adapter.requestText(
+      textFallbackPrompt(request.request),
+      signal,
+      request.request.cacheKey,
+      request.request.maxOutputTokens,
+    )
+  }
+
+  if (adapter.requestTurn) return adapter.requestTurn(request.request, signal)
+  if (request.request.output !== 'action') {
+    if (!adapter.requestText)
+      throw new Error('The selected provider cannot generate text')
+    const response = await adapter.requestText(
+      textFallbackPrompt(request.request),
+      signal,
+      request.request.cacheKey,
+    )
+    return response
+  }
+
+  const result = await adapter.requestAction(
+    request.request.snapshot,
+    signal,
+    textFallbackPrompt(request.request),
+    request.request.cacheKey,
+  )
+  return {
+    text:
+      result.responseContent ??
+      JSON.stringify({
+        move:
+          result.action.action === 'play'
+            ? result.action.coordinate
+            : result.action.action,
+        reason: result.action.comment?.trim() || 'No explanation provided.',
+      }),
+    reasoning: result.reasoning,
+    latencyMs: result.latencyMs,
+    inputTokens: result.inputTokens,
+    cachedInputTokens: result.cachedInputTokens,
+    outputTokens: result.outputTokens,
+    model: result.model,
+    providerKind: result.providerKind,
+  }
+}
+
+function textFallbackPrompt(
+  request: Pick<TextTurnRequest, 'content' | 'transcript'>,
+) {
+  if (!request.transcript.length) return request.content
+  return [
+    ...request.transcript.map(
+      (message) => `${message.role.toUpperCase()}: ${message.content}`,
+    ),
+    `USER: ${request.content}`,
+  ].join('\n')
 }
 
 export class MalformedModelOutputError extends Error {
@@ -372,7 +478,13 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     signal: AbortSignal,
   ) {
     const started = Date.now()
-    const messages = providerMessages(this.connection.kind, request)
+    const previousResponseId = supportsProviderContinuation(this.connection)
+      ? request.previousResponseId
+      : undefined
+    const messages = providerMessages(this.connection.kind, {
+      ...request,
+      previousResponseId,
+    })
     const result =
       this.connection.kind === 'deepseek'
         ? await this.requestDeepSeekMessages(
@@ -382,7 +494,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           )
         : await this.requestWithSdk(
             messages,
-            request.previousResponseId,
+            previousResponseId,
             request.cacheKey,
             signal,
             request.maxOutputTokens,
@@ -899,6 +1011,12 @@ export function createPlayerAdapter(
   const key = vault.get(connection)
   if (!key) throw new Error(`No API key configured for ${connection.name}`)
   return new LlmPlayerAdapter(connection, profile, key)
+}
+
+export function supportsProviderContinuation(
+  connection: Pick<ProviderConnection, 'kind' | 'baseUrl'>,
+) {
+  return connection.kind === 'openai' && !connection.baseUrl
 }
 
 export function validateProviderBaseUrl(value: string) {

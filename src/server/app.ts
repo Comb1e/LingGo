@@ -27,7 +27,7 @@ import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {BenchmarkSessionService} from './benchmarkSessions'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
-import {createPlayerAdapter} from './providers'
+import {createPlayerAdapter, requestLlm} from './providers'
 import {loadRuntimeConfig} from './config'
 import {
   listProblemSets,
@@ -475,10 +475,9 @@ export function createApp(
       {...input, id: 'profile-test'},
       games.vault,
     )
-    if (!adapter.requestText)
-      throw new Error('This provider does not support profile tests')
-    const result = await adapter.requestText(
-      'Reply with exactly: OK',
+    const result = await requestLlm(
+      adapter,
+      {type: 'text', content: 'Reply with exactly: OK'},
       AbortSignal.timeout(30_000),
     )
     return {ok: true, ...result}

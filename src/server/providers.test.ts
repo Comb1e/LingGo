@@ -10,12 +10,119 @@ import {
   makePrompt,
   parseJsonAction,
   parseJsonActionResult,
+  type PlayerAdapter,
+  requestLlm,
   SecretVault,
+  supportsProviderContinuation,
 } from './providers'
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('provider normalization', () => {
+  it('preserves conversation context through the text fallback', async () => {
+    let received = ''
+    const adapter = {
+      async requestAction() {
+        throw new Error('Action fallback should not be used')
+      },
+      async requestText(prompt: string) {
+        received = prompt
+        return {
+          text: '# Updated notebook',
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+        }
+      },
+    } satisfies PlayerAdapter
+    const snapshot = {
+      size: 9 as const,
+      board: emptyBoard(9),
+      toMove: 'B' as const,
+      moves: [],
+      captures: {B: 0, W: 0},
+      komi: 7.5,
+      rules: 'Chinese',
+    }
+
+    await requestLlm(
+      adapter,
+      {
+        type: 'turn',
+        request: {
+          kind: 'reflection',
+          content: 'Update the notebook.',
+          transcript: [
+            {role: 'user', content: 'Initial board and notebook'},
+            {role: 'assistant', content: '{"move":"A9","reason":"Test"}'},
+          ],
+          cacheKey: 'test-context',
+          snapshot,
+          output: 'notebook',
+        },
+      },
+      new AbortController().signal,
+    )
+
+    expect(received).toContain('USER: Initial board and notebook')
+    expect(received).toContain('ASSISTANT: {"move":"A9","reason":"Test"}')
+    expect(received).toContain('USER: Update the notebook.')
+  })
+
+  it('preserves conversation context through the action fallback', async () => {
+    let received = ''
+    const adapter = {
+      async requestAction(
+        _snapshot: GameSnapshot,
+        _signal: AbortSignal,
+        prompt?: string,
+      ) {
+        received = prompt ?? ''
+        return {
+          action: {action: 'pass' as const, comment: 'Done.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    const snapshot = {
+      size: 9 as const,
+      board: emptyBoard(9),
+      toMove: 'B' as const,
+      moves: [],
+      captures: {B: 0, W: 0},
+      komi: 7.5,
+      rules: 'Chinese',
+    }
+
+    await requestLlm(
+      adapter,
+      {
+        type: 'turn',
+        request: {
+          kind: 'continuation',
+          content: 'Choose the next move.',
+          transcript: [
+            {role: 'user', content: 'Initial board'},
+            {role: 'assistant', content: '{"move":"A9","reason":"Test"}'},
+          ],
+          cacheKey: 'test-action-context',
+          snapshot,
+          output: 'action',
+        },
+      },
+      new AbortController().signal,
+    )
+
+    expect(received).toContain('USER: Initial board')
+    expect(received).toContain('ASSISTANT: {"move":"A9","reason":"Test"}')
+    expect(received).toContain('USER: Choose the next move.')
+  })
+
   it('varies fake life-and-death notebook patch notes by problem context', async () => {
     const adapter = new FakePlayerAdapter()
     const snapshot = {
@@ -67,6 +174,17 @@ describe('provider normalization', () => {
     expect(isOpenAiReasoningModel('gpt-5-chat-latest')).toBe(false)
     expect(isOpenAiReasoningModel('gpt-4.1')).toBe(false)
     expect(isOpenAiReasoningModel('ft:gpt-5:custom')).toBe(false)
+  })
+
+  it('uses managed continuation only for the native OpenAI endpoint', () => {
+    expect(supportsProviderContinuation({kind: 'openai'})).toBe(true)
+    expect(
+      supportsProviderContinuation({
+        kind: 'openai',
+        baseUrl: 'https://proxy.example.test/v1',
+      }),
+    ).toBe(false)
+    expect(supportsProviderContinuation({kind: 'compatible'})).toBe(false)
   })
 
   it('parses board coordinates, pass, resign, and fenced fallback output', () => {
@@ -427,6 +545,58 @@ describe('provider normalization', () => {
     expect(requestBody).toContain('Compress the notebook')
     expect(requestBody).not.toContain('STATIC INITIAL RULES')
     expect(requestBody).not.toContain('OVERSIZED NOTEBOOK')
+  })
+
+  it('resends visible context to custom OpenAI endpoints', async () => {
+    let requestBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? '')
+        return new Response('{"error":{"message":"test stop"}}', {
+          status: 500,
+          headers: {'content-type': 'application/json'},
+        })
+      }),
+    )
+    const adapter = new LlmPlayerAdapter(
+      {
+        id: 'custom-openai-context',
+        name: 'Custom OpenAI context',
+        kind: 'openai',
+        baseUrl: 'https://proxy.example.test/v1',
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'custom-openai-profile',
+        name: 'Custom OpenAI profile',
+        connectionId: 'custom-openai-context',
+        modelId: 'gpt-5.6-sol',
+        temperature: 0,
+      },
+      'test-key',
+    )
+
+    await expect(
+      adapter.requestTextTurn!(
+        {
+          content: 'Compress the notebook.',
+          transcript: [
+            {role: 'user', content: 'STATIC INITIAL RULES'},
+            {role: 'assistant', content: 'OVERSIZED NOTEBOOK'},
+          ],
+          previousResponseId: 'resp_previous',
+          cacheKey: 'linggo:test-custom-notebook:compress',
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow()
+
+    const body = JSON.parse(requestBody)
+    expect(body.previous_response_id).toBeUndefined()
+    expect(requestBody).toContain('STATIC INITIAL RULES')
+    expect(requestBody).toContain('OVERSIZED NOTEBOOK')
+    expect(requestBody).toContain('Compress the notebook')
   })
 
   it('orders visible transcript messages and applies Anthropic cache hints', async () => {
@@ -801,7 +971,6 @@ function openAiAdapter() {
       id: 'openai-context',
       name: 'OpenAI context',
       kind: 'openai',
-      baseUrl: 'https://models.example.test/v1',
       supportsStructuredOutput: false,
     },
     {

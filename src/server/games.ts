@@ -34,7 +34,9 @@ import {
   MalformedModelOutputError,
   parseJsonActionResult,
   type PlayerAdapter,
+  requestLlm,
   SecretVault,
+  supportsProviderContinuation,
 } from './providers'
 import {
   type LlmGameContext,
@@ -358,7 +360,7 @@ export class GameService {
         : context!.providerContinuationId,
       managedContinuation:
         !context || identityChanged
-          ? input.connection.kind === 'openai'
+          ? supportsProviderContinuation(input.connection)
           : context.managedContinuation,
       createdAt: context?.createdAt ?? now,
       updatedAt: now,
@@ -388,7 +390,7 @@ export class GameService {
       transcript: input.transcript,
       providerContinuationId: input.providerContinuationId,
       managedContinuation:
-        input.connection.kind === 'openai' &&
+        supportsProviderContinuation(input.connection) &&
         Boolean(input.providerContinuationId),
       createdAt: now,
       updatedAt: now,
@@ -473,7 +475,7 @@ export class GameService {
         : undefined,
       managedContinuation:
         !context || !identityMatches
-          ? input.connection.kind === 'openai'
+          ? supportsProviderContinuation(input.connection)
           : context.managedContinuation,
       createdAt: context?.createdAt ?? now,
       updatedAt: now,
@@ -508,9 +510,11 @@ export class GameService {
     signal: AbortSignal,
   ) {
     const prompt = makeGameIntentionPrompt()
-    if (adapter.requestTurn) {
-      const response = await adapter.requestTurn(
-        {
+    const response = await requestLlm(
+      adapter,
+      {
+        type: 'turn',
+        request: {
           kind: 'summary',
           content: prompt,
           transcript: prepared.context.transcript,
@@ -521,16 +525,7 @@ export class GameService {
           snapshot: prepared.snapshot,
           output: 'summary',
         },
-        signal,
-      )
-      return response.text.trim() || undefined
-    }
-    if (!adapter.requestText) return undefined
-    const transcript = prepared.context.transcript
-      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-      .join('\n')
-    const response = await adapter.requestText(
-      `${transcript}\nUSER: ${prompt}`,
+      },
       signal,
     )
     return response.text.trim() || undefined
@@ -1262,41 +1257,14 @@ export class GameService {
     prepared: PreparedLlmTurn,
     signal: AbortSignal,
   ): Promise<LlmTurnResponse> {
-    if (adapter.requestTurn)
-      return adapter.requestTurn(prepared.request, signal)
-    if (prepared.request.output === 'notebook') {
-      if (!adapter.requestText)
-        throw new Error('The selected provider cannot create reflections')
-      const result = await adapter.requestText(
-        prepared.request.content,
-        signal,
-        prepared.request.cacheKey,
-      )
-      return {...result, providerKind: prepared.context.providerKind}
-    }
-    const result = await adapter.requestAction(
-      prepared.snapshot,
+    const response = await requestLlm(
+      adapter,
+      {type: 'turn', request: prepared.request},
       signal,
-      prepared.request.content,
-      prepared.request.cacheKey,
     )
     return {
-      text:
-        result.responseContent ??
-        JSON.stringify({
-          move:
-            result.action.action === 'play'
-              ? result.action.coordinate
-              : result.action.action,
-          reason: result.action.comment,
-        }),
-      reasoning: result.reasoning,
-      latencyMs: result.latencyMs,
-      inputTokens: result.inputTokens,
-      cachedInputTokens: result.cachedInputTokens,
-      outputTokens: result.outputTokens,
-      model: result.model,
-      providerKind: result.providerKind ?? prepared.context.providerKind,
+      ...response,
+      providerKind: response.providerKind ?? prepared.context.providerKind,
     }
   }
 }

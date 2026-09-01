@@ -396,6 +396,41 @@ describe('persistent LLM game context', () => {
     expect(next.request.content).not.toContain('First game.')
   })
 
+  it('retains visible context for custom OpenAI endpoints', () => {
+    const {games, game, profile, connection} = setupGame()
+    const customOpenAiConnection = {
+      ...connection,
+      kind: 'openai' as const,
+      baseUrl: 'https://proxy.example.test/v1',
+    }
+    const prepared = games.prepareLlmActionTurn({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection: customOpenAiConnection,
+      mode: {kind: 'ordinary'},
+    })
+    const completed = games.completedLlmContext(
+      prepared,
+      {
+        ...turnResponse('{"move":"A9","reason":"Keep context."}'),
+        providerContinuationId: 'resp-must-not-be-used',
+      },
+      'active',
+      1,
+    )
+
+    expect(prepared.context.managedContinuation).toBe(false)
+    expect(completed.providerContinuationId).toBeUndefined()
+    expect(completed.transcript).toEqual([
+      {role: 'user', content: prepared.request.content},
+      {
+        role: 'assistant',
+        content: '{"move":"A9","reason":"Keep context."}',
+      },
+    ])
+  })
+
   it('rebases invalid persisted state and deletes context with its game', () => {
     const {games, game, profile, connection} = setupGame()
     games.prepareLlmActionTurn({

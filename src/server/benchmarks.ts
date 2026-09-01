@@ -71,6 +71,7 @@ import {
   type LlmTurnResponse,
   MalformedModelOutputError,
   parseJsonActionResult,
+  requestLlm,
 } from './providers'
 import {runtimeConfig} from './config'
 
@@ -1324,7 +1325,7 @@ export class BenchmarkService {
           }
           const retry = Boolean(failureFeedback)
           const notebook =
-            !progress.actions.length && !retry
+            !progress.actions.length || retry
               ? await this.runNotebook(run.id)
               : ''
           const position = [
@@ -1339,6 +1340,7 @@ export class BenchmarkService {
                 'The previous attempt failed.',
                 `Reason: ${failureFeedback}`,
                 'Redo the problem from this current position.',
+                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 'OUTPUT JSON SCHEMA',
                 '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
                 'Return exactly one JSON action object and no other fields or prose.',
@@ -1496,6 +1498,8 @@ export class BenchmarkService {
           : `UPDATE TRIGGER: FAILED_AFTER_${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS}_ATTEMPTS. The problem was not solved after ${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS} attempts.`,
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'Use the current problem position and failure feedback to choose the most useful existing note to improve.',
+        'PRIOR NOTEBOOK',
+        prior.trim() || '(empty)',
         'PROBLEM',
         LIFE_DEATH_BOARD_SYMBOL_LEGEND,
         asciiBoard(problem.snapshot),
@@ -1603,32 +1607,33 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        const response = adapter.requestTurn
-          ? await adapter
-              .requestTurn(
-                {
-                  kind: transcript.length ? 'continuation' : 'initial',
-                  content: prompt,
-                  transcript,
-                  cacheKey,
-                  snapshot,
-                  output: 'action',
-                },
-                signal,
-              )
-              .then((turn) => ({
-                ...parseJsonActionResult(turn.text, snapshot.size),
-                responseContent: turn.text,
-                reasoning: turn.reasoning,
-                latencyMs: turn.latencyMs,
-                inputTokens: turn.inputTokens,
-                cachedInputTokens: turn.cachedInputTokens,
-                outputTokens: turn.outputTokens,
-                model: turn.model,
-                providerKind: turn.providerKind,
-                retries: 0,
-              }))
-          : await adapter.requestAction(snapshot, signal, prompt, cacheKey)
+        const turn = await requestLlm(
+          adapter,
+          {
+            type: 'turn',
+            request: {
+              kind: transcript.length ? 'continuation' : 'initial',
+              content: prompt,
+              transcript,
+              cacheKey,
+              snapshot,
+              output: 'action',
+            },
+          },
+          signal,
+        )
+        const response = {
+          ...parseJsonActionResult(turn.text, snapshot.size),
+          responseContent: turn.text,
+          reasoning: turn.reasoning,
+          latencyMs: turn.latencyMs,
+          inputTokens: turn.inputTokens,
+          cachedInputTokens: turn.cachedInputTokens,
+          outputTokens: turn.outputTokens,
+          model: turn.model,
+          providerKind: turn.providerKind,
+          retries: 0,
+        }
         this.recordLlmResponse(run, response.responseContent)
         return response
       } catch (error) {
@@ -1831,6 +1836,11 @@ export class BenchmarkService {
         }
         this.save(run)
         prompt = [
+          initialPrompt,
+          '',
+          'PREVIOUS INVALID PATCH',
+          response.text.trim() || '(empty)',
+          '',
           `Your previous notebook patch was invalid: ${publicError(error)}.`,
           LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION,
         ].join('\n')
@@ -1979,14 +1989,6 @@ export class BenchmarkService {
     },
     maxOutputTokens?: number,
   ) {
-    if (
-      !adapter.requestText &&
-      !(context?.snapshot && adapter.requestTurn) &&
-      !(context?.textContinuation && adapter.requestTextTurn)
-    )
-      throw new Error(
-        'The benchmark provider does not support notebook generation',
-      )
     const transcript =
       context && context.includeTranscript !== false
         ? completedLlmTranscript(run)
@@ -2011,21 +2013,27 @@ export class BenchmarkService {
             }
       this.save(run)
       try {
-        const response =
-          context?.textContinuation && adapter.requestTextTurn
-            ? await adapter.requestTextTurn(
-                {
+        const response = context?.textContinuation
+          ? await requestLlm(
+              adapter,
+              {
+                type: 'textTurn',
+                request: {
                   content: prompt,
                   transcript,
                   previousResponseId: context.previousResponseId,
                   cacheKey: context.cacheKey,
                   maxOutputTokens,
                 },
-                signal,
-              )
-            : context?.snapshot && adapter.requestTurn
-              ? await adapter.requestTurn(
-                  {
+              },
+              signal,
+            )
+          : context?.snapshot
+            ? await requestLlm(
+                adapter,
+                {
+                  type: 'turn',
+                  request: {
                     kind: transcript.length ? 'continuation' : 'initial',
                     content: prompt,
                     transcript,
@@ -2033,15 +2041,21 @@ export class BenchmarkService {
                     snapshot: context.snapshot,
                     output: 'notebook',
                   },
-                  signal,
-                )
-              : await adapter.requestText!(
-                  prompt,
-                  signal,
-                  context?.cacheKey ??
+                },
+                signal,
+              )
+            : await requestLlm(
+                adapter,
+                {
+                  type: 'text',
+                  content: prompt,
+                  cacheKey:
+                    context?.cacheKey ??
                     `linggo:benchmark:${run.id}:notebook:${operation}`,
                   maxOutputTokens,
-                )
+                },
+                signal,
+              )
         this.recordLlmResponse(run, response.text)
         return response
       } catch (error) {

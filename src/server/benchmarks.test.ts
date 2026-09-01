@@ -699,9 +699,15 @@ describe('benchmark scoring and prompts', () => {
     expect(
       await waitFor(() => service.get(run.id)?.status === 'completed', 2_000),
     ).toBe(true)
+    const repairPrompts = prompts.filter((prompt) =>
+      prompt.endsWith('USER: Intersection is occupied'),
+    )
+    expect(repairPrompts).toHaveLength(MAX_MODEL_OUTPUT_RETRIES * 5)
     expect(
-      prompts.filter((prompt) => prompt === 'Intersection is occupied'),
-    ).toHaveLength(MAX_MODEL_OUTPUT_RETRIES * 5)
+      repairPrompts.every(
+        (prompt) => prompt.includes('USER:') && prompt.includes('ASSISTANT:'),
+      ),
+    ).toBe(true)
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
@@ -1389,6 +1395,8 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[1]).toContain(
       'Redo the problem from this current position.',
     )
+    expect(actionPrompts[1]).toContain('SELF-WRITTEN SKILLS')
+    expect(actionPrompts[1]).toContain('# Life techniques')
     expect(actionPrompts[1]).toContain('OUTPUT JSON SCHEMA')
     expect(actionPrompts[1]).toContain(
       'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
@@ -1404,11 +1412,15 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[0].indexOf('OUTPUT JSON SCHEMA')).toBeLessThan(
       actionPrompts[0].indexOf('CURRENT BOARD'),
     )
-    expect(actionPrompts.slice(1)).toEqual(
-      expect.not.arrayContaining([
-        expect.stringContaining('SELF-WRITTEN SKILLS'),
-      ]),
-    )
+    expect(
+      actionPrompts
+        .slice(2)
+        .every(
+          (prompt) =>
+            prompt.includes('SELF-WRITTEN SKILLS') &&
+            prompt.includes('ASSISTANT:'),
+        ),
+    ).toBe(true)
     expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )
@@ -1432,7 +1444,9 @@ describe('benchmark scoring and prompts', () => {
     const redoGate = deferred()
     let actionCalls = 0
     let patchRequest: LlmTurnRequest | undefined
+    let patchRepairRequest: LlmTurnRequest | undefined
     let redoRequest: LlmTurnRequest | undefined
+    let patchCalls = 0
     const adapter = {
       async requestAction() {
         throw new Error('Transcript turn path should be used')
@@ -1440,9 +1454,14 @@ describe('benchmark scoring and prompts', () => {
       async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
         signal.throwIfAborted()
         if (request.output === 'notebook') {
-          patchRequest = request
+          patchCalls += 1
+          if (patchCalls === 1) patchRequest = request
+          else patchRepairRequest = request
           return {
-            text: '{"1":"Read every forcing reply before choosing the vital point."}',
+            text:
+              patchCalls === 1
+                ? '# Invalid patch'
+                : '{"1":"Read every forcing reply before choosing the vital point."}',
             latencyMs: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -1528,9 +1547,14 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.content).toContain(
       'Add a new numbered note only when no existing note captures the lesson.',
     )
-    expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
-    expect(patchRequest?.content).not.toContain('1. Read liberties.')
+    expect(patchRequest?.content).toContain('PRIOR NOTEBOOK')
+    expect(patchRequest?.content).toContain('1. Read liberties.')
     expect(patchRequest?.content).not.toContain('MODEL ANSWER')
+    expect(patchRepairRequest?.transcript).toEqual([])
+    expect(patchRepairRequest?.content).toContain('PRIOR NOTEBOOK')
+    expect(patchRepairRequest?.content).toContain('FAILED ATTEMPTS')
+    expect(patchRepairRequest?.content).toContain('PREVIOUS INVALID PATCH')
+    expect(patchRepairRequest?.content).toContain('# Invalid patch')
     expect(redoRequest?.transcript).toEqual([])
     expect(await service.notebooks.readSnapshot(created.id)).toBe(
       '# Life techniques\n\n1. Read every forcing reply before choosing the vital point.\n2. Preserve shape.',
@@ -1615,7 +1639,11 @@ describe('benchmark scoring and prompts', () => {
     expect(
       prompts
         .slice(1)
-        .every((prompt) => !prompt.includes('SELF-WRITTEN SKILLS')),
+        .every(
+          (prompt) =>
+            prompt.includes('SELF-WRITTEN SKILLS') &&
+            prompt.includes('ASSISTANT:'),
+        ),
     ).toBe(true)
     expect(prompts[1]).toContain('Continue solving')
     expect(prompts[1]).toContain('Player to move now: White (O).')

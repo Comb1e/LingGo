@@ -3,7 +3,6 @@ import {appendFile, mkdir, readFile, readdir, writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import type {
   GameSnapshot,
-  LlmActionResult,
   PlayerAction,
   ResearchCondition,
   ResearchManifest,
@@ -18,7 +17,11 @@ import {
 import {makeInitialLlmPrompt} from './llmGameContext'
 import {makeSnapshot, playStone, replay, boardHash} from './go'
 import type {KataGoAnalyzer, KataGoResult} from './katago'
-import {parseJsonActionResult, type PlayerAdapter} from './providers'
+import {
+  parseJsonActionResult,
+  type PlayerAdapter,
+  requestLlm,
+} from './providers'
 import {coordinateToPoint} from '../shared/coordinates'
 
 export const RESEARCH_PROTOCOL_VERSION = 'research-v1'
@@ -288,37 +291,21 @@ export class ResearchRunner {
               .action
         } else {
           try {
-            const result = adapter.requestTurn
-              ? await adapter.requestTurn(
-                  {
-                    kind: 'initial',
-                    content: prompt,
-                    transcript: [],
-                    cacheKey: key ?? promptHash,
-                    snapshot,
-                    output: 'action',
-                  },
-                  new AbortController().signal,
-                )
-              : await adapter
-                  .requestAction(snapshot, new AbortController().signal, prompt)
-                  .then((value: LlmActionResult) => ({
-                    text:
-                      value.responseContent ??
-                      JSON.stringify({
-                        move:
-                          value.action.action === 'play'
-                            ? value.action.coordinate
-                            : value.action.action,
-                        reason: value.action.comment,
-                      }),
-                    reasoning: value.reasoning,
-                    latencyMs: value.latencyMs,
-                    inputTokens: value.inputTokens,
-                    outputTokens: value.outputTokens,
-                    model: value.model,
-                    providerKind: value.providerKind,
-                  }))
+            const result = await requestLlm(
+              adapter,
+              {
+                type: 'turn',
+                request: {
+                  kind: 'initial',
+                  content: prompt,
+                  transcript: [],
+                  cacheKey: key ?? promptHash,
+                  snapshot,
+                  output: 'action',
+                },
+              },
+              new AbortController().signal,
+            )
             action = parseJsonActionResult(
               result.text,
               manifest.boardSize,
@@ -475,8 +462,26 @@ export class ResearchRunner {
         latency += response?.latencyMs ?? 0
       }
       if (training && caps.reflection && adapter.requestText) {
-        const result = await adapter.requestText(
-          `Update the technique notebook based on training game ${game}. Previous notebook:\n${notebook}`,
+        const result = await requestLlm(
+          adapter,
+          {
+            type: 'text',
+            content: [
+              `Update the technique notebook based on training game ${game}.`,
+              'PREVIOUS NOTEBOOK',
+              notebook || '(empty)',
+              'TRAINING GAME MOVE HISTORY',
+              gameMoves.length
+                ? gameMoves
+                    .map(
+                      (move) =>
+                        `${move.number}. ${move.color} ${move.coordinate ?? move.action}`,
+                    )
+                    .join('\n')
+                : '(none)',
+              'Return only the complete replacement notebook.',
+            ].join('\n'),
+          },
           new AbortController().signal,
         )
         notebook = result.text.trim()
@@ -593,31 +598,21 @@ export async function evaluateResearchPositions(
     let action: PlayerAction
     let legal = true
     try {
-      const response = adapter.requestTurn
-        ? await adapter.requestTurn(
-            {
-              kind: 'initial',
-              content: prompt,
-              transcript: [],
-              cacheKey: sha256(prompt),
-              snapshot,
-              output: 'action',
-            },
-            new AbortController().signal,
-          )
-        : await adapter
-            .requestAction(snapshot, new AbortController().signal, prompt)
-            .then((value) => ({
-              text:
-                value.responseContent ??
-                JSON.stringify({
-                  move:
-                    value.action.action === 'play'
-                      ? value.action.coordinate
-                      : value.action.action,
-                  reason: value.action.comment,
-                }),
-            }))
+      const response = await requestLlm(
+        adapter,
+        {
+          type: 'turn',
+          request: {
+            kind: 'initial',
+            content: prompt,
+            transcript: [],
+            cacheKey: sha256(prompt),
+            snapshot,
+            output: 'action',
+          },
+        },
+        new AbortController().signal,
+      )
       action = parseJsonActionResult(response.text, position.boardSize).action
       const state = replay(position.boardSize, moves)
       if (action.action === 'play')
