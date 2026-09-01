@@ -1,7 +1,12 @@
 import {afterEach, describe, expect, it} from 'vitest'
 import {NoOutputGeneratedError} from 'ai'
 import {Store} from './database'
-import {GameService, StaleVersionError} from './games'
+import {
+  GameService,
+  MAX_MODEL_OUTPUT_ATTEMPTS,
+  MAX_MODEL_OUTPUT_RETRIES,
+  StaleVersionError,
+} from './games'
 import type {PlayerAdapter} from './providers'
 
 let store: Store
@@ -386,7 +391,7 @@ describe('game orchestration', () => {
     })
   })
 
-  it('allows five invalid move attempts before stopping the game', async () => {
+  it('stops after the configured invalid move attempts', async () => {
     store = new Store(':memory:')
     const repairMessages: string[] = []
     let requests = 0
@@ -428,11 +433,15 @@ describe('game orchestration', () => {
     })
 
     await waitFor(() => service.get(game.id)?.status === 'error')
-    expect(requests).toBe(5)
-    expect(repairMessages).toEqual(Array(4).fill('Intersection is occupied'))
-    expect(service.get(game.id)?.rejectedModelActions).toHaveLength(5)
+    expect(requests).toBe(MAX_MODEL_OUTPUT_ATTEMPTS)
+    expect(repairMessages).toEqual(
+      Array(MAX_MODEL_OUTPUT_RETRIES).fill('Intersection is occupied'),
+    )
+    expect(service.get(game.id)?.rejectedModelActions).toHaveLength(
+      MAX_MODEL_OUTPUT_ATTEMPTS,
+    )
     expect(service.get(game.id)?.error).toBe(
-      'Model failed to produce a legal action after 5 attempts: Intersection is occupied',
+      `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: Intersection is occupied`,
     )
   })
 

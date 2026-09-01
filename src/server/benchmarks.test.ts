@@ -6,7 +6,11 @@ import type {KataGoAnalyzer} from './katago'
 import type {GameSnapshot} from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
 import {Store} from './database'
-import {GameService} from './games'
+import {
+  GameService,
+  MAX_MODEL_OUTPUT_ATTEMPTS,
+  MAX_MODEL_OUTPUT_RETRIES,
+} from './games'
 import {
   BenchmarkConflictError,
   BenchmarkService,
@@ -696,13 +700,17 @@ describe('benchmark scoring and prompts', () => {
     ).toBe(true)
     expect(
       prompts.filter((prompt) => prompt === 'Intersection is occupied'),
-    ).toHaveLength(20)
+    ).toHaveLength(MAX_MODEL_OUTPUT_RETRIES * 5)
     const rejection = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
       .filter(({reason}) => reason.includes('Intersection is occupied'))
       .at(-1)
-    expect(rejection).toMatchObject({turn: 3, attempt: 5, truncated: false})
+    expect(rejection).toMatchObject({
+      turn: 3,
+      attempt: MAX_MODEL_OUTPUT_ATTEMPTS,
+      truncated: false,
+    })
     expect(rejection?.responseContent).toContain('A19')
     const endedEarly = games
       .list()
@@ -714,7 +722,7 @@ describe('benchmark scoring and prompts', () => {
       benchmarkTermination: {
         kind: 'invalid_llm_actions',
         turn: 3,
-        actionCount: 5,
+        actionCount: MAX_MODEL_OUTPUT_ATTEMPTS,
         reason: 'Intersection is occupied',
       },
     })
@@ -722,7 +730,7 @@ describe('benchmark scoring and prompts', () => {
       reflectionPrompts.some(
         (prompt) =>
           prompt.includes(
-            'Termination: This game ended early because you produced 5 illegal actions.',
+            `Termination: This game ended early because you produced ${MAX_MODEL_OUTPUT_ATTEMPTS} illegal actions.`,
           ) &&
           prompt.includes(
             'The final rejected action was for turn 3: Intersection is occupied.',
@@ -763,7 +771,7 @@ describe('benchmark scoring and prompts', () => {
         attemptsByPosition.set(snapshot.moves.length, attempts)
         return {
           action:
-            attempts <= 3
+            attempts <= MAX_MODEL_OUTPUT_RETRIES
               ? {
                   action: 'play' as const,
                   coordinate: 'A19',
@@ -855,16 +863,16 @@ describe('benchmark scoring and prompts', () => {
       rejections.filter(({reason}) =>
         reason.includes('may pass at most twice'),
       ),
-    ).toHaveLength(4)
+    ).toHaveLength(runGames.length)
     expect(
       rejections.filter(({reason}) =>
         reason.includes('Intersection is occupied'),
       ),
-    ).toHaveLength(6)
+    ).toHaveLength(MAX_MODEL_OUTPUT_RETRIES * runGames.length)
     await service.close()
   })
 
-  it('allows five invalid benchmark outputs and records their actual attempts', async () => {
+  it('records every configured invalid benchmark output attempt', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-benchmark-output-retry-'))
     const games = new GameService(store)
@@ -915,12 +923,14 @@ describe('benchmark scoring and prompts', () => {
     expect(
       await waitFor(() => service.get(run.id)?.status === 'paused', 2_000),
     ).toBe(true)
-    expect(requests).toBe(5)
+    expect(requests).toBe(MAX_MODEL_OUTPUT_ATTEMPTS)
     const rejected = games
       .list()
       .flatMap((game) => game.rejectedModelActions ?? [])
       .filter(({reason}) => reason.includes('Invalid model move JSON'))
-    expect(rejected.map(({attempt}) => attempt)).toEqual([1, 2, 3, 4, 5])
+    expect(rejected.map(({attempt}) => attempt)).toEqual(
+      Array.from({length: MAX_MODEL_OUTPUT_ATTEMPTS}, (_, index) => index + 1),
+    )
     await service.close()
   })
 
