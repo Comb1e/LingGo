@@ -1,5 +1,6 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {
+  ArrowLeft,
   CopyPlus,
   Download,
   Pause,
@@ -41,6 +42,11 @@ export function BenchmarkPage() {
     queryKey: ['benchmark', id],
     queryFn: () => api.benchmark(id),
     enabled: Boolean(id),
+  })
+  const sessionQuery = useQuery({
+    queryKey: ['benchmark-session', query.data?.sessionId],
+    queryFn: () => api.benchmarkSession(query.data!.sessionId!),
+    enabled: Boolean(query.data?.sessionId),
   })
   const notebook = useQuery({
     queryKey: ['benchmark-notebook', id],
@@ -155,7 +161,12 @@ export function BenchmarkPage() {
                 className="button"
                 to={`/benchmark-sessions/${run.sessionId}`}
               >
-                {t('benchmarkSession')}
+                <ArrowLeft />
+                {sessionQuery.data
+                  ? t('backToBenchmarkSessionWithStages', {
+                      count: sessionQuery.data.stages.length,
+                    })
+                  : t('backToBenchmarkSession')}
               </Link>
             )}
             {run.status === 'running' && (
@@ -212,6 +223,7 @@ export function BenchmarkPage() {
           publish.error ??
           remove.error ??
           query.error ??
+          sessionQuery.error ??
           notebookSeed.error ??
           notebookVersions.error
         }

@@ -35,8 +35,12 @@ export function NotebookManager({
   const content = useQuery({
     queryKey: ['notebook', profileId, selectedId],
     queryFn: () => api.notebook(profileId, selectedId),
-    enabled: preview && Boolean(profileId && selectedId),
+    enabled: Boolean(profileId && selectedId),
   })
+  const estimatedTokens =
+    content.data === undefined
+      ? undefined
+      : Math.ceil(new TextEncoder().encode(content.data).byteLength / 4)
 
   useEffect(() => {
     if (!autoSelect) return
@@ -186,6 +190,16 @@ export function NotebookManager({
           </Button>
         </div>
       </div>
+      {selected && (
+        <small className="notebook-token-count">
+          {t('notebookTokenCount', {
+            tokens:
+              estimatedTokens === undefined
+                ? '...'
+                : estimatedTokens.toLocaleString(),
+          })}
+        </small>
+      )}
       <ErrorBanner error={error ?? notebooks.error ?? content.error} />
       {preview && selected && (
         <div className="notebook-preview">

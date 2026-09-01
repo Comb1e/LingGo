@@ -662,6 +662,12 @@ svg {
   opacity: 0.45;
   pointer-events: none;
 }
+.notebook-token-count {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .notebook-preview {
   max-height: 420px;
   margin-top: 12px;

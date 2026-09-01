@@ -496,6 +496,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   const managers = page.locator('.benchmark-create .notebook-manager')
   await expect(managers).toHaveCount(1)
   await expect(managers).toContainText('Life-and-death notebook')
+  await expect(managers).toContainText(/Estimated notebook tokens: \d+/)
   await page.getByRole('button', {name: 'Ordinary game with KataGo'}).click()
   await expect(managers).toHaveCount(2)
   await expect(managers.nth(0)).toContainText(

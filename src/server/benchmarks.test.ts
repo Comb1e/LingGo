@@ -1764,6 +1764,75 @@ describe('benchmark scoring and prompts', () => {
     await invalidService.close()
   })
 
+  it('resends the last non-empty notebook after an empty compression response', async () => {
+    store = new Store(':memory:')
+    const textTurnRequests: Array<
+      Parameters<NonNullable<PlayerAdapter['requestTextTurn']>>[0]
+    > = []
+    const textRequests: string[] = []
+    let turnCalls = 0
+    const adapter = {
+      async requestText(prompt: string) {
+        textRequests.push(prompt)
+        return {
+          text: '# Fine',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+      async requestTextTurn(
+        request: Parameters<NonNullable<PlayerAdapter['requestTextTurn']>>[0],
+      ) {
+        textTurnRequests.push(request)
+        turnCalls += 1
+        return {
+          text: turnCalls === 1 ? 'x'.repeat(100) : '',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+          providerContinuationId: `response-${turnCalls}`,
+        }
+      },
+      async requestAction() {
+        return {
+          action: {action: 'pass' as const, comment: 'Pass.'},
+          latencyMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          model: 'test-model',
+          retries: 0,
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(store),
+      () => adapter,
+    )
+
+    const run = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      notebookTokenBudget: 8,
+    })
+
+    expect(
+      await waitFor(() => service.get(run.id)?.status === 'completed', 2000),
+    ).toBe(true)
+    expect(textTurnRequests).toHaveLength(2)
+    expect(textTurnRequests[1]?.previousResponseId).toBe('response-1')
+    const fallbackRequest = textRequests.find((prompt) =>
+      prompt.includes('Compress the notebook below'),
+    )
+    expect(fallbackRequest).toContain('x'.repeat(100))
+    expect(service.get(run.id)?.notebookEstimatedTokens).toBe(2)
+    await service.close()
+  })
+
   it('calculates loss from either model color without rewarding improvements', () => {
     const before = {
       blackScoreLead: 4,
