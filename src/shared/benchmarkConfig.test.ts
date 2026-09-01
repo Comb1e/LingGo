@@ -1,5 +1,9 @@
 import {describe, expect, it} from 'vitest'
 import {
+  DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+  DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+} from './constants'
+import {
   benchmarkConfigSchema,
   benchmarkSessionConfigSchema,
   benchmarkStageKeys,
@@ -61,8 +65,9 @@ describe('benchmark configuration', () => {
     ).toMatchObject({
       notebookSeed: {mode: 'rules_only'},
       trainingFeedback: 'structured',
-      notebookTokenBudget: 3_000,
-      notebookInitializationTokenLimit: 8_000,
+      notebookTokenBudget: DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+      notebookInitializationTokenLimit:
+        DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
       trainingVisits: 10_000,
       evaluationVisits: 10_000,
     })
