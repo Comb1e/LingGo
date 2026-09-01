@@ -2046,6 +2046,16 @@ export class BenchmarkService {
         return response
       } catch (error) {
         if (signal.aborted) throw error
+        if (NoOutputGeneratedError.isInstance(error)) {
+          this.recordLlmResponse(run, '')
+          return {
+            text: '',
+            latencyMs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            model: run.profileSnapshot.modelId,
+          }
+        }
         lastError = publicProviderError(error)
         if (
           !shouldRetryProviderError(error) ||

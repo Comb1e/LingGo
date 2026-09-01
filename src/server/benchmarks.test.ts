@@ -2,6 +2,7 @@ import {mkdtemp, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {afterEach, describe, expect, it} from 'vitest'
+import {NoOutputGeneratedError} from 'ai'
 import type {KataGoAnalyzer} from './katago'
 import type {GameSnapshot} from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
@@ -1787,8 +1788,12 @@ describe('benchmark scoring and prompts', () => {
       ) {
         textTurnRequests.push(request)
         turnCalls += 1
+        if (turnCalls === 2)
+          throw new NoOutputGeneratedError({
+            message: 'No output generated. Check the stream for errors.',
+          })
         return {
-          text: turnCalls === 1 ? 'x'.repeat(100) : '',
+          text: 'x'.repeat(100),
           inputTokens: 0,
           outputTokens: 0,
           latencyMs: 0,
