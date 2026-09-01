@@ -1082,6 +1082,15 @@ svg {
 .session-form-grid .notebook-manager {
   grid-column: span 3;
 }
+.benchmark-process-field {
+  grid-column: span 3;
+}
+.benchmark-process-field .segmented {
+  width: 100%;
+}
+.benchmark-process-field .segmented button {
+  flex: 1;
+}
 .legacy-benchmark-list {
   margin-top: 24px;
 }
@@ -1090,6 +1099,12 @@ svg {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 18px;
+}
+.session-stage-band.stage-count-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.session-stage-band.stage-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .session-stage-card {
   min-width: 0;
@@ -2053,7 +2068,12 @@ svg {
   .session-form-grid .notebook-manager {
     grid-column: 1 / -1;
   }
+  .benchmark-process-field {
+    grid-column: 1 / -1;
+  }
   .session-stage-band,
+  .session-stage-band.stage-count-4,
+  .session-stage-band.stage-count-2,
   .session-notebooks.two-role {
     grid-template-columns: 1fr 1fr;
   }
@@ -2123,6 +2143,8 @@ svg {
   }
   .session-form-grid,
   .session-stage-band,
+  .session-stage-band.stage-count-4,
+  .session-stage-band.stage-count-2,
   .session-notebooks.two-role,
   .current-stage-summary {
     grid-template-columns: 1fr;

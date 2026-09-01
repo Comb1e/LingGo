@@ -139,6 +139,36 @@ describe('benchmark session configuration', () => {
     ).toThrow('must be distinct')
   })
 
+  it('requires the notebooks used by each split process', () => {
+    expect(
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        process: 'life_death',
+        ordinaryNotebookId: undefined,
+      }),
+    ).toMatchObject({process: 'life_death', lifeDeathNotebookId: 'life'})
+    expect(
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        process: 'ordinary',
+      }),
+    ).toMatchObject({process: 'ordinary', ordinaryNotebookId: 'ordinary'})
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        process: 'ordinary',
+        ordinaryNotebookId: undefined,
+      }),
+    ).toThrow('ordinary-game notebook is required')
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        process: 'ordinary',
+        lifeDeathNotebookId: undefined,
+      }),
+    ).toThrow('life-and-death notebook is required')
+  })
+
   it('validates the ordinary-game count split and visit ordering', () => {
     expect(() =>
       benchmarkSessionConfigSchema.parse({

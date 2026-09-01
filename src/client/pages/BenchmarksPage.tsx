@@ -8,7 +8,11 @@ import {
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
 } from '../../shared/constants'
-import type {BenchmarkSession, Color} from '../../shared/types'
+import type {
+  BenchmarkSession,
+  BenchmarkSessionProcess,
+  Color,
+} from '../../shared/types'
 import {api} from '../api'
 import {NotebookManager} from '../NotebookManager'
 import {
@@ -32,6 +36,7 @@ export function BenchmarksPage() {
     queryFn: api.benchmarks,
   })
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
+  const [process, setProcess] = useState<BenchmarkSessionProcess>('life_death')
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [lifeNotebookId, setLifeNotebookId] = useState('')
   const [ordinaryNotebookId, setOrdinaryNotebookId] = useState('')
@@ -78,9 +83,12 @@ export function BenchmarksPage() {
   const create = useMutation({
     mutationFn: () =>
       api.createBenchmarkSession({
+        process,
         profileId,
         lifeDeathNotebookId: selectedLifeNotebookId,
-        ordinaryNotebookId: selectedOrdinaryNotebookId,
+        ...(process === 'ordinary'
+          ? {ordinaryNotebookId: selectedOrdinaryNotebookId}
+          : {}),
         finalColor,
         trainingGameCount,
         trainingGamesWithWinRates: withWinRates,
@@ -132,6 +140,23 @@ export function BenchmarksPage() {
         }}
       >
         <div className="benchmark-form-grid session-form-grid">
+          <div className="field-group benchmark-process-field">
+            <label>{t('benchmarkProcess')}</label>
+            <div className="segmented">
+              {(['life_death', 'ordinary'] as BenchmarkSessionProcess[]).map(
+                (value) => (
+                  <button
+                    type="button"
+                    className={process === value ? 'selected' : ''}
+                    key={value}
+                    onClick={() => setProcess(value)}
+                  >
+                    {t(`benchmarkProcess_${value}`)}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
           <label className="field">
             <span>{t('profile')}</span>
             <select
@@ -171,20 +196,30 @@ export function BenchmarksPage() {
             profileId={profileId}
             selectedId={selectedLifeNotebookId}
             onSelect={setLifeNotebookId}
-            label={t('lifeDeathNotebook')}
+            label={
+              process === 'ordinary'
+                ? t('lifeDeathReferenceNotebook')
+                : t('lifeDeathNotebook')
+            }
             disabledIds={
-              selectedOrdinaryNotebookId ? [selectedOrdinaryNotebookId] : []
+              process === 'ordinary' && selectedOrdinaryNotebookId
+                ? [selectedOrdinaryNotebookId]
+                : []
             }
             autoSelect={false}
           />
-          <NotebookManager
-            profileId={profileId}
-            selectedId={selectedOrdinaryNotebookId}
-            onSelect={setOrdinaryNotebookId}
-            label={t('ordinaryGameNotebook')}
-            disabledIds={selectedLifeNotebookId ? [selectedLifeNotebookId] : []}
-            autoSelect={false}
-          />
+          {process === 'ordinary' && (
+            <NotebookManager
+              profileId={profileId}
+              selectedId={selectedOrdinaryNotebookId}
+              onSelect={setOrdinaryNotebookId}
+              label={t('ordinaryGameNotebook')}
+              disabledIds={
+                selectedLifeNotebookId ? [selectedLifeNotebookId] : []
+              }
+              autoSelect={false}
+            />
+          )}
           <NumberField
             label={t('trainingGamesWithWinRates')}
             value={withWinRates}
@@ -234,15 +269,20 @@ export function BenchmarksPage() {
               create.isPending ||
               profileIsLive ||
               !selectedLifeNotebookId ||
-              !selectedOrdinaryNotebookId ||
-              selectedLifeNotebookId === selectedOrdinaryNotebookId ||
+              (process === 'ordinary' &&
+                (!selectedOrdinaryNotebookId ||
+                  selectedLifeNotebookId === selectedOrdinaryNotebookId)) ||
               trainingGameCount < 1
             }
           >
             <Gauge />
             {profileIsLive
               ? t('benchmarkAlreadyRunning')
-              : t('startBenchmarkSession')}
+              : t(
+                  process === 'life_death'
+                    ? 'startLifeDeathBenchmark'
+                    : 'startOrdinaryBenchmark',
+                )}
           </Button>
         </div>
       </form>
@@ -254,14 +294,19 @@ export function BenchmarksPage() {
           <div className="benchmark-row" key={session.id}>
             <Link to={`/benchmark-sessions/${session.id}`}>
               <span>
-                <b>{t(`stage_${session.currentStage}`)}</b>
+                <b>
+                  {session.config.process
+                    ? t(`benchmarkProcess_${session.config.process}`)
+                    : t('legacyCombinedBenchmark')}
+                </b>
                 <small>
+                  {t(`stage_${session.currentStage}`)} ·{' '}
                   {new Date(session.createdAt).toLocaleString()} ·{' '}
                   {
                     session.stages.filter(({status}) => status === 'completed')
                       .length
                   }
-                  /4
+                  /{session.stages.length}
                 </small>
               </span>
               <StatusBadge status={session.status} label={t(session.status)} />

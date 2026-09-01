@@ -384,11 +384,17 @@ export type BenchmarkStageKey = z.infer<typeof benchmarkStageKeySchema>
 export const benchmarkNotebookRoleSchema = z.enum(['life_death', 'ordinary'])
 export type BenchmarkNotebookRole = z.infer<typeof benchmarkNotebookRoleSchema>
 
+export const benchmarkSessionProcessSchema = z.enum(['life_death', 'ordinary'])
+export type BenchmarkSessionProcess = z.infer<
+  typeof benchmarkSessionProcessSchema
+>
+
 export const benchmarkSessionConfigSchema = z
   .object({
+    process: benchmarkSessionProcessSchema.optional(),
     profileId: z.string().min(1),
-    lifeDeathNotebookId: z.string().min(1),
-    ordinaryNotebookId: z.string().min(1),
+    lifeDeathNotebookId: z.string().min(1).optional(),
+    ordinaryNotebookId: z.string().min(1).optional(),
     finalColor: z.enum(['B', 'W']),
     trainingGameCount: z.number().int().min(1).max(1000),
     trainingGamesWithWinRates: z.number().int().min(0).max(1000),
@@ -411,7 +417,23 @@ export const benchmarkSessionConfigSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.lifeDeathNotebookId === value.ordinaryNotebookId)
+    if (!value.lifeDeathNotebookId)
+      context.addIssue({
+        code: 'custom',
+        path: ['lifeDeathNotebookId'],
+        message: 'A life-and-death notebook is required',
+      })
+    if (value.process !== 'life_death' && !value.ordinaryNotebookId)
+      context.addIssue({
+        code: 'custom',
+        path: ['ordinaryNotebookId'],
+        message: 'An ordinary-game notebook is required',
+      })
+    if (
+      value.lifeDeathNotebookId &&
+      value.ordinaryNotebookId &&
+      value.lifeDeathNotebookId === value.ordinaryNotebookId
+    )
       context.addIssue({
         code: 'custom',
         path: ['ordinaryNotebookId'],
@@ -687,7 +709,7 @@ export interface BenchmarkSession {
   currentStage: BenchmarkStageKey
   stageIds: string[]
   config: BenchmarkSessionConfig
-  notebooks: Record<BenchmarkNotebookRole, BenchmarkSessionNotebook>
+  notebooks: Partial<Record<BenchmarkNotebookRole, BenchmarkSessionNotebook>>
   stages: BenchmarkSessionStage[]
   createdAt: string
   updatedAt: string

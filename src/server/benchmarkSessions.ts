@@ -24,6 +24,11 @@ const problemSets: Record<
   hard: 'gogameguru-hard',
 }
 
+const processStageKeys = {
+  life_death: ['life_death_notebook', 'easy', 'medium', 'hard'],
+  ordinary: ['ordinary_notebook', 'ordinary'],
+} as const satisfies Record<string, readonly BenchmarkStageKey[]>
+
 export class BenchmarkSessionService {
   readonly events = new EventEmitter()
 
@@ -44,30 +49,44 @@ export class BenchmarkSessionService {
 
   create(config: BenchmarkSessionConfig) {
     this.assertProfileAvailable(config.profileId)
-    const lifeNotebook = this.requireNotebook(
-      config.profileId,
-      config.lifeDeathNotebookId,
+    const lifeNotebook = config.lifeDeathNotebookId
+      ? this.requireNotebook(config.profileId, config.lifeDeathNotebookId)
+      : undefined
+    const ordinaryNotebook = config.ordinaryNotebookId
+      ? this.requireNotebook(config.profileId, config.ordinaryNotebookId)
+      : undefined
+    if (
+      lifeNotebook &&
+      ordinaryNotebook &&
+      lifeNotebook.id === ordinaryNotebook.id
     )
-    const ordinaryNotebook = this.requireNotebook(
-      config.profileId,
-      config.ordinaryNotebookId,
-    )
-    if (lifeNotebook.id === ordinaryNotebook.id)
       throw new Error(
         'Life-and-death and ordinary-game notebooks must be distinct',
       )
 
     const now = new Date().toISOString()
     const sessionId = randomUUID()
-    const stages = benchmarkStageKeys.map((stageKey) =>
+    const stageKeys = config.process
+      ? processStageKeys[config.process]
+      : benchmarkStageKeys
+    const stages = stageKeys.map((stageKey) =>
       this.newStage(sessionId, stageKey, now),
     )
     const initialization = stages[0]
+    const initialRole = roleForStage(initialization.stageKey)
+    const initialNotebook =
+      initialRole === 'life_death' ? lifeNotebook : ordinaryNotebook
+    if (!initialNotebook)
+      throw new Error(
+        initialRole === 'life_death'
+          ? 'A life-and-death notebook is required'
+          : 'An ordinary-game notebook is required',
+      )
     const run = this.prepareChild(
       config,
       sessionId,
       initialization.stageKey,
-      lifeNotebook,
+      initialNotebook,
       undefined,
     )
     initialization.runId = run.id
@@ -78,10 +97,10 @@ export class BenchmarkSessionService {
       id: sessionId,
       profileId: config.profileId,
       status: 'running',
-      currentStage: 'life_death_notebook',
+      currentStage: initialization.stageKey,
       stageIds: stages.map(({id}) => id),
       config,
-      notebooks: {} as BenchmarkSession['notebooks'],
+      notebooks: {},
       stages,
       createdAt: now,
       updatedAt: now,
@@ -90,14 +109,18 @@ export class BenchmarkSessionService {
     try {
       this.store.transaction(() => {
         this.store.saveBenchmarkSession(session)
-        this.store.saveBenchmarkWithSeed(run, lifeNotebook)
+        this.store.saveBenchmarkWithSeed(run, initialNotebook)
         for (const stage of stages)
           this.store.saveBenchmarkSessionStage(
             stage,
-            stage.id === initialization.id ? lifeNotebook.content : undefined,
+            stage.id === initialization.id
+              ? initialNotebook.content
+              : undefined,
           )
-        this.saveInitialNotebook(sessionId, 'life_death', lifeNotebook, now)
-        this.saveInitialNotebook(sessionId, 'ordinary', ordinaryNotebook, now)
+        if (lifeNotebook)
+          this.saveInitialNotebook(sessionId, 'life_death', lifeNotebook, now)
+        if (ordinaryNotebook)
+          this.saveInitialNotebook(sessionId, 'ordinary', ordinaryNotebook, now)
       })
     } catch (error) {
       if (isUniqueConstraintError(error)) throw new BenchmarkConflictError()
@@ -116,18 +139,17 @@ export class BenchmarkSessionService {
       current.status !== 'completed'
     )
       throw new Error('The current stage must complete before continuing')
-    const index = benchmarkStageKeys.indexOf(session.currentStage)
-    const nextKey = benchmarkStageKeys[index + 1]
+    const index = session.stages.findIndex(
+      ({stageKey}) => stageKey === session.currentStage,
+    )
+    const nextKey = session.stages[index + 1]?.stageKey
     if (!nextKey) throw new Error('The benchmark session is already complete')
     const next = session.stages.find(({stageKey}) => stageKey === nextKey)!
     if (next.status !== 'pending' || next.runId)
       throw new Error('The next benchmark stage has already started')
     const role = roleForStage(nextKey)
     const source = this.snapshotNotebook(session, role)
-    const readOnly =
-      nextKey === 'ordinary'
-        ? [this.readOnlyNotebook(session, 'life_death')]
-        : undefined
+    const readOnly = this.ordinaryReadOnlyNotebooks(session, nextKey)
     const run = this.prepareChild(
       session.config,
       session.id,
@@ -165,10 +187,7 @@ export class BenchmarkSessionService {
     const role = stage.writableNotebookRole
     const snapshot = this.snapshotNotebook(session, role)
     const source = {...snapshot, content}
-    const readOnly =
-      stage.stageKey === 'ordinary'
-        ? [this.readOnlyNotebook(session, 'life_death')]
-        : undefined
+    const readOnly = this.ordinaryReadOnlyNotebooks(session, stage.stageKey)
     session.status = 'restarting_stage'
     session.updatedAt = new Date().toISOString()
     const run = this.prepareChild(
@@ -285,7 +304,11 @@ export class BenchmarkSessionService {
     const requiredStage = role === 'life_death' ? 'hard' : 'ordinary'
     const stage = session.stages.find(
       ({stageKey}) => stageKey === requiredStage,
-    )!
+    )
+    if (!stage)
+      throw new Error(
+        `This session does not include the ${requiredStage} stage`,
+      )
     if (stage.status !== 'completed' || !stage.runId)
       throw new Error(
         `The ${requiredStage} stage must complete before publishing`,
@@ -317,7 +340,7 @@ export class BenchmarkSessionService {
       stage.status = 'completed'
       stage.metrics = run.metrics
       stage.completedAt = now
-      if (stage.stageKey === 'ordinary') {
+      if (stage.id === session.stages.at(-1)?.id) {
         session.status = 'completed'
         session.completedAt = now
       } else session.status = 'awaiting_continue'
@@ -404,6 +427,18 @@ export class BenchmarkSessionService {
       name: notebook.name,
       content: notebook.content,
     }
+  }
+
+  private ordinaryReadOnlyNotebooks(
+    session: BenchmarkSession,
+    stageKey: BenchmarkStageKey,
+  ): BenchmarkRun['readOnlyNotebooks'] | undefined {
+    if (
+      stageKey !== 'ordinary' ||
+      !this.store.getBenchmarkSessionNotebookSnapshot(session.id, 'life_death')
+    )
+      return undefined
+    return [this.readOnlyNotebook(session, 'life_death')]
   }
 
   private saveInitialNotebook(

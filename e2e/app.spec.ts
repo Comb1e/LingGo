@@ -310,7 +310,7 @@ test('tests KataGo settings and keeps a standalone benchmark readable', async ({
   )
 })
 
-test('advances a six-stage benchmark session with role notebooks', async ({
+test('starts a split benchmark and keeps combined sessions readable', async ({
   page,
   request,
 }, testInfo) => {
@@ -330,6 +330,9 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   let sessionDeleted = false
   let createdNotebookTokenBudget: number | undefined
   let createdNotebookInitializationTokenLimit: number | undefined
+  let createdProcess: string | undefined
+  let createdLifeNotebookId: string | undefined
+  let createdOrdinaryNotebookId: string | undefined
   const sessionValue = () =>
     mockedSession(
       lifeNotebook.id,
@@ -387,6 +390,9 @@ test('advances a six-stage benchmark session with role notebooks', async ({
       route.request().method() === 'POST'
     ) {
       const payload = route.request().postDataJSON()
+      createdProcess = payload.process
+      createdLifeNotebookId = payload.lifeDeathNotebookId
+      createdOrdinaryNotebookId = payload.ordinaryNotebookId
       createdNotebookTokenBudget = payload.notebookTokenBudget
       createdNotebookInitializationTokenLimit =
         payload.notebookInitializationTokenLimit
@@ -479,13 +485,26 @@ test('advances a six-stage benchmark session with role notebooks', async ({
 
   await page.goto('/benchmarks')
   const managers = page.locator('.benchmark-create .notebook-manager')
+  await expect(managers).toHaveCount(1)
+  await expect(managers).toContainText('Life-and-death notebook')
+  await page.getByRole('button', {name: 'Ordinary game with KataGo'}).click()
   await expect(managers).toHaveCount(2)
-  await managers.nth(0).getByRole('combobox').selectOption(lifeNotebook.id)
+  await expect(managers.nth(0)).toContainText(
+    'Life-and-death reference notebook',
+  )
+  await expect(managers.nth(1)).toContainText('Ordinary-game notebook')
   await managers.nth(1).getByRole('combobox').selectOption(ordinaryNotebook.id)
+  await page.getByRole('button', {name: 'Life-and-death problems'}).click()
+  await managers.getByRole('combobox').selectOption(lifeNotebook.id)
   await page.getByLabel('Recommended notebook token budget').fill('4096')
   await page.getByLabel('Initialization output token limit').fill('12288')
-  await page.getByRole('button', {name: 'Start six-stage session'}).click()
+  await page
+    .getByRole('button', {name: 'Start life-and-death benchmark'})
+    .click()
   await expect(page).toHaveURL(/\/benchmark-sessions\/mock-session/)
+  expect(createdProcess).toBe('life_death')
+  expect(createdLifeNotebookId).toBe(lifeNotebook.id)
+  expect(createdOrdinaryNotebookId).toBeUndefined()
   expect(createdNotebookTokenBudget).toBe(4_096)
   expect(createdNotebookInitializationTokenLimit).toBe(12_288)
 

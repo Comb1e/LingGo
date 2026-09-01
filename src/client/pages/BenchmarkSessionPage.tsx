@@ -69,12 +69,12 @@ export function BenchmarkSessionPage() {
   const lifeNotebook = useQuery({
     queryKey: ['benchmark-session-notebook', id, 'life_death'],
     queryFn: () => api.benchmarkSessionNotebook(id, 'life_death'),
-    enabled: Boolean(id),
+    enabled: Boolean(id && session?.notebooks.life_death),
   })
   const ordinaryNotebook = useQuery({
     queryKey: ['benchmark-session-notebook', id, 'ordinary'],
     queryFn: () => api.benchmarkSessionNotebook(id, 'ordinary'),
-    enabled: Boolean(id && session?.currentStage === 'ordinary'),
+    enabled: Boolean(id && session?.notebooks.ordinary),
   })
   const action = useMutation({
     mutationFn: (
@@ -147,13 +147,21 @@ export function BenchmarkSessionPage() {
       </div>
     )
   const run = runQuery.data
+  const hasLifeNotebook = Boolean(session.notebooks.life_death)
+  const hasOrdinaryNotebook = Boolean(session.notebooks.ordinary)
   const showOrdinary =
-    session.currentStage === 'ordinary_notebook' ||
-    session.currentStage === 'ordinary'
+    hasOrdinaryNotebook &&
+    (session.config.process === 'ordinary' ||
+      session.currentStage === 'ordinary_notebook' ||
+      session.currentStage === 'ordinary')
   return (
     <div className="page benchmark-session-detail">
       <PageHeader
-        title={t('benchmarkSession')}
+        title={
+          session.config.process
+            ? t(`benchmarkProcess_${session.config.process}`)
+            : t('benchmarkSession')
+        }
         actions={
           <>
             <StatusBadge status={session.status} label={t(session.status)} />
@@ -213,7 +221,9 @@ export function BenchmarkSessionPage() {
         }
       />
 
-      <section className="session-stage-band">
+      <section
+        className={`session-stage-band stage-count-${session.stages.length}`}
+      >
         {session.stages.map((stage, index) => (
           <StageCard
             key={stage.id}
@@ -284,16 +294,20 @@ export function BenchmarkSessionPage() {
         />
       )}
 
-      <div className={`session-notebooks${showOrdinary ? ' two-role' : ''}`}>
-        <NotebookPanel
-          role="life_death"
-          content={lifeNotebook.data ?? ''}
-          readOnly={showOrdinary}
-          session={session}
-          onPublish={(role) =>
-            publishNotebook(role, t('publishedNotebookName'), publish.mutate)
-          }
-        />
+      <div
+        className={`session-notebooks${showOrdinary && hasLifeNotebook ? ' two-role' : ''}`}
+      >
+        {hasLifeNotebook && (
+          <NotebookPanel
+            role="life_death"
+            content={lifeNotebook.data ?? ''}
+            readOnly={showOrdinary}
+            session={session}
+            onPublish={(role) =>
+              publishNotebook(role, t('publishedNotebookName'), publish.mutate)
+            }
+          />
+        )}
         {showOrdinary && (
           <NotebookPanel
             role="ordinary"

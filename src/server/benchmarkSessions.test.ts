@@ -25,6 +25,57 @@ afterEach(async () => {
 })
 
 describe('benchmark sessions', () => {
+  it('runs life-and-death as its own four-stage process', () => {
+    const fixture = setup()
+    const config: BenchmarkSessionConfig = {
+      ...fixture.config,
+      process: 'life_death',
+      ordinaryNotebookId: undefined,
+    }
+    let session = fixture.sessions.create(config)
+    expect(session.stages.map(({stageKey}) => stageKey)).toEqual([
+      'life_death_notebook',
+      'easy',
+      'medium',
+      'hard',
+    ])
+    expect(session.notebooks.ordinary).toBeUndefined()
+
+    for (const content of ['# Initialized', '# Easy', '# Medium']) {
+      const stage = session.stages.find(
+        ({stageKey}) => stageKey === session.currentStage,
+      )!
+      complete(fixture, stage.runId!, content)
+      session = fixture.sessions.continue(session.id)
+    }
+    complete(fixture, session.stages[3].runId!, '# Hard')
+    expect(fixture.sessions.get(session.id)?.status).toBe('completed')
+  })
+
+  it('runs ordinary KataGo games as their own two-stage process', () => {
+    const fixture = setup()
+    const config: BenchmarkSessionConfig = {
+      ...fixture.config,
+      process: 'ordinary',
+    }
+    let session = fixture.sessions.create(config)
+    expect(session.currentStage).toBe('ordinary_notebook')
+    expect(session.stages.map(({stageKey}) => stageKey)).toEqual([
+      'ordinary_notebook',
+      'ordinary',
+    ])
+    expect(session.notebooks.life_death).toBeDefined()
+
+    complete(fixture, session.stages[0].runId!, '# Ordinary initialized')
+    session = fixture.sessions.continue(session.id)
+    const ordinary = fixture.benchmarks.get(session.stages[1].runId!)!
+    expect(ordinary.readOnlyNotebooks).toEqual([
+      expect.objectContaining({role: 'life_death', content: '# Life seed'}),
+    ])
+    complete(fixture, ordinary.id, '# Ordinary learned')
+    expect(fixture.sessions.get(session.id)?.status).toBe('completed')
+  })
+
   it('starts only notebook initialization and gates every next stage in fixed order', () => {
     const fixture = setup()
     const session = fixture.sessions.create(fixture.config)

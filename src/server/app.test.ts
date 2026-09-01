@@ -932,7 +932,7 @@ describe('game API', () => {
     })
   })
 
-  it('creates a six-stage session and rejects an early continue', async () => {
+  it('creates a life-and-death session and rejects an early continue', async () => {
     store.saveConnection({
       id: 'session-no-key',
       name: 'Session provider',
@@ -947,11 +947,10 @@ describe('game API', () => {
       temperature: 0,
     })
     const life = store.createNotebook('session-profile', 'Session life')
-    const ordinary = store.createNotebook('session-profile', 'Session ordinary')
     const payload = {
+      process: 'life_death',
       profileId: 'session-profile',
       lifeDeathNotebookId: life.id,
-      ordinaryNotebookId: ordinary.id,
       finalColor: 'B',
       trainingGameCount: 2,
       trainingGamesWithWinRates: 1,
@@ -975,8 +974,6 @@ describe('game API', () => {
         {stageKey: 'easy', status: 'pending', attempt: 0},
         {stageKey: 'medium', status: 'pending', attempt: 0},
         {stageKey: 'hard', status: 'pending', attempt: 0},
-        {stageKey: 'ordinary_notebook', status: 'pending', attempt: 0},
-        {stageKey: 'ordinary', status: 'pending', attempt: 0},
       ],
     })
     const sessionId = created.json().id
