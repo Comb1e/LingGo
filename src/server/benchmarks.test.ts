@@ -1625,6 +1625,9 @@ describe('benchmark scoring and prompts', () => {
     store = new Store(':memory:')
     let calls = 0
     const prompts: string[] = []
+    const textTurnRequests: Array<
+      Parameters<NonNullable<PlayerAdapter['requestTextTurn']>>[0]
+    > = []
     const adapter = {
       async requestText(prompt: string) {
         prompts.push(prompt)
@@ -1635,6 +1638,21 @@ describe('benchmark scoring and prompts', () => {
           outputTokens: 0,
           latencyMs: 0,
           model: 'test-model',
+        }
+      },
+      async requestTextTurn(
+        request: Parameters<NonNullable<PlayerAdapter['requestTextTurn']>>[0],
+      ) {
+        textTurnRequests.push(request)
+        prompts.push(request.content)
+        calls += 1
+        return {
+          text: calls === 1 ? 'x'.repeat(100) : '# Fine',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+          providerContinuationId: `response-${calls}`,
         }
       },
       async requestAction() {
@@ -1665,8 +1683,18 @@ describe('benchmark scoring and prompts', () => {
         2000,
       ),
     ).toBe(true)
-    expect(prompts[1]).toContain('Compress the notebook')
+    expect(prompts[1]).toContain(
+      'Compress the notebook in your previous response',
+    )
+    expect(prompts[1]).not.toContain('x'.repeat(100))
     expect(prompts[1]).not.toContain('Preserve the Markdown structure')
+    const compressionRequest = textTurnRequests[1]!
+    expect(compressionRequest.transcript.at(-1)).toEqual({
+      role: 'assistant',
+      content: 'x'.repeat(100),
+    })
+    expect(compressionRequest.maxOutputTokens).toBe(12_000)
+    expect(compressionRequest.previousResponseId).toBe('response-1')
     expect(
       service.get(compressed.id)?.notebookEstimatedTokens,
     ).toBeLessThanOrEqual(8)

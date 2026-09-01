@@ -392,7 +392,7 @@ describe('provider normalization', () => {
     },
   )
 
-  it('chains stored OpenAI responses with only the pending delta', async () => {
+  it('chains stored OpenAI text responses without resending the notebook', async () => {
     let requestBody = ''
     vi.stubGlobal(
       'fetch',
@@ -406,18 +406,15 @@ describe('provider normalization', () => {
     )
     const adapter = openAiAdapter()
     await expect(
-      adapter.requestTurn!(
+      adapter.requestTextTurn!(
         {
-          kind: 'continuation',
-          content: 'Newly observed opponent action: W B8',
+          content: 'Compress the notebook in your previous response.',
           transcript: [
             {role: 'user', content: 'STATIC INITIAL RULES'},
-            {role: 'assistant', content: '{"move":"A9","reason":"open"}'},
+            {role: 'assistant', content: 'OVERSIZED NOTEBOOK'},
           ],
           previousResponseId: 'resp_previous',
-          cacheKey: 'linggo:test-game:B',
-          snapshot: emptySnapshot(),
-          output: 'action',
+          cacheKey: 'linggo:test-notebook:compress',
         },
         new AbortController().signal,
       ),
@@ -426,9 +423,10 @@ describe('provider normalization', () => {
     const body = JSON.parse(requestBody)
     expect(body.store).toBe(true)
     expect(body.previous_response_id).toBe('resp_previous')
-    expect(body.prompt_cache_key).toBe('linggo:test-game:B')
-    expect(requestBody).toContain('Newly observed opponent action')
+    expect(body.prompt_cache_key).toBe('linggo:test-notebook:compress')
+    expect(requestBody).toContain('Compress the notebook')
     expect(requestBody).not.toContain('STATIC INITIAL RULES')
+    expect(requestBody).not.toContain('OVERSIZED NOTEBOOK')
   })
 
   it('orders visible transcript messages and applies Anthropic cache hints', async () => {

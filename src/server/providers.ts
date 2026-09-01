@@ -95,6 +95,18 @@ export interface PlayerAdapter {
     outputTokens: number
     model: string
   }>
+  requestTextTurn?(
+    request: TextTurnRequest,
+    signal: AbortSignal,
+  ): Promise<LlmTurnResponse>
+}
+
+export interface TextTurnRequest {
+  content: string
+  transcript: VisibleLlmMessage[]
+  previousResponseId?: string
+  cacheKey: string
+  maxOutputTokens?: number
 }
 
 export interface LlmTurnRequest {
@@ -348,16 +360,32 @@ export class LlmPlayerAdapter implements PlayerAdapter {
   }
 
   async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
+    return this.requestConversation(request, signal)
+  }
+
+  async requestTextTurn(request: TextTurnRequest, signal: AbortSignal) {
+    return this.requestConversation(request, signal)
+  }
+
+  private async requestConversation(
+    request: TextTurnRequest,
+    signal: AbortSignal,
+  ) {
     const started = Date.now()
     const messages = providerMessages(this.connection.kind, request)
     const result =
       this.connection.kind === 'deepseek'
-        ? await this.requestDeepSeekMessages(messages, signal)
+        ? await this.requestDeepSeekMessages(
+            messages,
+            signal,
+            request.maxOutputTokens,
+          )
         : await this.requestWithSdk(
             messages,
             request.previousResponseId,
             request.cacheKey,
             signal,
+            request.maxOutputTokens,
           )
     return {
       text: result.text,
@@ -429,9 +457,10 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     previousResponseId: string | undefined,
     cacheKey: string | undefined,
     signal: AbortSignal,
+    maxOutputTokens?: number,
   ) {
     const request = {
-      model: this.createModel(),
+      model: this.createModel(maxOutputTokens),
       messages,
       temperature: this.temperature(),
       reasoning:
@@ -923,7 +952,10 @@ export function parseJsonActionResult(
 
 function providerMessages(
   kind: ProviderConnection['kind'],
-  request: LlmTurnRequest,
+  request: Pick<
+    TextTurnRequest,
+    'content' | 'transcript' | 'previousResponseId'
+  >,
 ): ModelMessage[] {
   if (kind === 'openai' && request.previousResponseId)
     return [{role: 'user', content: request.content}]

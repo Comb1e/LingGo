@@ -1861,6 +1861,10 @@ export class BenchmarkService {
     signal: AbortSignal,
   ) {
     let prompt = initialPrompt
+    let previousResponseId: string | undefined
+    const continuesInitialization =
+      sourcePhase === 'initializing_notebook' &&
+      Boolean(adapter.requestTextTurn)
     for (let invalidAttempt = 1; invalidAttempt <= 3; invalidAttempt++) {
       const operation =
         invalidAttempt === 1
@@ -1884,12 +1888,23 @@ export class BenchmarkService {
         prompt,
         operation,
         signal,
-        undefined,
+        continuesInitialization
+          ? {
+              cacheKey: `linggo:benchmark:${run.id}:notebook:${operation}`,
+              textContinuation: true,
+              previousResponseId,
+            }
+          : undefined,
         sourcePhase === 'initializing_notebook'
           ? (run.config.notebookInitializationTokenLimit ??
               DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT)
           : undefined,
       )
+      previousResponseId =
+        'providerContinuationId' in response &&
+        typeof response.providerContinuationId === 'string'
+          ? response.providerContinuationId
+          : undefined
       addUsage(
         run,
         response,
@@ -1910,11 +1925,10 @@ export class BenchmarkService {
         )
       prompt = content
         ? [
-            `Compress the notebook below to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+            `Compress the notebook ${continuesInitialization ? 'in your previous response' : 'below'} to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
             'Preserve the most useful knowledge while writing a complete Markdown notebook in your own organization and style. Do not truncate it.',
             ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
-            '',
-            content,
+            ...(continuesInitialization ? [] : ['', content]),
             '',
             'Return only the complete compressed Markdown notebook.',
           ].join('\n')
@@ -1936,13 +1950,19 @@ export class BenchmarkService {
       'initialize' | 'compress' | 'review' | 'problem' | 'problem_notebook',
     signal: AbortSignal,
     context?: {
-      snapshot: GameSnapshot
       cacheKey: string
       includeTranscript?: boolean
+      snapshot?: GameSnapshot
+      textContinuation?: boolean
+      previousResponseId?: string
     },
     maxOutputTokens?: number,
   ) {
-    if (!adapter.requestText && !(context && adapter.requestTurn))
+    if (
+      !adapter.requestText &&
+      !(context?.snapshot && adapter.requestTurn) &&
+      !(context?.textContinuation && adapter.requestTextTurn)
+    )
       throw new Error(
         'The benchmark provider does not support notebook generation',
       )
@@ -1971,25 +1991,36 @@ export class BenchmarkService {
       this.save(run)
       try {
         const response =
-          context && adapter.requestTurn
-            ? await adapter.requestTurn(
+          context?.textContinuation && adapter.requestTextTurn
+            ? await adapter.requestTextTurn(
                 {
-                  kind: transcript.length ? 'continuation' : 'initial',
                   content: prompt,
                   transcript,
+                  previousResponseId: context.previousResponseId,
                   cacheKey: context.cacheKey,
-                  snapshot: context.snapshot,
-                  output: 'notebook',
+                  maxOutputTokens,
                 },
                 signal,
               )
-            : await adapter.requestText!(
-                prompt,
-                signal,
-                context?.cacheKey ??
-                  `linggo:benchmark:${run.id}:notebook:${operation}`,
-                maxOutputTokens,
-              )
+            : context?.snapshot && adapter.requestTurn
+              ? await adapter.requestTurn(
+                  {
+                    kind: transcript.length ? 'continuation' : 'initial',
+                    content: prompt,
+                    transcript,
+                    cacheKey: context.cacheKey,
+                    snapshot: context.snapshot,
+                    output: 'notebook',
+                  },
+                  signal,
+                )
+              : await adapter.requestText!(
+                  prompt,
+                  signal,
+                  context?.cacheKey ??
+                    `linggo:benchmark:${run.id}:notebook:${operation}`,
+                  maxOutputTokens,
+                )
         this.recordLlmResponse(run, response.text)
         return response
       } catch (error) {
