@@ -1923,6 +1923,17 @@ export class BenchmarkService {
     let prompt = initialPrompt
     let previousResponseId: string | undefined
     let lastNonEmptyContent = ''
+    const initializationTokenLimit =
+      run.config.notebookInitializationTokenLimit ??
+      DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT
+    const notebookTokenLimit =
+      sourcePhase === 'initializing_notebook' && isLifeDeath(run)
+        ? initializationTokenLimit
+        : run.config.notebookTokenBudget
+    const tokenLimitDescription =
+      sourcePhase === 'initializing_notebook' && isLifeDeath(run)
+        ? 'initialization token limit'
+        : 'estimated-token budget'
     const supportsInitializationContinuation =
       sourcePhase === 'initializing_notebook' &&
       Boolean(adapter.requestTextTurn)
@@ -1963,8 +1974,7 @@ export class BenchmarkService {
             }
           : undefined,
         sourcePhase === 'initializing_notebook'
-          ? (run.config.notebookInitializationTokenLimit ??
-              DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT)
+          ? initializationTokenLimit
           : undefined,
       )
       const responseContinuationId =
@@ -1982,8 +1992,7 @@ export class BenchmarkService {
       const content = response.text.trim()
       const byteCount = Buffer.byteLength(content, 'utf8')
       const estimatedTokens = Math.ceil(byteCount / 4)
-      if (content && estimatedTokens <= run.config.notebookTokenBudget)
-        return content
+      if (content && estimatedTokens <= notebookTokenLimit) return content
       if (content) {
         lastNonEmptyContent = content
         previousResponseId = responseContinuationId
@@ -1995,12 +2004,12 @@ export class BenchmarkService {
       if (invalidAttempt === 3)
         throw new Error(
           content
-            ? `Notebook exceeds the ${run.config.notebookTokenBudget.toLocaleString()} estimated-token budget after three attempts. The benchmark has been paused.`
+            ? `Notebook exceeds the ${notebookTokenLimit.toLocaleString()} ${tokenLimitDescription} after three attempts. The benchmark has been paused.`
             : 'The model returned an empty notebook after three attempts. The benchmark has been paused.',
         )
       prompt = lastNonEmptyContent
         ? [
-            `Compress the notebook ${previousResponseId ? 'in your previous response' : 'below'} to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+            `Compress the notebook ${previousResponseId ? 'in your previous response' : 'below'} to at most ${notebookTokenLimit.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
             'Preserve the most useful knowledge while writing a complete Markdown notebook in your own organization and style. Do not truncate it.',
             ...(isLifeDeath(run) ? [LIFE_DEATH_NOTEBOOK_INSTRUCTION] : []),
             ...(previousResponseId ? [] : ['', lastNonEmptyContent]),

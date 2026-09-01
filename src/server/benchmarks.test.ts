@@ -1793,6 +1793,108 @@ describe('benchmark scoring and prompts', () => {
     await invalidService.close()
   })
 
+  it('accepts life-and-death initialization above the recommended budget', async () => {
+    store = new Store(':memory:')
+    const set = loadProblemSet('gogameguru-easy')
+    const prompts: string[] = []
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(store),
+      () => ({
+        async requestText(prompt: string) {
+          prompts.push(prompt)
+          return {
+            text: 'x'.repeat(100),
+            inputTokens: 0,
+            outputTokens: 0,
+            latencyMs: 0,
+            model: 'test-model',
+          }
+        },
+        async requestAction() {
+          throw new Error('Stop after notebook initialization')
+        },
+      }),
+    )
+    const run = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: set.id,
+      problemSetChecksum: set.checksum,
+      notebookTokenBudget: 8,
+      notebookInitializationTokenLimit: 32,
+    })
+
+    expect(
+      await waitFor(() => service.get(run.id)?.status === 'paused', 2000),
+    ).toBe(true)
+    const notebookPrompts = prompts.filter(
+      (prompt) =>
+        prompt.includes('recommended notebook content budget') ||
+        prompt.includes('Compress the notebook'),
+    )
+    expect(notebookPrompts).toHaveLength(1)
+    expect(notebookPrompts[0]).not.toContain('Compress the notebook')
+    expect(service.get(run.id)).toMatchObject({
+      notebookEstimatedTokens: 25,
+    })
+    await service.close()
+  })
+
+  it('compresses life-and-death initialization only above its token limit', async () => {
+    store = new Store(':memory:')
+    const set = loadProblemSet('gogameguru-easy')
+    const prompts: string[] = []
+    let textCalls = 0
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(store),
+      () => ({
+        async requestText(prompt: string) {
+          prompts.push(prompt)
+          textCalls += 1
+          return {
+            text: textCalls === 1 ? 'x'.repeat(132) : '# Fine',
+            inputTokens: 0,
+            outputTokens: 0,
+            latencyMs: 0,
+            model: 'test-model',
+          }
+        },
+        async requestAction() {
+          throw new Error('Stop after notebook initialization')
+        },
+      }),
+    )
+    const run = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: set.id,
+      problemSetChecksum: set.checksum,
+      notebookTokenBudget: 8,
+      notebookInitializationTokenLimit: 32,
+    })
+
+    expect(
+      await waitFor(() => service.get(run.id)?.status === 'paused', 2000),
+    ).toBe(true)
+    const notebookPrompts = prompts.filter(
+      (prompt) =>
+        prompt.includes('recommended notebook content budget') ||
+        prompt.includes('Compress the notebook'),
+    )
+    expect(notebookPrompts).toHaveLength(2)
+    expect(notebookPrompts[1]).toContain(
+      'Compress the notebook below to at most 32 estimated tokens',
+    )
+    expect(service.get(run.id)).toMatchObject({
+      notebookEstimatedTokens: 2,
+    })
+    await service.close()
+  })
+
   it('resends the last non-empty notebook after an empty compression response', async () => {
     store = new Store(':memory:')
     const textTurnRequests: Array<
