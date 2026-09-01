@@ -1328,15 +1328,18 @@ describe('benchmark scoring and prompts', () => {
     const solvingPrompt = actionPrompts[0]
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
     expect(solvingPrompt).not.toContain('GO RULES')
-    expect(solvingPrompt).not.toContain('X = Black')
-    expect(solvingPrompt).not.toContain('O = White')
-    expect(solvingPrompt).not.toContain('. = empty')
+    expect(solvingPrompt).toContain(
+      'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
+    )
     expect(actionPrompts[1]).toContain('The previous attempt failed.')
     expect(actionPrompts[1]).toContain('Reason:')
     expect(actionPrompts[1]).toContain(
       'Redo the problem from this current position.',
     )
     expect(actionPrompts[1]).toContain('OUTPUT JSON SCHEMA')
+    expect(actionPrompts[1]).toContain(
+      'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
+    )
     expect(actionPrompts[1]).toContain(
       '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
     )
@@ -1400,7 +1403,7 @@ describe('benchmark scoring and prompts', () => {
         }
         const action =
           actionCalls <= 5
-            ? ({action: 'pass', comment: 'Guess by passing.'} as const)
+            ? ({action: 'play', coordinate: 'O4', comment: 'Try O4.'} as const)
             : problem.solution[0]
         return {
           text: JSON.stringify({
@@ -1444,6 +1447,10 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.transcript).toEqual([])
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
     expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(5)
+    expect(patchRequest?.content.match(/Action: O4\./g)).toHaveLength(5)
+    expect(patchRequest?.content).toContain(
+      'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
+    )
     expect(patchRequest?.content).toContain(
       'UPDATE TRIGGER: FAILED_AFTER_5_ATTEMPTS',
     )

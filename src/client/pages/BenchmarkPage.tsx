@@ -12,7 +12,12 @@ import {
 import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
-import type {BenchmarkProblemView, BenchmarkRun, Game} from '../../shared/types'
+import type {
+  BenchmarkProblemView,
+  BenchmarkRun,
+  Game,
+  PlayerAction,
+} from '../../shared/types'
 import {api} from '../api'
 import {BenchmarkLlmMessageInspector} from '../BenchmarkLlmMessageInspector'
 import {Board} from '../Board'
@@ -333,7 +338,10 @@ export function BenchmarkPage() {
           <h2>{t('problemAttempts')}</h2>
           {problemAttempts.data.map((attempt) => (
             <div key={attempt.sequence}>
-              {attempt.sequence}. {attempt.problemId}{' '}
+              {attempt.sequence}. {attempt.problemId} {t('llmAttemptedAction')}:{' '}
+              {attempt.actualAction
+                ? benchmarkActionLabel(attempt.actualAction, t)
+                : t('none')}{' '}
               {attempt.correct
                 ? 'correct'
                 : `failed${attempt.failureReason ? `: ${attempt.failureReason}` : ''}`}
@@ -512,6 +520,13 @@ export function BenchmarkPage() {
       )}
     </div>
   )
+}
+
+function benchmarkActionLabel(
+  action: PlayerAction,
+  t: (key: string) => string,
+) {
+  return action.action === 'play' ? action.coordinate : t(action.action)
 }
 
 function benchmarkTrainingGameCount(config: BenchmarkRun['config']) {

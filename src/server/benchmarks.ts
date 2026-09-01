@@ -114,6 +114,9 @@ class KataGoUnavailableError extends Error {}
 const LIFE_DEATH_NOTEBOOK_INSTRUCTION =
   "Do not write the direct answer to an individual life-and-death problem in this notebook. Record only generalizable techniques and reasoning patterns; do not include the problem's answer coordinate or a step-by-step solution sequence."
 
+const LIFE_DEATH_BOARD_SYMBOL_LEGEND =
+  'Board symbols: X = Black stone, O = White stone, . = empty intersection.'
+
 const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
   'Write a complete Markdown life-and-death Go technique notebook.',
   'A life-and-death problem is a local tactical position about whether an unsettled group can survive or be captured under best play.',
@@ -1305,6 +1308,7 @@ export class BenchmarkService {
               : ''
           const position = [
             'CURRENT BOARD',
+            LIFE_DEATH_BOARD_SYMBOL_LEGEND,
             `Expected side to move: ${currentSnapshot.toMove}`,
             `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
             asciiBoard(currentSnapshot),
@@ -1472,6 +1476,7 @@ export class BenchmarkService {
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'Use the current problem position and failure feedback to choose the most useful existing note to improve.',
         'PROBLEM',
+        LIFE_DEATH_BOARD_SYMBOL_LEGEND,
         asciiBoard(problem.snapshot),
         `RESULT: ${pending.correct ? 'solved' : 'not solved'}`,
         ...(failedAttempts.length
@@ -1479,7 +1484,7 @@ export class BenchmarkService {
               'FAILED ATTEMPTS',
               ...failedAttempts.map(
                 (attempt, index) =>
-                  `${index + 1}. Feedback: ${attempt.failureReason ?? 'incorrect'}`,
+                  `${index + 1}. Action: ${formatProblemAction(attempt.actualAction)}. Feedback: ${attempt.failureReason ?? 'incorrect'}`,
               ),
             ]
           : []),
@@ -2214,6 +2219,11 @@ function firstResponseSuccessRate(attempts: BenchmarkProblemAttempt[]) {
     firstResponses.filter((attempt) => attempt.correct).length /
     Math.max(1, firstResponses.length)
   )
+}
+
+function formatProblemAction(action: PlayerAction | undefined) {
+  if (!action) return '(no valid action parsed)'
+  return action.action === 'play' ? action.coordinate : action.action
 }
 
 function addUsage(
