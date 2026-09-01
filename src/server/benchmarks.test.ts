@@ -1113,10 +1113,17 @@ describe('benchmark scoring and prompts', () => {
     const initializationEntered = deferred()
     const initializationGate = deferred()
     const prompts: string[] = []
+    const outputTokenLimits: Array<number | undefined> = []
     const adapter = {
-      async requestText(prompt: string, signal: AbortSignal) {
+      async requestText(
+        prompt: string,
+        signal: AbortSignal,
+        _cacheKey?: string,
+        maxOutputTokens?: number,
+      ) {
         signal.throwIfAborted()
         prompts.push(prompt)
+        outputTokenLimits.push(maxOutputTokens)
         if (prompt.includes('AUTHORITATIVE GO RULES')) {
           initializationEntered.resolve()
           await initializationGate.promise
@@ -1184,6 +1191,9 @@ describe('benchmark scoring and prompts', () => {
     }
     expect(prompts[0]).toContain('# Original source')
     expect(prompts[0].split('\n', 1)[0]).toBe(
+      'This initialization response has a maximum output budget of 8,000 tokens.',
+    )
+    expect(prompts[0]).toContain(
       'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
     )
     expect(prompts[0].indexOf('at most 8,000 estimated tokens')).toBeLessThan(
@@ -1195,6 +1205,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).not.toContain('## Shape and Life')
     expect(prompts[0]).not.toContain('## Endgame')
     expect(prompts[0]).not.toContain('## Move Checklist')
+    expect(outputTokenLimits[0]).toBe(8_000)
     initializationGate.resolve()
     expect(
       await waitFor(
@@ -1246,6 +1257,7 @@ describe('benchmark scoring and prompts', () => {
     const promptReady = deferred()
     const responseGate = deferred()
     const prompts: string[] = []
+    const outputTokenLimits: Array<number | undefined> = []
     const actionPrompts: string[] = []
     let actionCalls = 0
     const adapter = {
@@ -1269,8 +1281,14 @@ describe('benchmark scoring and prompts', () => {
           retries: 0,
         }
       },
-      async requestText(prompt: string, signal: AbortSignal) {
+      async requestText(
+        prompt: string,
+        signal: AbortSignal,
+        _cacheKey?: string,
+        maxOutputTokens?: number,
+      ) {
         prompts.push(prompt)
+        outputTokenLimits.push(maxOutputTokens)
         if (prompt.includes('Update the technique notebook')) {
           promptReady.resolve()
           await responseGate.promise
@@ -1314,7 +1332,13 @@ describe('benchmark scoring and prompts', () => {
       'A life-and-death problem is a local tactical position',
     )
     expect(prompts[0].split('\n', 1)[0]).toBe(
+      'This initialization response has a maximum output budget of 8,000 tokens.',
+    )
+    expect(prompts[0]).toContain(
       'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
+    )
+    expect(prompts[0]).toContain(
+      'later life-and-death problem prompts will no longer provide the Go or life-and-death rules',
     )
     expect(prompts[0]).toContain('A defender aims for unconditional life')
     expect(prompts[0]).toContain(
@@ -1324,6 +1348,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).not.toContain('komi')
     expect(prompts[0]).not.toContain('passing')
     expect(prompts[0]).not.toContain('resignation')
+    expect(outputTokenLimits[0]).toBe(8_000)
     expect(actionPrompts).toHaveLength(4)
     const solvingPrompt = actionPrompts[0]
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')

@@ -86,6 +86,7 @@ export interface PlayerAdapter {
     prompt: string,
     signal: AbortSignal,
     cacheKey?: string,
+    maxOutputTokens?: number,
   ): Promise<{
     text: string
     latencyMs: number
@@ -373,16 +374,22 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     }
   }
 
-  async requestText(prompt: string, signal: AbortSignal, cacheKey?: string) {
+  async requestText(
+    prompt: string,
+    signal: AbortSignal,
+    cacheKey?: string,
+    maxOutputTokens?: number,
+  ) {
     const started = Date.now()
     const result =
       this.connection.kind === 'deepseek'
-        ? await this.requestDeepSeek(prompt, signal)
+        ? await this.requestDeepSeek(prompt, signal, maxOutputTokens)
         : await streamedTextResult(
             {
-              model: this.createModel(),
+              model: this.createModel(maxOutputTokens),
               prompt,
               temperature: this.temperature(),
+              maxOutputTokens,
               providerOptions: providerTurnOptions(
                 this.connection.kind,
                 undefined,
@@ -441,16 +448,22 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     return streamedTextResult(request, this.firstTokenTimeoutMs)
   }
 
-  private requestDeepSeek(prompt: string, signal: AbortSignal) {
+  private requestDeepSeek(
+    prompt: string,
+    signal: AbortSignal,
+    maxOutputTokens?: number,
+  ) {
     return this.requestDeepSeekMessages(
       [{role: 'user', content: prompt}],
       signal,
+      maxOutputTokens,
     )
   }
 
   private requestDeepSeekMessages(
     messages: ModelMessage[],
     signal: AbortSignal,
+    maxOutputTokens?: number,
   ) {
     return deepSeekStreamedTextResult({
       baseUrl: this.connection.baseUrl,
@@ -463,12 +476,13 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       signal,
       timeoutMs: this.timeoutMs,
       firstTokenTimeoutMs: this.firstTokenTimeoutMs,
+      maxOutputTokens,
     })
   }
 
-  private createModel(): LanguageModel {
+  private createModel(maxOutputTokens?: number): LanguageModel {
     const id = this.profile.modelId
-    const customFetch = this.customRequestFetch()
+    const customFetch = this.customRequestFetch(maxOutputTokens)
     if (this.connection.kind === 'openai') {
       const provider = createOpenAI({
         apiKey: this.key,
@@ -521,7 +535,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       : this.profile.temperature
   }
 
-  private customRequestFetch() {
+  private customRequestFetch(maxOutputTokens?: number) {
     const useExtraBodyControl = this.profile.reasoningControl === 'extra_body'
     if (!this.profile.requestOptions?.length && !useExtraBodyControl)
       return undefined
@@ -538,6 +552,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       )
         throw new Error('Provider request body is not a JSON object')
       const body = mergeRequestOptions(providerBody, requestOptions)
+      enforceProviderOutputLimit(body, this.connection.kind, maxOutputTokens)
       if (useExtraBodyControl)
         applyExtraBodyReasoningControl(
           body,
@@ -570,6 +585,7 @@ async function deepSeekStreamedTextResult(options: {
   signal: AbortSignal
   timeoutMs: number
   firstTokenTimeoutMs: number
+  maxOutputTokens?: number
 }) {
   const firstTokenController = new AbortController()
   const totalController = new AbortController()
@@ -598,6 +614,7 @@ async function deepSeekStreamedTextResult(options: {
     },
     options.requestOptions,
   )
+  enforceProviderOutputLimit(body, 'deepseek', options.maxOutputTokens)
   if (
     supportsDeepSeekReasoningControl(options.modelId) ||
     options.reasoningControl === 'extra_body'
@@ -665,6 +682,34 @@ function applyExtraBodyReasoningControl(
   delete body.reasoning
   if (reasoningEnabled) body.reasoning_effort ??= 'high'
   else delete body.reasoning_effort
+}
+
+function enforceProviderOutputLimit(
+  body: Record<string, unknown>,
+  kind: ProviderConnection['kind'],
+  limit?: number,
+) {
+  if (limit === undefined) return
+  const capped = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(value, limit)
+      : limit
+  if (kind === 'openai') {
+    body.max_output_tokens = capped(body.max_output_tokens)
+    return
+  }
+  if (kind === 'google') {
+    const generationConfig =
+      body.generationConfig &&
+      !Array.isArray(body.generationConfig) &&
+      typeof body.generationConfig === 'object'
+        ? (body.generationConfig as Record<string, unknown>)
+        : {}
+    generationConfig.maxOutputTokens = capped(generationConfig.maxOutputTokens)
+    body.generationConfig = generationConfig
+    return
+  }
+  body.max_tokens = capped(body.max_tokens)
 }
 
 function updateDeepSeekStream(

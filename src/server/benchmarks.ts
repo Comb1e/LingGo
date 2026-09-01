@@ -119,6 +119,7 @@ const LIFE_DEATH_BOARD_SYMBOL_LEGEND =
 
 const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
   'Write a complete Markdown life-and-death Go technique notebook.',
+  'After this initialization, later life-and-death problem prompts will no longer provide the Go or life-and-death rules, so record the reusable rules and principles you will need now.',
   'A life-and-death problem is a local tactical position about whether an unsettled group can survive or be captured under best play.',
   "The side to move must find the correct first move and read the opponent's strongest resistance.",
   'A defender aims for unconditional life, normally through two independent eyes, a safe connection, or escape.',
@@ -1167,7 +1168,10 @@ export class BenchmarkService {
           'Preserve correct, useful knowledge while improving clarity and actionability.',
         ]
       : []
-    const notebookBudgetInstruction = `Keep the complete Markdown notebook to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`
+    const notebookBudgetInstruction = [
+      `This initialization response has a maximum output budget of ${run.config.notebookTokenBudget.toLocaleString()} tokens.`,
+      `Keep the complete Markdown notebook to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+    ].join('\n')
     const prompt = isLifeDeath(run)
       ? [
           notebookBudgetInstruction,
@@ -1872,6 +1876,10 @@ export class BenchmarkService {
         prompt,
         operation,
         signal,
+        undefined,
+        sourcePhase === 'initializing_notebook'
+          ? run.config.notebookTokenBudget
+          : undefined,
       )
       addUsage(
         run,
@@ -1923,6 +1931,7 @@ export class BenchmarkService {
       cacheKey: string
       includeTranscript?: boolean
     },
+    maxOutputTokens?: number,
   ) {
     if (!adapter.requestText && !(context && adapter.requestTurn))
       throw new Error(
@@ -1970,6 +1979,7 @@ export class BenchmarkService {
                 signal,
                 context?.cacheKey ??
                   `linggo:benchmark:${run.id}:notebook:${operation}`,
+                maxOutputTokens,
               )
         this.recordLlmResponse(run, response.text)
         return response

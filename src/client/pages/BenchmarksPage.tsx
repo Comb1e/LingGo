@@ -3,7 +3,10 @@ import {ArrowRight, Gauge} from 'lucide-react'
 import {useEffect, useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
-import {DEFAULT_BENCHMARK_TRAINING_VISITS} from '../../shared/constants'
+import {
+  DEFAULT_BENCHMARK_TRAINING_VISITS,
+  DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+} from '../../shared/constants'
 import type {BenchmarkSession, Color} from '../../shared/types'
 import {api} from '../api'
 import {NotebookManager} from '../NotebookManager'
@@ -36,7 +39,9 @@ export function BenchmarksPage() {
     DEFAULT_BENCHMARK_TRAINING_VISITS,
   )
   const [evaluationVisits, setEvaluationVisits] = useState(10_000)
-  const [notebookTokenBudget, setNotebookTokenBudget] = useState(3_000)
+  const [notebookTokenBudget, setNotebookTokenBudget] = useState(
+    DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+  )
   const [withWinRates, setWithWinRates] = useState(5)
   const [withoutWinRates, setWithoutWinRates] = useState(5)
   const profileNotebooks = useQuery({
@@ -202,7 +207,9 @@ export function BenchmarksPage() {
             onChange={setEvaluationVisits}
           />
           <NumberField
-            label={t('notebookTokenBudget')}
+            label={t('notebookTokenBudget', {
+              budget: DEFAULT_NOTEBOOK_TOKEN_BUDGET.toLocaleString(),
+            })}
             value={notebookTokenBudget}
             min={256}
             onChange={setNotebookTokenBudget}

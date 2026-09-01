@@ -337,6 +337,61 @@ describe('provider normalization', () => {
     },
   )
 
+  it.each([
+    ['openai', 'max_output_tokens'],
+    ['anthropic', 'max_tokens'],
+    ['google', 'generationConfig'],
+    ['deepseek', 'max_tokens'],
+    ['compatible', 'max_tokens'],
+  ] satisfies Array<[ProviderKind, string]>)(
+    'limits %s text generation output tokens',
+    async (kind, outputField) => {
+      let requestBody = ''
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          requestBody = String(init?.body ?? '')
+          return new Response('{"error":{"message":"test stop"}}', {
+            status: 500,
+            headers: {'content-type': 'application/json'},
+          })
+        }),
+      )
+      const adapter = new LlmPlayerAdapter(
+        {
+          id: `limited-${kind}`,
+          name: `Limited ${kind}`,
+          kind,
+          baseUrl: `https://models.example.test/${kind}/v1`,
+          supportsStructuredOutput: true,
+        },
+        {
+          id: `limited-profile-${kind}`,
+          name: 'Limited profile',
+          connectionId: `limited-${kind}`,
+          modelId: 'test-model',
+          temperature: 0,
+        },
+        'test-key',
+      )
+
+      await expect(
+        adapter.requestText!(
+          'Initialize a notebook.',
+          new AbortController().signal,
+          'linggo:test-notebook',
+          1_234,
+        ),
+      ).rejects.toThrow()
+      const body = JSON.parse(requestBody)
+      expect(
+        outputField === 'generationConfig'
+          ? body.generationConfig.maxOutputTokens
+          : body[outputField],
+      ).toBe(1_234)
+    },
+  )
+
   it('chains stored OpenAI responses with only the pending delta', async () => {
     let requestBody = ''
     vi.stubGlobal(

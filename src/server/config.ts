@@ -1,5 +1,6 @@
 import {z} from 'zod'
 import {existsSync} from 'node:fs'
+import {DEFAULT_NOTEBOOK_TOKEN_BUDGET} from '../shared/constants'
 
 const booleanEnv = z
   .enum(['0', '1', 'true', 'false'])
@@ -24,7 +25,11 @@ export const runtimeConfigSchema = z.object({
   providerRetryLimit: z.number().int().positive().default(5),
   modelRepairRetryLimit: z.number().int().nonnegative().default(3),
   proxyConnectTimeoutMs: z.number().int().positive().default(3_000),
-  notebookTokenBudget: z.number().int().positive().default(3_000),
+  notebookTokenBudget: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
   benchmarkProblemAttempts: z.number().int().positive().default(5),
   fakeKatago: z.boolean().default(false),
 })

@@ -328,6 +328,7 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   let stageIndex = 0
   let ordinaryAttempt = 1
   let sessionDeleted = false
+  let createdNotebookTokenBudget: number | undefined
   const sessionValue = () =>
     mockedSession(
       lifeNotebook.id,
@@ -383,8 +384,12 @@ test('advances a six-stage benchmark session with role notebooks', async ({
     if (
       path === '/api/benchmark-sessions' &&
       route.request().method() === 'POST'
-    )
+    ) {
+      createdNotebookTokenBudget = route
+        .request()
+        .postDataJSON().notebookTokenBudget
       return route.fulfill({status: 201, json: sessionValue()})
+    }
     if (path.includes('/stages/')) return route.fulfill({json: []})
     return route.fulfill({json: sessionValue()})
   })
@@ -475,8 +480,10 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   await expect(managers).toHaveCount(2)
   await managers.nth(0).getByRole('combobox').selectOption(lifeNotebook.id)
   await managers.nth(1).getByRole('combobox').selectOption(ordinaryNotebook.id)
+  await page.getByLabel('Notebook token limit (recommended 3,000)').fill('4096')
   await page.getByRole('button', {name: 'Start six-stage session'}).click()
   await expect(page).toHaveURL(/\/benchmark-sessions\/mock-session/)
+  expect(createdNotebookTokenBudget).toBe(4_096)
 
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Initialize life-and-death notebook',
