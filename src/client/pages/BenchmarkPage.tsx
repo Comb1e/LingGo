@@ -12,6 +12,7 @@ import {
 import {useEffect} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
+import {DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT} from '../../shared/constants'
 import type {
   BenchmarkProblemView,
   BenchmarkRun,
@@ -296,7 +297,10 @@ export function BenchmarkPage() {
           <span>{t('notebookBudgetUsage')}</span>
           <strong>
             {(run.notebookEstimatedTokens ?? 0).toLocaleString()} /{' '}
-            {(run.config.notebookTokenBudget ?? 0).toLocaleString()}
+            {(
+              run.config.notebookInitializationTokenLimit ??
+              DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT
+            ).toLocaleString()}
           </strong>
         </div>
         {(run.sourceRunId || run.successorRunId) && (

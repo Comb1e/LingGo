@@ -1,5 +1,5 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
-import {ArrowRight, Gauge} from 'lucide-react'
+import {ArrowRight, Gauge, Trash2} from 'lucide-react'
 import {useEffect, useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
@@ -105,6 +105,14 @@ export function BenchmarksPage() {
       navigate(`/benchmark-sessions/${session.id}`)
     },
   })
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteBenchmarkSession(id),
+    onSuccess: (_result, id) => {
+      queryClient.removeQueries({queryKey: ['benchmark-session', id]})
+      void queryClient.invalidateQueries({queryKey: ['benchmark-sessions']})
+      void queryClient.invalidateQueries({queryKey: ['benchmarks']})
+    },
+  })
 
   useEffect(() => {
     const events = new EventSource('/api/benchmark-sessions/events')
@@ -129,7 +137,11 @@ export function BenchmarksPage() {
       <PageHeader title={t('benchmarks')} />
       <ErrorBanner
         error={
-          create.error ?? sessions.error ?? profiles.error ?? legacyRuns.error
+          create.error ??
+          remove.error ??
+          sessions.error ??
+          profiles.error ??
+          legacyRuns.error
         }
       />
       <form
@@ -312,6 +324,23 @@ export function BenchmarksPage() {
               <StatusBadge status={session.status} label={t(session.status)} />
               <ArrowRight />
             </Link>
+            <Button
+              className="icon-button danger-quiet row-delete"
+              type="button"
+              title={t('delete')}
+              aria-label={`${t('delete')} ${
+                session.config.process
+                  ? t(`benchmarkProcess_${session.config.process}`)
+                  : t('legacyCombinedBenchmark')
+              }`}
+              disabled={remove.isPending && remove.variables === session.id}
+              onClick={() => {
+                if (window.confirm(t('deleteBenchmarkSessionConfirm')))
+                  remove.mutate(session.id)
+              }}
+            >
+              <Trash2 />
+            </Button>
           </div>
         ))}
       </section>

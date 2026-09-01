@@ -259,7 +259,8 @@ test('tests KataGo settings and keeps a standalone benchmark readable', async ({
       trainingGamesWithoutWinRates: 0,
       notebookSeed: {mode: 'refine_existing', notebookId: notebook.id},
       trainingFeedback: 'structured',
-      notebookTokenBudget: 10000,
+      notebookTokenBudget: 4096,
+      notebookInitializationTokenLimit: 12288,
       trainingVisits: 10000,
       evaluationVisits: 10000,
     },
@@ -275,8 +276,9 @@ test('tests KataGo settings and keeps a standalone benchmark readable', async ({
   )
   await expect(page.locator('.benchmark-games a')).toHaveCount(1)
   await expect(
-    page.getByText('Check liberties before every move.'),
+    page.getByText('Check liberties before every move.', {exact: true}),
   ).toBeVisible()
+  await expect(page.getByText(/\/ 12,288$/)).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('standalone-benchmark.png'),
     fullPage: true,
@@ -328,6 +330,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   let stageIndex = 0
   let ordinaryAttempt = 1
   let sessionDeleted = false
+  let showSessionInList = false
   let createdNotebookTokenBudget: number | undefined
   let createdNotebookInitializationTokenLimit: number | undefined
   let createdProcess: string | undefined
@@ -349,6 +352,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
       route.request().method() === 'DELETE'
     ) {
       sessionDeleted = true
+      showSessionInList = false
       return route.fulfill({json: {ok: true}})
     }
     if (path.endsWith('/notebooks/life-death.md'))
@@ -374,7 +378,11 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
     }
     if (path.endsWith('/events')) {
       const payload =
-        path === '/api/benchmark-sessions/events' ? [] : sessionValue()
+        path === '/api/benchmark-sessions/events'
+          ? showSessionInList
+            ? [sessionValue()]
+            : []
+          : sessionValue()
       return route.fulfill({
         contentType: 'text/event-stream',
         body: `data: ${JSON.stringify(payload)}\n\n`,
@@ -384,12 +392,13 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
       path === '/api/benchmark-sessions' &&
       route.request().method() === 'GET'
     )
-      return route.fulfill({json: []})
+      return route.fulfill({json: showSessionInList ? [sessionValue()] : []})
     if (
       path === '/api/benchmark-sessions' &&
       route.request().method() === 'POST'
     ) {
       const payload = route.request().postDataJSON()
+      showSessionInList = true
       createdProcess = payload.process
       createdLifeNotebookId = payload.lifeDeathNotebookId
       createdOrdinaryNotebookId = payload.ordinaryNotebookId
@@ -572,9 +581,11 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   await expect(page.locator('.session-notebook-panel a[download]')).toHaveCount(
     2,
   )
+  await page.goto('/benchmarks')
+  await expect(page.locator('.benchmark-row')).toHaveCount(1)
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByTitle('Delete').click()
-  await expect(page).toHaveURL(/\/benchmarks$/)
+  await page.locator('.benchmark-row .row-delete').click()
+  await expect(page.locator('.benchmark-row')).toHaveCount(0)
   expect(sessionDeleted).toBe(true)
 })
 
