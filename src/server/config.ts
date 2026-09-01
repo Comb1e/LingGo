@@ -4,6 +4,7 @@ import {join} from 'node:path'
 import {
   DEFAULT_BENCHMARK_TRAINING_VISITS,
   DEFAULT_KATAGO_VISITS,
+  DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
   MAX_KATAGO_VISITS,
   MIN_KATAGO_VISITS,
@@ -43,7 +44,11 @@ export const runtimeConfigSchema = z.object({
     .int()
     .positive()
     .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
-  benchmarkProblemAttempts: z.number().int().positive().default(5),
+  benchmarkProblemAttempts: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT),
   fakeKatago: z.boolean().default(false),
 })
 

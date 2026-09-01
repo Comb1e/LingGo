@@ -31,6 +31,7 @@ describe('benchmark sessions', () => {
       ...fixture.config,
       process: 'life_death',
       ordinaryNotebookId: undefined,
+      lifeDeathProblemAttemptLimit: 12,
     }
     let session = fixture.sessions.create(config)
     expect(session.stages.map(({stageKey}) => stageKey)).toEqual([
@@ -45,9 +46,17 @@ describe('benchmark sessions', () => {
       const stage = session.stages.find(
         ({stageKey}) => stageKey === session.currentStage,
       )!
+      expect(
+        fixture.benchmarks.get(stage.runId!)?.config
+          .lifeDeathProblemAttemptLimit,
+      ).toBe(12)
       complete(fixture, stage.runId!, content)
       session = fixture.sessions.continue(session.id)
     }
+    expect(
+      fixture.benchmarks.get(session.stages[3].runId!)?.config
+        .lifeDeathProblemAttemptLimit,
+    ).toBe(12)
     complete(fixture, session.stages[3].runId!, '# Hard')
     expect(fixture.sessions.get(session.id)?.status).toBe('completed')
   })
@@ -214,6 +223,7 @@ function setup() {
     trainingGamesWithWinRates: 1,
     trainingGamesWithoutWinRates: 1,
     trainingFeedback: 'structured',
+    lifeDeathProblemAttemptLimit: 10,
     notebookTokenBudget: 10_000,
     notebookInitializationTokenLimit: 12_000,
     trainingVisits: 25,

@@ -147,8 +147,6 @@ const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
   'Choose the headings and writing style yourself, eliminate redundant advice, and use the available notebook budget for concrete, technically precise guidance.',
 ].join('\n')
 
-const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = runtimeConfig.benchmarkProblemAttempts
-
 const lifeDeathNotebookPatchSchema = z
   .record(z.string().regex(/^[1-9]\d*$/), z.string().trim().min(1))
   .refine((patch) => Object.keys(patch).length > 0, {
@@ -156,20 +154,17 @@ const lifeDeathNotebookPatchSchema = z
   })
 
 const LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION = [
-  'NOTEBOOK PATCH OUTPUT JSON SCHEMA',
-  '{',
-  '  "type": "object",',
-  '  "minProperties": 1,',
-  '  "propertyNames": {"pattern": "^[1-9]\\\\d*$"},',
-  '  "additionalProperties": {"type": "string", "minLength": 1}',
-  '}',
-  'Return exactly one JSON object matching this schema and no other text.',
-  'You may edit multiple notes in one response when the attempt supports more than one independent lesson; include every supported edit in the same JSON object.',
-  'Each key must be the number of an existing notebook note to replace, or a new positive integer note number to add.',
-  "Each value must be the note's complete content without the leading number and period.",
-  'Choose the existing note that is least perfect or is flawed according to the attempt, and improve only the lesson supported by the evidence; do not default to note 1.',
-  'Add a new numbered note only when no existing note captures the lesson. Include only notes that need improvement or are genuinely new.',
-  'Do not return Markdown, the whole notebook, unchanged notes, duplicate note numbers, or prose outside the JSON object.',
+  'NOTEBOOK PATCH OUTPUT FORMAT',
+  'Return one JSON object and no other text.',
+  'Format: {"<note number>":"<complete replacement note text>"}',
+  'Use an existing note number to replace that note. Use a new positive integer to add a note.',
+  'Write the complete new text for each changed note, without its leading number and period.',
+  'Example - replace note 2: {"2":"Read the strongest forcing reply before choosing the vital point."}',
+  'Example - replace note 2 and add note 5: {"2":"Read every forcing reply.","5":"Check for hidden outside liberties before starting a capturing race."}',
+  'Change multiple notes only when the attempt provides separate useful lessons.',
+  'Improve the relevant weak note; do not choose note 1 by default.',
+  'Add a note only when no existing note covers the lesson.',
+  'Do not include unchanged notes, the complete notebook, Markdown outside the note text, or any explanation outside the JSON object.',
 ].join('\n')
 
 export class BenchmarkConflictError extends Error {
@@ -1188,13 +1183,13 @@ export class BenchmarkService {
     const readOnlyContext = this.readOnlyNotebookContext(run)
     const seed = seedSnapshot?.content.trim()
       ? [
-          '',
           run.writableNotebookRole === 'ordinary'
             ? 'WRITABLE ORDINARY-GAME NOTEBOOK TO REFINE'
             : 'WRITABLE LIFE-AND-DEATH NOTEBOOK TO REFINE',
           seedSnapshot.content,
           '',
           'Preserve correct, useful knowledge while improving clarity and actionability.',
+          '',
         ]
       : []
     const initializationTokenLimit =
@@ -1206,6 +1201,7 @@ export class BenchmarkService {
     ].join('\n')
     const prompt = isLifeDeath(run)
       ? [
+          ...seed,
           notebookBudgetInstruction,
           LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION,
           ...(readOnlyContext
@@ -1217,7 +1213,6 @@ export class BenchmarkService {
                 readOnlyContext,
               ]
             : []),
-          ...seed,
           '',
           'Return only the complete Markdown notebook.',
         ].join('\n')
@@ -1237,8 +1232,8 @@ export class BenchmarkService {
           '',
           'AUTHORITATIVE GO RULES',
           ...formatCanonicalGoRules({size: 19, komi: 7.5}),
+          ...(seed.length ? [''] : []),
           ...seed,
-          '',
           'Return only the complete Markdown notebook.',
         ].join('\n')
     const content = await this.requestValidNotebook(
@@ -1281,6 +1276,9 @@ export class BenchmarkService {
       return false
     }
     const required = set.problems.length
+    const problemAttemptLimit =
+      run.config.lifeDeathProblemAttemptLimit ??
+      runtimeConfig.benchmarkProblemAttempts
     while (
       run.status === 'running' &&
       (run.problemSuccessStreak ?? 0) < required
@@ -1325,7 +1323,7 @@ export class BenchmarkService {
         let lastFailureReason = progress.lastFailureReason
         for (
           let responseAttempt = 0;
-          responseAttempt < MAX_LIFE_DEATH_PROBLEM_ATTEMPTS;
+          responseAttempt < problemAttemptLimit;
           responseAttempt += 1
         ) {
           const currentSnapshot = problemSnapshotAt(problem, progress.actions)
@@ -1347,7 +1345,10 @@ export class BenchmarkService {
             break
           }
           const retry = Boolean(failureFeedback)
-          const notebook = await this.runNotebook(run.id)
+          const notebook =
+            !progress.actions.length || retry
+              ? await this.runNotebook(run.id)
+              : ''
           const position = [
             'CURRENT BOARD',
             LIFE_DEATH_BOARD_SYMBOL_LEGEND,
@@ -1357,20 +1358,20 @@ export class BenchmarkService {
           ]
           const prompt = retry
             ? [
+                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 'The previous attempt failed.',
                 `Reason: ${failureFeedback}`,
                 'Redo the problem from this current position.',
-                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 'OUTPUT JSON SCHEMA',
                 '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
                 'Return exactly one JSON action object and no other fields or prose.',
                 ...position,
               ].join('\n')
             : [
+                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 progress.actions.length
                   ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
                   : 'Solve the life-and-death Go problem. Use exactly one legal action.',
-                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 'OUTPUT JSON SCHEMA',
                 '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
                 'Return exactly one JSON action object and no other fields or prose.',
@@ -1386,7 +1387,7 @@ export class BenchmarkService {
                   : '(none)',
               ].join('\n')
           const digest = createHash('sha256').update(prompt).digest('hex')
-          if (responseAttempt === 0 && !progress.actions.length)
+          if ((responseAttempt === 0 && !progress.actions.length) || retry)
             this.clearProblemContext(run)
           let actual: PlayerAction | undefined
           let responseDigest: string | undefined
@@ -1514,16 +1515,17 @@ export class BenchmarkService {
             attempt.notebookVersionBefore === pending.notebookVersionBefore &&
             !attempt.correct,
         )
-        .slice(-MAX_LIFE_DEATH_PROBLEM_ATTEMPTS)
+        .slice(-problemAttemptLimit)
       const updatePrompt = [
+        'PRIOR NOTEBOOK',
+        prior.trim() || '(empty)',
+        '',
         'Update the technique notebook after this life-and-death problem attempt.',
         pending.correct
           ? 'UPDATE TRIGGER: SUCCESS. The complete problem solution was correct.'
-          : `UPDATE TRIGGER: FAILED_AFTER_${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS}_ATTEMPTS. The problem was not solved after ${MAX_LIFE_DEATH_PROBLEM_ATTEMPTS} attempts.`,
+          : `UPDATE TRIGGER: FAILED_AFTER_${problemAttemptLimit}_ATTEMPTS. The problem was not solved after ${problemAttemptLimit} attempts.`,
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
         'Use the current problem position and failure feedback to choose the most useful existing note to improve.',
-        'PRIOR NOTEBOOK',
-        prior.trim() || '(empty)',
         'PROBLEM',
         LIFE_DEATH_BOARD_SYMBOL_LEGEND,
         asciiBoard(problem.snapshot),
@@ -1549,6 +1551,7 @@ export class BenchmarkService {
         this.save(run)
         return false
       }
+      this.clearProblemContext(run)
       const content = await this.requestValidProblemNotebookPatch(
         run,
         notebookAdapter,
@@ -2459,6 +2462,9 @@ function normalizeConfig(
       ...input,
       notebookSeed: input.notebookSeed ?? {mode: 'rules_only'},
       trainingFeedback: input.trainingFeedback ?? 'structured',
+      lifeDeathProblemAttemptLimit:
+        input.lifeDeathProblemAttemptLimit ??
+        runtimeConfig.benchmarkProblemAttempts,
       notebookTokenBudget,
       notebookInitializationTokenLimit:
         input.notebookInitializationTokenLimit ??
@@ -2482,6 +2488,7 @@ function normalizeConfig(
     trainingGamesWithoutWinRates: input.includeTrainingWinRates
       ? 0
       : input.trainingGameCount,
+    lifeDeathProblemAttemptLimit: runtimeConfig.benchmarkProblemAttempts,
     notebookTokenBudget: runtimeConfig.notebookTokenBudget,
     notebookInitializationTokenLimit:
       DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,

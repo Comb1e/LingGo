@@ -143,7 +143,7 @@ describe('provider normalization', () => {
     ]
     const request = (content: string): LlmTurnRequest => ({
       kind: 'continuation',
-      content: `NOTEBOOK PATCH OUTPUT JSON SCHEMA\n${content}`,
+      content: `NOTEBOOK PATCH OUTPUT FORMAT\n${content}`,
       transcript,
       cacheKey: 'test',
       snapshot,

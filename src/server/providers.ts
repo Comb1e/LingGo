@@ -292,7 +292,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
       }
     if (
       request.output === 'notebook' &&
-      request.content.includes('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+      request.content.includes('NOTEBOOK PATCH OUTPUT FORMAT')
     )
       return {
         text: fakeNotebookPatch(request),
@@ -391,7 +391,7 @@ export class FakePlayerAdapter implements PlayerAdapter {
   async requestText(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return {
-      text: prompt.includes('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+      text: prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')
         ? '{"1":"Check liberties before choosing a vital point."}'
         : prompt.includes('Markdown life-and-death Go technique notebook')
           ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'

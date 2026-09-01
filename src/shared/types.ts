@@ -3,6 +3,7 @@ import {
   DEFAULT_BENCHMARK_TRAINING_VISITS,
   DEFAULT_GAME_MOVE_CAP,
   DEFAULT_KOMI,
+  DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
   MAX_KATAGO_VISITS,
@@ -395,6 +396,12 @@ export type BenchmarkSessionProcess = z.infer<
 >
 
 const benchmarkResourceFields = {
+  lifeDeathProblemAttemptLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT),
   notebookTokenBudget: z
     .number()
     .int()

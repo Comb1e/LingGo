@@ -1,5 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import {
+  DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
 } from './constants'
@@ -65,6 +66,7 @@ describe('benchmark configuration', () => {
     ).toMatchObject({
       notebookSeed: {mode: 'rules_only'},
       trainingFeedback: 'structured',
+      lifeDeathProblemAttemptLimit: DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
       notebookTokenBudget: DEFAULT_NOTEBOOK_TOKEN_BUDGET,
       notebookInitializationTokenLimit:
         DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
@@ -104,6 +106,17 @@ describe('benchmark configuration', () => {
         trainingGamesWithWinRates: 3,
       }),
     ).toThrow('provided together')
+  })
+
+  it('validates the life-and-death problem attempt limit', () => {
+    expect(
+      benchmarkConfigSchema.parse({...base, lifeDeathProblemAttemptLimit: 12})
+        .lifeDeathProblemAttemptLimit,
+    ).toBe(12)
+    for (const lifeDeathProblemAttemptLimit of [0, 101])
+      expect(() =>
+        benchmarkConfigSchema.parse({...base, lifeDeathProblemAttemptLimit}),
+      ).toThrow()
   })
 })
 

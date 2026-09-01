@@ -20,7 +20,10 @@ import type {
   TechniqueNotebook,
   TechniqueNotebookSummary,
 } from '../shared/types'
-import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
+import {
+  DEFAULT_KATAGO_VISITS,
+  DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
+} from '../shared/constants'
 import type {LlmGameContext} from './llmGameContext'
 import {transitionLlmContext} from './stateMachines/llmContext'
 import {
@@ -167,6 +170,8 @@ export class Store {
           trainingFeedback: legacy.config.includeTrainingWinRates
             ? 'structured'
             : 'none',
+          lifeDeathProblemAttemptLimit:
+            DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
           notebookTokenBudget: 8000,
           notebookInitializationTokenLimit: 8000,
           trainingVisits: visits,
@@ -693,7 +698,7 @@ export class Store {
       status: row.status,
       currentStage: row.current_stage,
       stageIds: JSON.parse(row.stage_ids_json),
-      config: JSON.parse(row.config_json),
+      config: normalizeBenchmarkSessionConfig(JSON.parse(row.config_json)),
       notebooks,
       stages,
       createdAt: row.created_at,
@@ -1509,15 +1514,35 @@ function normalizeNotebookName(name: string) {
 
 function normalizeBenchmark(value: BenchmarkRun): BenchmarkRun {
   const run = value as any
-  if (run.protocolVersion !== 2) return run as BenchmarkRun
-  return {
+  const normalized = {
     ...run,
+    config: {
+      ...run.config,
+      lifeDeathProblemAttemptLimit:
+        run.config.lifeDeathProblemAttemptLimit ??
+        DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
+    },
+  }
+  if (run.protocolVersion !== 2) return normalized as BenchmarkRun
+  return {
+    ...normalized,
     substate: run.substate ?? {kind: 'ready'},
     notebookVersion: run.notebookVersion ?? 0,
     notebookEstimatedTokens: run.notebookEstimatedTokens ?? 0,
     kataGoFingerprint:
       run.kataGoFingerprint ??
       createHash('sha256').update('unknown').digest('hex'),
+  }
+}
+
+function normalizeBenchmarkSessionConfig(
+  config: BenchmarkSession['config'],
+): BenchmarkSession['config'] {
+  return {
+    ...config,
+    lifeDeathProblemAttemptLimit:
+      config.lifeDeathProblemAttemptLimit ??
+      DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
   }
 }
 

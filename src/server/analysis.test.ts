@@ -103,6 +103,7 @@ describe('game analysis', () => {
         trainingGameCount: 10,
         notebookSeed: {mode: 'rules_only'},
         trainingFeedback: 'structured',
+        lifeDeathProblemAttemptLimit: 10,
         notebookTokenBudget: 8000,
         notebookInitializationTokenLimit: 8000,
         trainingVisits: 25,

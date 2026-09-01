@@ -396,6 +396,7 @@ function benchmarkRun(notebookId: string): BenchmarkRun {
       trainingGameCount: 1,
       notebookSeed: {mode: 'refine_existing', notebookId},
       trainingFeedback: 'none',
+      lifeDeathProblemAttemptLimit: 10,
       notebookTokenBudget: 8000,
       notebookInitializationTokenLimit: 8000,
       trainingVisits: 25,

@@ -333,6 +333,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   let showSessionInList = false
   let createdNotebookTokenBudget: number | undefined
   let createdNotebookInitializationTokenLimit: number | undefined
+  let createdLifeDeathProblemAttemptLimit: number | undefined
   let createdProcess: string | undefined
   let createdLifeNotebookId: string | undefined
   let createdOrdinaryNotebookId: string | undefined
@@ -405,6 +406,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
       createdNotebookTokenBudget = payload.notebookTokenBudget
       createdNotebookInitializationTokenLimit =
         payload.notebookInitializationTokenLimit
+      createdLifeDeathProblemAttemptLimit = payload.lifeDeathProblemAttemptLimit
       return route.fulfill({status: 201, json: sessionValue()})
     }
     if (path.includes('/stages/')) return route.fulfill({json: []})
@@ -508,6 +510,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   await managers.getByRole('combobox').selectOption(lifeNotebook.id)
   await page.getByLabel('Recommended notebook token budget').fill('4096')
   await page.getByLabel('Initialization output token limit').fill('12288')
+  await page.getByLabel('Attempts before notebook update').fill('12')
   await page
     .getByRole('button', {name: 'Start life-and-death benchmark'})
     .click()
@@ -517,6 +520,7 @@ test('starts a split benchmark and keeps combined sessions readable', async ({
   expect(createdOrdinaryNotebookId).toBeUndefined()
   expect(createdNotebookTokenBudget).toBe(4_096)
   expect(createdNotebookInitializationTokenLimit).toBe(12_288)
+  expect(createdLifeDeathProblemAttemptLimit).toBe(12)
 
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Initialize life-and-death notebook',
@@ -647,6 +651,7 @@ function mockedSession(
       trainingGamesWithWinRates: 1,
       trainingGamesWithoutWinRates: 1,
       trainingFeedback: 'structured',
+      lifeDeathProblemAttemptLimit: 10,
       notebookTokenBudget: 10000,
       notebookInitializationTokenLimit: 12000,
       trainingVisits: 10000,

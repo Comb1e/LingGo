@@ -5,6 +5,7 @@ import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
 import {
   DEFAULT_BENCHMARK_TRAINING_VISITS,
+  DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT,
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
 } from '../../shared/constants'
@@ -56,6 +57,8 @@ export function BenchmarksPage() {
   ] = useState(DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT)
   const [withWinRates, setWithWinRates] = useState(5)
   const [withoutWinRates, setWithoutWinRates] = useState(5)
+  const [lifeDeathProblemAttemptLimit, setLifeDeathProblemAttemptLimit] =
+    useState(DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT)
   const profileNotebooks = useQuery({
     queryKey: ['notebooks', profileId],
     queryFn: () => api.notebooks(profileId),
@@ -96,6 +99,7 @@ export function BenchmarksPage() {
         trainingGamesWithWinRates: withWinRates,
         trainingGamesWithoutWinRates: withoutWinRates,
         trainingFeedback: 'structured',
+        lifeDeathProblemAttemptLimit,
         notebookTokenBudget,
         notebookInitializationTokenLimit,
         trainingVisits,
@@ -232,6 +236,15 @@ export function BenchmarksPage() {
                 selectedLifeNotebookId ? [selectedLifeNotebookId] : []
               }
               autoSelect={false}
+            />
+          )}
+          {process === 'life_death' && (
+            <NumberField
+              label={t('lifeDeathProblemAttemptLimit')}
+              value={lifeDeathProblemAttemptLimit}
+              min={1}
+              max={100}
+              onChange={setLifeDeathProblemAttemptLimit}
             />
           )}
           <NumberField
@@ -374,11 +387,13 @@ function NumberField({
   label,
   value,
   min,
+  max = 100_000,
   onChange,
 }: {
   label: string
   value: number
   min: number
+  max?: number
   onChange: (value: number) => void
 }) {
   return (
@@ -387,7 +402,7 @@ function NumberField({
       <input
         type="number"
         min={min}
-        max="100000"
+        max={max}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />

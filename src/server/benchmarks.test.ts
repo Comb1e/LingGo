@@ -1348,6 +1348,12 @@ describe('benchmark scoring and prompts', () => {
         }),
       ]),
     )
+    expect(
+      visibleMessages[0].messages
+        .map(({content}) => content)
+        .join('\n')
+        .match(/PRIOR NOTEBOOK/g),
+    ).toHaveLength(1)
     expect(prompts[0]).toContain(
       'A life-and-death problem is a local tactical position',
     )
@@ -1385,6 +1391,7 @@ describe('benchmark scoring and prompts', () => {
     expect(outputTokenLimits[0]).toBe(12_000)
     expect(actionPrompts).toHaveLength(4)
     const solvingPrompt = actionPrompts[0]
+    expect(solvingPrompt).toMatch(/^SELF-WRITTEN SKILLS\n# Life techniques\n/)
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
     expect(solvingPrompt).not.toContain('GO RULES')
     expect(solvingPrompt).toContain(
@@ -1394,6 +1401,9 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[1]).toContain('Reason:')
     expect(actionPrompts[1]).toContain(
       'Redo the problem from this current position.',
+    )
+    expect(actionPrompts[1]).toMatch(
+      /^SELF-WRITTEN SKILLS\n# Life techniques\n/,
     )
     expect(actionPrompts[1]).toContain('SELF-WRITTEN SKILLS')
     expect(actionPrompts[1]).toContain('# Life techniques')
@@ -1413,13 +1423,12 @@ describe('benchmark scoring and prompts', () => {
       actionPrompts[0].indexOf('CURRENT BOARD'),
     )
     expect(
-      actionPrompts
-        .slice(2)
-        .every(
-          (prompt) =>
-            prompt.includes('SELF-WRITTEN SKILLS') &&
-            prompt.includes('ASSISTANT:'),
-        ),
+      actionPrompts.every(
+        (prompt) => (prompt.match(/SELF-WRITTEN SKILLS/g) ?? []).length === 1,
+      ),
+    ).toBe(true)
+    expect(
+      actionPrompts.slice(2).every((prompt) => prompt.includes('ASSISTANT:')),
     ).toBe(true)
     expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
@@ -1435,7 +1444,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('updates one notebook note after five failures and retries with a new context', async () => {
+  it('updates one notebook note after ten failures and retries with a new context', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-life-context-reset-'))
     const set = loadProblemSet('gogameguru-easy')
@@ -1470,14 +1479,14 @@ describe('benchmark scoring and prompts', () => {
           }
         }
         actionCalls += 1
-        if (actionCalls === 6) {
+        if (actionCalls === 11) {
           redoRequest = request
           redoReady.resolve()
           await redoGate.promise
           signal.throwIfAborted()
         }
         const action =
-          actionCalls <= 5
+          actionCalls <= 10
             ? ({action: 'play', coordinate: 'O4', comment: 'Try O4.'} as const)
             : problem.solution[0]
         return {
@@ -1517,45 +1526,52 @@ describe('benchmark scoring and prompts', () => {
     })
 
     await redoReady.promise
-    expect(actionCalls).toBe(6)
-    expect(service.problemAttempts(created.id)).toHaveLength(5)
+    expect(actionCalls).toBe(11)
+    expect(service.problemAttempts(created.id)).toHaveLength(10)
     expect(patchRequest?.transcript).toEqual([])
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
-    expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(5)
-    expect(patchRequest?.content.match(/Action: O4\./g)).toHaveLength(5)
+    expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(10)
+    expect(patchRequest?.content.match(/Action: O4\./g)).toHaveLength(10)
     expect(patchRequest?.content).toContain(
       'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
     )
     expect(patchRequest?.content).toContain(
-      'UPDATE TRIGGER: FAILED_AFTER_5_ATTEMPTS',
+      'UPDATE TRIGGER: FAILED_AFTER_10_ATTEMPTS',
     )
-    expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+    expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT FORMAT')
     expect(patchRequest?.content).toContain(
-      'You may edit multiple notes in one response',
+      'Format: {"<note number>":"<complete replacement note text>"}',
     )
-    expect(patchRequest?.content).toContain('"minProperties": 1')
+    expect(patchRequest?.content).toContain('Example - replace note 2:')
     expect(patchRequest?.content).toContain(
-      'or a new positive integer note number to add.',
+      'Example - replace note 2 and add note 5:',
     )
-    expect(patchRequest?.content).toContain(
-      'least perfect or is flawed according to the attempt',
-    )
-    expect(patchRequest?.content).toContain('do not default to note 1')
+    expect(patchRequest?.content).toContain('do not choose note 1 by default')
     expect(patchRequest?.content).not.toContain(
       '{"1":"Read every forcing reply before choosing the vital point."}',
     )
     expect(patchRequest?.content).toContain(
-      'Add a new numbered note only when no existing note captures the lesson.',
+      'Add a note only when no existing note covers the lesson.',
     )
     expect(patchRequest?.content).toContain('PRIOR NOTEBOOK')
     expect(patchRequest?.content).toContain('1. Read liberties.')
+    expect(patchRequest?.content).toMatch(/^PRIOR NOTEBOOK\n# Life techniques/)
+    expect(patchRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
     expect(patchRequest?.content).not.toContain('MODEL ANSWER')
     expect(patchRepairRequest?.transcript).toEqual([])
     expect(patchRepairRequest?.content).toContain('PRIOR NOTEBOOK')
     expect(patchRepairRequest?.content).toContain('FAILED ATTEMPTS')
     expect(patchRepairRequest?.content).toContain('PREVIOUS INVALID PATCH')
     expect(patchRepairRequest?.content).toContain('# Invalid patch')
+    expect(patchRepairRequest?.content).toMatch(
+      /^PRIOR NOTEBOOK\n# Life techniques/,
+    )
+    expect(patchRepairRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
     expect(redoRequest?.transcript).toEqual([])
+    expect(redoRequest?.content).toMatch(
+      /^SELF-WRITTEN SKILLS\n# Life techniques/,
+    )
+    expect(redoRequest?.content.match(/SELF-WRITTEN SKILLS/g)).toHaveLength(1)
     expect(await service.notebooks.readSnapshot(created.id)).toBe(
       '# Life techniques\n\n1. Read every forcing reply before choosing the vital point.\n2. Preserve shape.',
     )
@@ -1633,6 +1649,7 @@ describe('benchmark scoring and prompts', () => {
     await updateReady.promise
     expect(prompts).toHaveLength(problem.solution.length)
     expect(prompts[0]).toContain('SELF-WRITTEN SKILLS')
+    expect(prompts[0]).toMatch(/^SELF-WRITTEN SKILLS\n# Life techniques/)
     expect(prompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
       prompts[0].indexOf('CURRENT BOARD'),
     )
@@ -1642,7 +1659,7 @@ describe('benchmark scoring and prompts', () => {
         .every(
           (prompt) =>
             prompt.includes('SELF-WRITTEN SKILLS') &&
-            prompt.match(/SELF-WRITTEN SKILLS/g)!.length >= 2,
+            (prompt.match(/SELF-WRITTEN SKILLS/g) ?? []).length === 1,
         ),
     ).toBe(true)
     expect(prompts[1]).toContain('Continue solving')
@@ -1664,9 +1681,9 @@ describe('benchmark scoring and prompts', () => {
     expect(snapshots[2].board[secondPoint![1]][secondPoint![0]]).toBe(2)
     expect(service.get(created.id)?.usage.cachedInputTokens).toBe(16)
     expect(notebookUpdatePrompt).toContain('UPDATE TRIGGER: SUCCESS')
-    expect(notebookUpdatePrompt).toContain('NOTEBOOK PATCH OUTPUT JSON SCHEMA')
+    expect(notebookUpdatePrompt).toContain('NOTEBOOK PATCH OUTPUT FORMAT')
     expect(notebookUpdatePrompt).toContain(
-      'Include only notes that need improvement or are genuinely new.',
+      'Do not include unchanged notes, the complete notebook',
     )
 
     service.pause(created.id)
