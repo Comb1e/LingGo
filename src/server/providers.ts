@@ -28,7 +28,7 @@ import {
 import {playStone, replay} from './go'
 import type {VisibleLlmMessage} from './llmGameContext'
 import {makeMovePromptSections} from './movePrompt'
-import {runtimeConfig} from './config'
+import {readEnvironmentSecret, runtimeConfig} from './config'
 
 const modelMoveSchema = z
   .object({
@@ -273,7 +273,7 @@ export class SecretVault {
       compatible: 'OPENAI_COMPATIBLE_API_KEY',
       fake: '',
     }[connection.kind]
-    return envName ? process.env[envName] : undefined
+    return envName ? readEnvironmentSecret(envName) : undefined
   }
 }
 

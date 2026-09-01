@@ -15,6 +15,7 @@ import type {
   LlmActionResult,
   PlayerAction,
   PositionAnalysis,
+  ProviderConnection,
   TechniqueNotebook,
   BenchmarkProblemAttempt,
   BenchmarkStageKey,
@@ -59,7 +60,6 @@ import {
   type BenchmarkProblem,
 } from './benchmarkProblems'
 import {
-  MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
   shouldRetryProviderError,
   type ProviderRetryWait,
@@ -67,13 +67,14 @@ import {
 } from './network'
 import {
   createPlayerAdapter,
-  isProviderContextError,
   type LlmTurnResponse,
   MalformedModelOutputError,
   parseJsonActionResult,
   requestLlm,
 } from './providers'
-import {runtimeConfig} from './config'
+import {MAX_PROVIDER_API_ATTEMPTS, runtimeConfig} from './config'
+import {transitionBenchmark} from './stateMachines/benchmark'
+import {transitionAnalysis} from './stateMachines/analysis'
 
 type InternalRun = BenchmarkRun & {
   pointLosses?: number[]
@@ -412,14 +413,16 @@ export class BenchmarkService {
     if (!['queued', 'running'].includes(run.status))
       throw new Error('Benchmark is not running')
     this.controllers.get(run.id)?.abort()
-    run.status = 'paused'
+    transitionBenchmark(run, {
+      type: 'pause',
+      substate: {
+        kind: 'paused',
+        previous:
+          run.substate.kind === 'paused' ? run.substate.previous : run.substate,
+      },
+    })
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
-    run.substate = {
-      kind: 'paused',
-      previous:
-        run.substate.kind === 'paused' ? run.substate.previous : run.substate,
-    }
     this.save(run)
     return run
   }
@@ -428,12 +431,16 @@ export class BenchmarkService {
     const run = this.require(id)
     if (run.status !== 'paused' && run.status !== 'running')
       throw new Error('Benchmark cannot be resumed')
-    run.status = 'running'
+    transitionBenchmark(run, {
+      type: 'resume',
+      substate:
+        run.substate.kind === 'paused'
+          ? run.substate.previous
+          : {kind: 'ready'},
+    })
     run.error = undefined
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
-    run.substate =
-      run.substate.kind === 'paused' ? run.substate.previous : {kind: 'ready'}
     const game = this.currentGame(run)
     this.store.transaction(() => {
       if (game?.error) this.games.clearAutomatedError(game.id)
@@ -454,11 +461,14 @@ export class BenchmarkService {
       throw new Error('Benchmark cannot play another move')
     const run =
       saved.status === 'running' ? (this.activeRuns.get(id) ?? saved) : saved
-    run.status = 'running'
+    transitionBenchmark(run, {
+      type: 'resume',
+      substate:
+        run.substate.kind === 'paused' ? run.substate.previous : run.substate,
+    })
     run.error = undefined
     run.waitingFor = undefined
     run.pauseAfterLlmMove = true
-    if (run.substate.kind === 'paused') run.substate = run.substate.previous
     const game = this.currentGame(run)
     this.store.transaction(() => {
       if (game?.error) this.games.clearAutomatedError(game.id)
@@ -485,10 +495,9 @@ export class BenchmarkService {
     if (!['queued', 'running', 'paused'].includes(run.status))
       throw new Error('Benchmark has already ended')
     this.controllers.get(run.id)?.abort()
-    run.status = 'cancelled'
+    transitionBenchmark(run, {type: 'cancel'})
     run.waitingFor = undefined
     run.pauseAfterLlmMove = false
-    run.substate = {kind: 'ready'}
     run.updatedAt = new Date().toISOString()
     this.store.saveBenchmark(run)
     if (emit) this.emit(run)
@@ -504,14 +513,14 @@ export class BenchmarkService {
     if (game.error) this.games.clearAutomatedError(game.id)
     this.games.acceptAutomated(game.id, action, undefined, true)
     if (run.currentGame === configuredTrainingGameCount(run.config)) {
-      run.status = 'invalid'
+      transitionBenchmark(run, {type: 'invalidate'})
       run.error = 'A forced final-game move invalidated this benchmark.'
       run.metrics = undefined
       this.games.finishAutomated(game.id, 'Invalid')
       this.save(run)
       return run
     }
-    run.status = 'running'
+    transitionBenchmark(run, {type: 'resume', substate: {kind: 'ready'}})
     run.error = undefined
     this.save(run)
     this.schedule(id)
@@ -592,8 +601,10 @@ export class BenchmarkService {
         return
       if (!['queued', 'running'].includes(run.status)) return
       this.activeRuns.set(id, run)
-      run.status = 'running'
-      run.substate = {kind: 'ready'}
+      transitionBenchmark(run, {
+        type: 'resume',
+        substate: {kind: 'ready'},
+      })
       run.waitingFor = undefined
       run.error = undefined
       this.save(run)
@@ -609,9 +620,7 @@ export class BenchmarkService {
         // Session notebook stages intentionally end after initialization. The
         // following problem/game stage receives this run's notebook snapshot.
         if (run.sessionId && isNotebookInitializationStage(run.stageKey)) {
-          run.phase = 'complete'
-          run.substate = {kind: 'ready'}
-          run.status = 'completed'
+          transitionBenchmark(run, {type: 'complete'})
           this.finishMetrics(run, 0)
           this.save(run)
           return
@@ -624,24 +633,30 @@ export class BenchmarkService {
           return
         }
         if (run.sessionId && run.stageKey !== 'ordinary') {
-          run.phase = 'complete'
-          run.substate = {kind: 'ready'}
-          run.status = 'completed'
+          transitionBenchmark(run, {type: 'complete'})
           this.finishMetrics(run, 0)
           this.save(run)
           return
         }
-        run.phase = 'final_game'
-        run.substate = {kind: 'ready'}
+        transitionBenchmark(run, {
+          type: 'update',
+          phase: 'final_game',
+          substate: {kind: 'ready'},
+        })
         this.save(run)
       }
       const trainingGameCount = isLifeDeath(run)
         ? 0
         : configuredTrainingGameCount(run.config)
       while (run.currentGame <= trainingGameCount && run.status === 'running') {
-        run.phase =
-          run.currentGame < trainingGameCount ? 'training_game' : 'final_game'
-        run.substate = {kind: 'ready'}
+        transitionBenchmark(run, {
+          type: 'update',
+          phase:
+            run.currentGame < trainingGameCount
+              ? 'training_game'
+              : 'final_game',
+          substate: {kind: 'ready'},
+        })
         this.save(run)
         const llmColor =
           run.currentGame < trainingGameCount
@@ -672,7 +687,10 @@ export class BenchmarkService {
           return
         }
         if (run.currentGame < trainingGameCount) {
-          run.phase = 'reviewing_game'
+          transitionBenchmark(run, {
+            type: 'update',
+            phase: 'reviewing_game',
+          })
           this.save(run)
           const reflected = await this.reviewGame(run, controller.signal)
           if (!reflected) {
@@ -687,9 +705,7 @@ export class BenchmarkService {
         }
       }
       if (run.status === 'running') {
-        run.phase = 'complete'
-        run.substate = {kind: 'ready'}
-        run.status = 'completed'
+        transitionBenchmark(run, {type: 'complete'})
         run.metrics = {
           ...(run.metrics ?? {}),
           ...calculateMetrics(
@@ -718,19 +734,24 @@ export class BenchmarkService {
           run.error = publicError(error)
           if (error instanceof KataGoUnavailableError) {
             run.waitingFor = 'katago'
-            run.substate = {kind: 'waiting_katago'}
+            transitionBenchmark(run, {
+              type: 'update',
+              substate: {kind: 'waiting_katago'},
+            })
             retry = true
             this.save(run)
           } else {
-            run.status = 'paused'
+            transitionBenchmark(run, {
+              type: 'pause',
+              substate: {
+                kind: 'paused',
+                previous:
+                  run.substate.kind === 'paused'
+                    ? run.substate.previous
+                    : run.substate,
+              },
+            })
             run.pauseAfterLlmMove = false
-            run.substate = {
-              kind: 'paused',
-              previous:
-                run.substate.kind === 'paused'
-                  ? run.substate.previous
-                  : run.substate,
-            }
             const game = this.currentGame(run)
             this.store.transaction(() => {
               if (game) this.games.reportAutomatedError(game.id, run.error!)
@@ -803,7 +824,10 @@ export class BenchmarkService {
         const adapter = this.adapter(run)
         if (!adapter) {
           run.waitingFor = 'credentials'
-          run.substate = {kind: 'waiting_credentials'}
+          transitionBenchmark(run, {
+            type: 'update',
+            substate: {kind: 'waiting_credentials'},
+          })
           this.save(run)
           return false
         }
@@ -823,20 +847,14 @@ export class BenchmarkService {
           trainingFeedback === 'structured'
             ? this.latestMoveReview(run.id, run.currentGame)
             : undefined
-        let prepared = this.games.prepareLlmActionTurn({
-          gameId: game.id,
-          color: llmColor,
-          profile: run.profileSnapshot,
+        let prepared = this.prepareBenchmarkLlmTurn({
+          run,
+          game,
+          llmColor,
           connection,
-          mode: {
-            kind: 'benchmark',
-            phase: promptPhase,
-            notebook,
-            trainingFeedback,
-            stageKey: run.stageKey,
-            writableNotebookRole: run.writableNotebookRole,
-            readOnlyNotebooks: run.readOnlyNotebooks,
-          },
+          promptPhase,
+          notebook,
+          trainingFeedback,
           latestWinRate,
         })
         const llmTurnCount = game.moves.filter(
@@ -863,29 +881,26 @@ export class BenchmarkService {
             gameIntention,
             llmTurnCount,
           )
-          prepared = this.games.prepareLlmActionTurn({
-            gameId: game.id,
-            color: llmColor,
-            profile: run.profileSnapshot,
+          prepared = this.prepareBenchmarkLlmTurn({
+            run,
+            game,
+            llmColor,
             connection,
-            mode: {
-              kind: 'benchmark',
-              phase: promptPhase,
-              notebook,
-              trainingFeedback,
-              stageKey: run.stageKey,
-              writableNotebookRole: run.writableNotebookRole,
-              readOnlyNotebooks: run.readOnlyNotebooks,
-            },
+            promptPhase,
+            notebook,
+            trainingFeedback,
             latestWinRate,
           })
         }
-        run.substate = {
-          kind: 'provider_request',
-          operation: 'move',
-          attempt: 1,
-          maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-        }
+        transitionBenchmark(run, {
+          type: 'update',
+          substate: {
+            kind: 'provider_request',
+            operation: 'move',
+            attempt: 1,
+            maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+          },
+        })
         this.save(run)
         this.games.setAutomatedTurnState(game.id, {
           phase: 'requesting',
@@ -941,48 +956,26 @@ export class BenchmarkService {
               break
             } catch (error) {
               if (signal.aborted) throw error
-              const managedContinuationFailed =
-                prepared.context.managedContinuation &&
-                Boolean(prepared.context.providerContinuationId) &&
-                NoOutputGeneratedError.isInstance(error)
               if (
                 !rebasedProviderContext &&
-                prepared.context.providerContinuationId &&
-                (isProviderContextError(error) || managedContinuationFailed)
-              ) {
-                rebasedProviderContext = true
-                let gameIntention: string | undefined
-                try {
-                  gameIntention = await this.games.summarizeLlmContext(
-                    adapter,
-                    prepared,
-                    signal,
-                  )
-                } catch (summaryError) {
-                  if (signal.aborted) throw summaryError
-                }
-                if (managedContinuationFailed)
-                  this.games.disableManagedLlmContinuation(
-                    game.id,
-                    llmColor,
-                    gameIntention,
-                  )
-                else
-                  this.games.rebaseLlmContext(game.id, llmColor, gameIntention)
-                prepared = this.games.prepareLlmActionTurn({
+                (await this.games.recoverLlmProviderContext({
+                  adapter,
+                  prepared,
+                  signal,
+                  error,
                   gameId: game.id,
                   color: llmColor,
-                  profile: run.profileSnapshot,
+                }))
+              ) {
+                rebasedProviderContext = true
+                prepared = this.prepareBenchmarkLlmTurn({
+                  run,
+                  game,
+                  llmColor,
                   connection,
-                  mode: {
-                    kind: 'benchmark',
-                    phase: promptPhase,
-                    notebook,
-                    trainingFeedback,
-                    stageKey: run.stageKey,
-                    writableNotebookRole: run.writableNotebookRole,
-                    readOnlyNotebooks: run.readOnlyNotebooks,
-                  },
+                  promptPhase,
+                  notebook,
+                  trainingFeedback,
                   latestWinRate,
                 })
                 continue
@@ -1005,13 +998,16 @@ export class BenchmarkService {
                   maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
                   lastError: message,
                 })
-                run.substate = {
-                  kind: 'provider_retry',
-                  operation: 'move',
-                  attempt: apiFailures + 1,
-                  maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-                  lastError: message,
-                }
+                transitionBenchmark(run, {
+                  type: 'update',
+                  substate: {
+                    kind: 'provider_retry',
+                    operation: 'move',
+                    attempt: apiFailures + 1,
+                    maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                    lastError: message,
+                  },
+                })
                 this.save(run)
                 await this.retryWait(apiFailures, signal, error)
                 continue
@@ -1050,7 +1046,10 @@ export class BenchmarkService {
                   actionCount: illegalMoveFailures,
                   reason: feedback,
                 })
-                run.substate = {kind: 'ready'}
+                transitionBenchmark(run, {
+                  type: 'update',
+                  substate: {kind: 'ready'},
+                })
                 this.save(run)
                 return true
               }
@@ -1128,7 +1127,10 @@ export class BenchmarkService {
             createdAt: new Date().toISOString(),
           })
         }
-        run.substate = {kind: 'ready'}
+        transitionBenchmark(run, {
+          type: 'update',
+          substate: {kind: 'ready'},
+        })
       } else {
         const move = selectedMove(beforeResult)
         const action: PlayerAction =
@@ -1154,7 +1156,16 @@ export class BenchmarkService {
       }
       if (llmMoved && run.pauseAfterLlmMove) {
         run.pauseAfterLlmMove = false
-        run.status = 'paused'
+        transitionBenchmark(run, {
+          type: 'pause',
+          substate: {
+            kind: 'paused',
+            previous:
+              run.substate.kind === 'paused'
+                ? run.substate.previous
+                : run.substate,
+          },
+        })
         run.waitingFor = undefined
         this.save(run)
       }
@@ -1166,7 +1177,10 @@ export class BenchmarkService {
     const adapter = this.adapter(run)
     if (!adapter) {
       run.waitingFor = 'credentials'
-      run.substate = {kind: 'waiting_credentials'}
+      transitionBenchmark(run, {
+        type: 'update',
+        substate: {kind: 'waiting_credentials'},
+      })
       this.save(run)
       return false
     }
@@ -1245,8 +1259,11 @@ export class BenchmarkService {
           {role: 'assistant', content},
         ],
       }
-    run.phase = isLifeDeath(run) ? 'solving_problem' : 'training_game'
-    run.substate = {kind: 'ready'}
+    transitionBenchmark(run, {
+      type: 'update',
+      phase: isLifeDeath(run) ? 'solving_problem' : 'training_game',
+      substate: {kind: 'ready'},
+    })
     run.updatedAt = version.createdAt
     this.store.saveBenchmarkNotebookVersion(run, version)
     await this.notebooks.writeRunSnapshot(run.id, content)
@@ -1257,7 +1274,7 @@ export class BenchmarkService {
   private async runProblemGate(run: InternalRun, signal: AbortSignal) {
     const set = loadProblemSet(run.config.problemSetId!)
     if (run.problemSetChecksum !== set.checksum) {
-      run.status = 'invalid'
+      transitionBenchmark(run, {type: 'invalidate'})
       run.error =
         'The selected problem set changed after this benchmark was created.'
       this.save(run)
@@ -1271,16 +1288,22 @@ export class BenchmarkService {
       const cursor = run.problemCursor ?? 0
       const problem = set.problems[cursor % required]
       run.currentProblemId = problem.id
-      run.phase = run.pendingProblem
-        ? 'updating_problem_notebook'
-        : 'solving_problem'
-      run.substate = {kind: 'ready'}
+      transitionBenchmark(run, {
+        type: 'update',
+        phase: run.pendingProblem
+          ? 'updating_problem_notebook'
+          : 'solving_problem',
+        substate: {kind: 'ready'},
+      })
       this.save(run)
       if (!run.pendingProblem) {
         const adapter = this.adapter(run)
         if (!adapter) {
           run.waitingFor = 'credentials'
-          run.substate = {kind: 'waiting_credentials'}
+          transitionBenchmark(run, {
+            type: 'update',
+            substate: {kind: 'waiting_credentials'},
+          })
           this.save(run)
           return false
         }
@@ -1478,7 +1501,10 @@ export class BenchmarkService {
           this.save(run)
         }
       }
-      run.phase = 'updating_problem_notebook'
+      transitionBenchmark(run, {
+        type: 'update',
+        phase: 'updating_problem_notebook',
+      })
       const pending = run.pendingProblem!
       const prior = await this.runNotebook(run.id)
       const failedAttempts = this.store
@@ -1518,7 +1544,10 @@ export class BenchmarkService {
       const notebookAdapter = this.adapter(run)
       if (!notebookAdapter) {
         run.waitingFor = 'credentials'
-        run.substate = {kind: 'waiting_credentials'}
+        transitionBenchmark(run, {
+          type: 'update',
+          substate: {kind: 'waiting_credentials'},
+        })
         this.save(run)
         return false
       }
@@ -1590,21 +1619,24 @@ export class BenchmarkService {
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
-      run.substate =
-        attempt === 1
-          ? {
-              kind: 'provider_request',
-              operation: 'problem',
-              attempt,
-              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-            }
-          : {
-              kind: 'provider_retry',
-              operation: 'problem',
-              attempt,
-              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-              lastError,
-            }
+      transitionBenchmark(run, {
+        type: 'update',
+        substate:
+          attempt === 1
+            ? {
+                kind: 'provider_request',
+                operation: 'problem',
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+              }
+            : {
+                kind: 'provider_retry',
+                operation: 'problem',
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                lastError,
+              },
+      })
       this.save(run)
       try {
         const turn = await requestLlm(
@@ -1657,7 +1689,10 @@ export class BenchmarkService {
     const adapter = this.adapter(run)
     if (!adapter) {
       run.waitingFor = 'credentials'
-      run.substate = {kind: 'waiting_credentials'}
+      transitionBenchmark(run, {
+        type: 'update',
+        substate: {kind: 'waiting_credentials'},
+      })
       this.save(run)
       return false
     }
@@ -1737,11 +1772,14 @@ export class BenchmarkService {
     run.notebook.updatedAt = version.createdAt
     run.currentGame += 1
     run.currentTurn = 0
-    run.phase =
-      run.currentGame < configuredTrainingGameCount(run.config)
-        ? 'training_game'
-        : 'final_game'
-    run.substate = {kind: 'ready'}
+    transitionBenchmark(run, {
+      type: 'update',
+      phase:
+        run.currentGame < configuredTrainingGameCount(run.config)
+          ? 'training_game'
+          : 'final_game',
+      substate: {kind: 'ready'},
+    })
     run.updatedAt = version.createdAt
     this.games.completeLlmContexts(game.id)
     this.store.saveBenchmarkNotebookVersion(run, version)
@@ -1829,11 +1867,14 @@ export class BenchmarkService {
             `The model returned an invalid life-and-death notebook patch after three attempts. The benchmark has been paused. Last error: ${publicError(error)}`,
             {cause: error},
           )
-        run.substate = {
-          kind: 'compressing',
-          attempt: invalidAttempt + 1,
-          maxAttempts: 3,
-        }
+        transitionBenchmark(run, {
+          type: 'update',
+          substate: {
+            kind: 'compressing',
+            attempt: invalidAttempt + 1,
+            maxAttempts: 3,
+          },
+        })
         this.save(run)
         prompt = [
           initialPrompt,
@@ -1895,11 +1936,14 @@ export class BenchmarkService {
               : 'initialize'
           : 'compress'
       if (invalidAttempt > 1) {
-        run.substate = {
-          kind: 'compressing',
-          attempt: invalidAttempt,
-          maxAttempts: 3,
-        }
+        transitionBenchmark(run, {
+          type: 'update',
+          substate: {
+            kind: 'compressing',
+            attempt: invalidAttempt,
+            maxAttempts: 3,
+          },
+        })
         this.save(run)
       }
       const response = await this.requestNotebookText(
@@ -1996,21 +2040,24 @@ export class BenchmarkService {
     this.recordLlmRequest(run, prompt)
     let lastError = ''
     for (let attempt = 1; attempt <= MAX_PROVIDER_API_ATTEMPTS; attempt++) {
-      run.substate =
-        attempt === 1
-          ? {
-              kind: 'provider_request',
-              operation,
-              attempt,
-              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-            }
-          : {
-              kind: 'provider_retry',
-              operation,
-              attempt,
-              maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
-              lastError,
-            }
+      transitionBenchmark(run, {
+        type: 'update',
+        substate:
+          attempt === 1
+            ? {
+                kind: 'provider_request',
+                operation,
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+              }
+            : {
+                kind: 'provider_retry',
+                operation,
+                attempt,
+                maxAttempts: MAX_PROVIDER_API_ATTEMPTS,
+                lastError,
+              },
+      })
       this.save(run)
       try {
         const response = context?.textContinuation
@@ -2116,6 +2163,34 @@ export class BenchmarkService {
     return connection
   }
 
+  private prepareBenchmarkLlmTurn(input: {
+    run: InternalRun
+    game: Game
+    llmColor: Color
+    connection: ProviderConnection
+    promptPhase: 'training' | 'final'
+    notebook: string
+    trainingFeedback: BenchmarkConfig['trainingFeedback']
+    latestWinRate?: string
+  }) {
+    return this.games.prepareLlmActionTurn({
+      gameId: input.game.id,
+      color: input.llmColor,
+      profile: input.run.profileSnapshot,
+      connection: input.connection,
+      mode: {
+        kind: 'benchmark',
+        phase: input.promptPhase,
+        notebook: input.notebook,
+        trainingFeedback: input.trainingFeedback,
+        stageKey: input.run.stageKey,
+        writableNotebookRole: input.run.writableNotebookRole,
+        readOnlyNotebooks: input.run.readOnlyNotebooks,
+      },
+      latestWinRate: input.latestWinRate,
+    })
+  }
+
   private async analyze(game: Game, visits: number, signal: AbortSignal) {
     let result
     try {
@@ -2136,7 +2211,12 @@ export class BenchmarkService {
       createdAt: new Date().toISOString(),
     }
     this.store.savePositionAnalysis(value)
-    this.store.setGameAnalysisState(game.id, {status: 'complete', error: null})
+    this.store.setGameAnalysisState(game.id, {
+      status: transitionAnalysis(this.store.getGameAnalysis(game.id), {
+        type: 'complete',
+      }).status,
+      error: null,
+    })
     return result
   }
 

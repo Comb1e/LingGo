@@ -44,7 +44,9 @@ export function BenchmarksPage() {
   const [trainingVisits, setTrainingVisits] = useState(
     DEFAULT_BENCHMARK_TRAINING_VISITS,
   )
-  const [evaluationVisits, setEvaluationVisits] = useState(10_000)
+  const [evaluationVisits, setEvaluationVisits] = useState(
+    DEFAULT_BENCHMARK_TRAINING_VISITS,
+  )
   const [notebookTokenBudget, setNotebookTokenBudget] = useState(
     DEFAULT_NOTEBOOK_TOKEN_BUDGET,
   )

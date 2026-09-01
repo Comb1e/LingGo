@@ -1,3 +1,19 @@
+# Core Engineering Policy
+
+These rules mirror `/root/.codex/AGENTS.md` and are mandatory for agents and
+human contributors:
+
+1. Use Git for code management and commitment.
+2. Model complex logical transitions with explicit state machines.
+3. Manage constants that are used heavily through configuration files.
+4. Expose functionality used in multiple places through a generic interface
+   instead of reimplementing it.
+
+The enforceable definitions and thresholds live in
+`config/engineering-policy.json`. `pnpm policy:check` is the authoritative
+repository check; exceptions must be explicit, owned, linked to an issue, and
+time limited.
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization

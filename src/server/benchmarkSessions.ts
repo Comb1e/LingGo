@@ -14,6 +14,10 @@ import {benchmarkStageKeys} from '../shared/types'
 import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {loadProblemSet} from './benchmarkProblems'
 import {Store} from './database'
+import {
+  transitionBenchmarkSession,
+  transitionBenchmarkStage,
+} from './stateMachines/benchmarkSession'
 
 const problemSets: Record<
   Extract<BenchmarkStageKey, 'easy' | 'medium' | 'hard'>,
@@ -91,7 +95,7 @@ export class BenchmarkSessionService {
     )
     initialization.runId = run.id
     initialization.attempt = 1
-    initialization.status = 'running'
+    transitionBenchmarkStage(initialization, 'running')
     initialization.startedAt = now
     const session: BenchmarkSession = {
       id: sessionId,
@@ -160,11 +164,11 @@ export class BenchmarkSessionService {
     const now = new Date().toISOString()
     next.runId = run.id
     next.attempt = 1
-    next.status = 'running'
+    transitionBenchmarkStage(next, 'running')
     next.startedAt = now
     next.updatedAt = now
     session.currentStage = nextKey
-    session.status = 'running'
+    transitionBenchmarkSession(session, 'running')
     session.updatedAt = now
     this.store.transaction(() => {
       this.store.saveBenchmarkSession(session)
@@ -188,7 +192,7 @@ export class BenchmarkSessionService {
     const snapshot = this.snapshotNotebook(session, role)
     const source = {...snapshot, content}
     const readOnly = this.ordinaryReadOnlyNotebooks(session, stage.stageKey)
-    session.status = 'restarting_stage'
+    transitionBenchmarkSession(session, 'restarting_stage')
     session.updatedAt = new Date().toISOString()
     const run = this.prepareChild(
       session.config,
@@ -200,12 +204,12 @@ export class BenchmarkSessionService {
     const now = new Date().toISOString()
     stage.runId = run.id
     stage.attempt += 1
-    stage.status = 'running'
+    transitionBenchmarkStage(stage, 'running')
     stage.metrics = undefined
     stage.startedAt = now
     stage.completedAt = undefined
     stage.updatedAt = now
-    session.status = 'running'
+    transitionBenchmarkSession(session, 'running')
     session.completedAt = undefined
     session.error = undefined
     session.updatedAt = now
@@ -252,10 +256,10 @@ export class BenchmarkSessionService {
     const run = stage.runId ? this.benchmarks.get(stage.runId) : undefined
     let cancelledRun: BenchmarkRun | undefined
     const now = new Date().toISOString()
-    session.status = 'cancelled'
+    transitionBenchmarkSession(session, 'cancelled')
     session.updatedAt = now
     if (stage.status === 'running') {
-      stage.status = 'cancelled'
+      transitionBenchmarkStage(stage, 'cancelled')
       stage.completedAt = now
       stage.updatedAt = now
     }
@@ -334,24 +338,25 @@ export class BenchmarkSessionService {
     const role = stage.writableNotebookRole
     stage.updatedAt = now
     if (['queued', 'running', 'paused'].includes(run.status)) {
-      stage.status = 'running'
-      if (session.status !== 'restarting_stage') session.status = 'running'
+      transitionBenchmarkStage(stage, 'running')
+      if (session.status !== 'restarting_stage')
+        transitionBenchmarkSession(session, 'running')
     } else if (run.status === 'completed') {
-      stage.status = 'completed'
+      transitionBenchmarkStage(stage, 'completed')
       stage.metrics = run.metrics
       stage.completedAt = now
       if (stage.id === session.stages.at(-1)?.id) {
-        session.status = 'completed'
+        transitionBenchmarkSession(session, 'completed')
         session.completedAt = now
-      } else session.status = 'awaiting_continue'
+      } else transitionBenchmarkSession(session, 'awaiting_continue')
     } else if (run.status === 'cancelled') {
-      stage.status = 'cancelled'
+      transitionBenchmarkStage(stage, 'cancelled')
       stage.completedAt = now
-      session.status = 'cancelled'
+      transitionBenchmarkSession(session, 'cancelled')
     } else if (run.status === 'invalid') {
-      stage.status = 'failed'
+      transitionBenchmarkStage(stage, 'failed')
       stage.completedAt = now
-      session.status = 'error'
+      transitionBenchmarkSession(session, 'error')
       session.error = run.error ?? 'The current stage failed'
     }
     session.updatedAt = now
@@ -535,22 +540,7 @@ function childConfig(
   stageKey: BenchmarkStageKey,
   notebookId: string,
 ): BenchmarkConfig {
-  if (stageKey === 'life_death_notebook') {
-    return {
-      profileId: config.profileId,
-      finalColor: config.finalColor,
-      trainingGameCount: 1,
-      trainingGamesWithWinRates: 0,
-      trainingGamesWithoutWinRates: 1,
-      notebookSeed: {mode: 'refine_existing', notebookId},
-      trainingFeedback: 'none',
-      notebookTokenBudget: config.notebookTokenBudget,
-      notebookInitializationTokenLimit: config.notebookInitializationTokenLimit,
-      trainingVisits: config.trainingVisits,
-      evaluationVisits: config.evaluationVisits,
-    }
-  }
-  if (stageKey === 'ordinary_notebook') {
+  if (stageKey === 'life_death_notebook' || stageKey === 'ordinary_notebook') {
     return {
       profileId: config.profileId,
       finalColor: config.finalColor,

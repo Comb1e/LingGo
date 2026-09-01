@@ -12,6 +12,30 @@ export function BenchmarkLlmMessageInspector({
   loading: boolean
   label: string
 }) {
+  return (
+    <LlmMessageInspector
+      sets={sets}
+      loading={loading}
+      label={() => label}
+      autoOpenPending
+      className="benchmark-llm-message-inspector"
+    />
+  )
+}
+
+export function LlmMessageInspector({
+  sets,
+  loading,
+  label,
+  autoOpenPending = false,
+  className,
+}: {
+  sets: LlmMessageSet[]
+  loading: boolean
+  label: (set: LlmMessageSet) => string
+  autoOpenPending?: boolean
+  className?: string
+}) {
   const {t} = useTranslation()
   const details = useRef<HTMLDetailsElement>(null)
   const hasPendingMessage = sets.some((set) =>
@@ -19,13 +43,18 @@ export function BenchmarkLlmMessageInspector({
   )
 
   useEffect(() => {
-    if (hasPendingMessage && details.current) details.current.open = true
-  }, [hasPendingMessage])
+    if (autoOpenPending && hasPendingMessage && details.current)
+      details.current.open = true
+  }, [autoOpenPending, hasPendingMessage])
 
   return (
     <details
       ref={details}
-      className="llm-message-inspector benchmark-llm-message-inspector"
+      className={
+        className
+          ? `llm-message-inspector ${className}`
+          : 'llm-message-inspector'
+      }
     >
       <summary>
         <MessagesSquare size={16} aria-hidden="true" />
@@ -35,11 +64,11 @@ export function BenchmarkLlmMessageInspector({
       <div className="llm-message-content">
         {loading ? (
           <p className="muted">{t('loadingMessages')}</p>
-        ) : sets.length && sets.some((set) => set.messages.length) ? (
+        ) : sets.some((set) => set.messages.length) ? (
           sets.map((set) => (
             <section className="llm-message-set" key={set.color}>
               <header>
-                <strong>{label}</strong>
+                <strong>{label(set)}</strong>
                 <span>{t(`llmContextStatus.${set.status}`)}</span>
                 <span>{t(`llmContinuationMode.${set.continuationMode}`)}</span>
               </header>

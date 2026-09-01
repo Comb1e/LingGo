@@ -1,0 +1,10 @@
+# Policy and governance changes require explicit owner review.
+/AGENTS.md @Comb1e
+/config/engineering-policy.json @Comb1e
+/config/jscpd.json @Comb1e
+/.github/ @Comb1e
+/.husky/ @Comb1e
+/scripts/check-* @Comb1e
+/src/server/stateMachines/ @Comb1e
+/src/shared/constants.ts @Comb1e
+/src/server/config.ts @Comb1e

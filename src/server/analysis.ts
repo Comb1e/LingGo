@@ -4,6 +4,7 @@ import {boardHash, replay} from './go'
 import type {GameService} from './games'
 import {gamePosition, type KataGoAnalyzer, rootFromBlack} from './katago'
 import {Store} from './database'
+import {transitionAnalysis} from './stateMachines/analysis'
 
 export class AnalysisService {
   readonly events = new EventEmitter()
@@ -72,10 +73,11 @@ export class AnalysisService {
         ? false
         : (values.shareWithLlm ?? current.shareWithLlm)
     const enabled = shareWithLlm ? true : (values.enabled ?? current.enabled)
+    const reset = transitionAnalysis(current, {type: 'reset'})
     this.store.setGameAnalysisState(gameId, {
       enabled,
       shareWithLlm,
-      status: 'idle',
+      status: reset.status,
       error: null,
     })
     if (enabled) this.scheduleCurrent(gameId)
@@ -106,9 +108,10 @@ export class AnalysisService {
   backfill(gameId: string) {
     const game = this.games.get(gameId)
     if (!game) throw new Error('Game not found')
+    const started = transitionAnalysis(this.get(gameId), {type: 'start'})
     this.store.setGameAnalysisState(gameId, {
       enabled: true,
-      status: 'running',
+      status: started.status,
       error: null,
     })
     this.run(game, [...Array(game.moves.length + 1).keys()])
@@ -158,7 +161,11 @@ export class AnalysisService {
     if (this.jobs.has(game.id)) return
     const controller = new AbortController()
     this.jobs.set(game.id, controller)
-    this.store.setGameAnalysisState(game.id, {status: 'running', error: null})
+    const started = transitionAnalysis(this.get(game.id), {type: 'start'})
+    this.store.setGameAnalysisState(game.id, {
+      status: started.status,
+      error: null,
+    })
     this.emit(game.id)
     void (async () => {
       try {
@@ -193,13 +200,15 @@ export class AnalysisService {
         }
         if (this.games.get(game.id))
           this.store.setGameAnalysisState(game.id, {
-            status: 'complete',
+            status: transitionAnalysis(this.get(game.id), {type: 'complete'})
+              .status,
             error: null,
           })
       } catch (error) {
         if (!controller.signal.aborted && this.games.get(game.id))
           this.store.setGameAnalysisState(game.id, {
-            status: 'error',
+            status: transitionAnalysis(this.get(game.id), {type: 'fail'})
+              .status,
             error: error instanceof Error ? error.message : 'Analysis failed',
           })
       } finally {

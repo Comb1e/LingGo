@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "source": "/root/.codex/AGENTS.md",
+  "stateMutationRules": [
+    {
+      "file": "src/server/games.ts",
+      "properties": ["status"]
+    },
+    {
+      "file": "src/server/benchmarks.ts",
+      "properties": ["status", "phase", "substate"]
+    },
+    {
+      "file": "src/server/benchmarkSessions.ts",
+      "properties": ["status"]
+    }
+  ],
+  "stateMachineRoot": "src/server/stateMachines/",
+  "environmentAccess": {
+    "allowedFiles": ["src/server/config.ts"],
+    "allowedNodeEnvFiles": ["src/server/app.ts"]
+  },
+  "configurationFiles": ["src/shared/constants.ts", "src/server/config.ts"],
+  "providerFacadeFile": "src/server/providers.ts",
+  "providerPrimitiveMethods": [
+    "requestAction",
+    "requestText",
+    "requestTextTurn",
+    "requestTurn"
+  ],
+  "constantUseThreshold": 2,
+  "literalFileThreshold": 3,
+  "literalExemptions": {
+    "numbers": [
+      -1, 0, 0.5, 1, 2, 3, 4, 5, 7.5, 8, 9, 10, 13, 16, 19, 25, 100, 120, 722,
+      1000, 2000
+    ],
+    "strings": [
+      "B",
+      "W",
+      "active",
+      "cancelled",
+      "complete",
+      "completed",
+      "error",
+      "failed",
+      "idle",
+      "paused",
+      "pending",
+      "running"
+    ]
+  },
+  "exclusions": []
+}

@@ -314,28 +314,14 @@ export function SettingsPage() {
                         ? 'Ready'
                         : 'No key'}
                     </span>
-                    {item.id !== 'builtin-fake' && (
-                      <>
-                        <Button
-                          type="button"
-                          className="icon-button compact-icon"
-                          title={`${t('edit')} ${item.name}`}
-                          aria-label={`${t('edit')} ${item.name}`}
-                          onClick={() => editConnection(item.id)}
-                        >
-                          <Pencil />
-                        </Button>
-                        <Button
-                          type="button"
-                          className="icon-button danger-quiet compact-icon"
-                          title={`${t('delete')} ${item.name}`}
-                          aria-label={`${t('delete')} ${item.name}`}
-                          onClick={() => void deleteConnection(item.id)}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </>
-                    )}
+                    <ProtectedItemActions
+                      protectedItem={item.id === 'builtin-fake'}
+                      name={item.name}
+                      editLabel={t('edit')}
+                      deleteLabel={t('delete')}
+                      onEdit={() => editConnection(item.id)}
+                      onDelete={() => void deleteConnection(item.id)}
+                    />
                   </div>
                 </div>
               ))}
@@ -432,28 +418,14 @@ export function SettingsPage() {
                     >
                       <BookOpen />
                     </Button>
-                    {item.id !== 'builtin-fake-profile' && (
-                      <>
-                        <Button
-                          type="button"
-                          className="icon-button compact-icon"
-                          title={`${t('edit')} ${item.name}`}
-                          aria-label={`${t('edit')} ${item.name}`}
-                          onClick={() => editProfile(item.id)}
-                        >
-                          <Pencil />
-                        </Button>
-                        <Button
-                          type="button"
-                          className="icon-button danger-quiet compact-icon"
-                          title={`${t('delete')} ${item.name}`}
-                          aria-label={`${t('delete')} ${item.name}`}
-                          onClick={() => void deleteProfile(item.id)}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </>
-                    )}
+                    <ProtectedItemActions
+                      protectedItem={item.id === 'builtin-fake-profile'}
+                      name={item.name}
+                      editLabel={t('edit')}
+                      deleteLabel={t('delete')}
+                      onEdit={() => editProfile(item.id)}
+                      onDelete={() => void deleteProfile(item.id)}
+                    />
                   </div>
                 </div>
               ))}
@@ -747,6 +719,46 @@ export function SettingsPage() {
         </section>
       )}
     </div>
+  )
+}
+
+function ProtectedItemActions({
+  protectedItem,
+  name,
+  editLabel,
+  deleteLabel,
+  onEdit,
+  onDelete,
+}: {
+  protectedItem: boolean
+  name: string
+  editLabel: string
+  deleteLabel: string
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  if (protectedItem) return null
+  return (
+    <>
+      <Button
+        type="button"
+        className="icon-button compact-icon"
+        title={`${editLabel} ${name}`}
+        aria-label={`${editLabel} ${name}`}
+        onClick={onEdit}
+      >
+        <Pencil />
+      </Button>
+      <Button
+        type="button"
+        className="icon-button danger-quiet compact-icon"
+        title={`${deleteLabel} ${name}`}
+        aria-label={`${deleteLabel} ${name}`}
+        onClick={onDelete}
+      >
+        <Trash2 />
+      </Button>
+    </>
   )
 }
 

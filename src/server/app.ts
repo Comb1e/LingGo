@@ -1,9 +1,15 @@
-import Fastify from 'fastify'
+import Fastify, {type FastifyReply, type FastifyRequest} from 'fastify'
+import type {EventEmitter} from 'node:events'
 import fastifyStatic from '@fastify/static'
 import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {z, ZodError} from 'zod'
 import {requestOptionsBody} from '../shared/requestOptions'
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_KATAGO_VISITS,
+  MIN_KATAGO_VISITS,
+} from '../shared/constants'
 import {
   benchmarkConfigSchema,
   benchmarkNotebookRoleSchema,
@@ -100,8 +106,8 @@ const profileSchema = z
 
 const gameEditSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
-  blackName: z.string().trim().min(1).max(120),
-  whiteName: z.string().trim().min(1).max(120),
+  blackName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
+  whiteName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
   commentsVisible: z.boolean(),
   moveCap: z.number().int().positive(),
 })
@@ -110,20 +116,24 @@ const kataGoSettingsSchema = z.object({
   executablePath: z.string().min(1),
   modelPath: z.string().min(1),
   configPath: z.string().min(1),
-  analysisVisits: z.number().int().min(25).max(100_000),
+  analysisVisits: z
+    .number()
+    .int()
+    .min(MIN_KATAGO_VISITS)
+    .max(MAX_KATAGO_VISITS),
 })
 
 const benchmarkSchema = benchmarkConfigSchema
 
 const notebookSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
 })
 
 const publishBenchmarkNotebookSchema = z.discriminatedUnion('mode', [
   z.object({mode: z.literal('replace_source')}),
   z.object({
     mode: z.literal('save_new'),
-    name: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
   }),
 ])
 
@@ -136,7 +146,7 @@ export function createApp(
   } = {},
 ) {
   const runtime = loadRuntimeConfig()
-  const app = Fastify({logger: process.env.NODE_ENV !== 'test'})
+  const app = Fastify({logger: runtime.nodeEnv !== 'test'})
   const store = options.store ?? new Store()
   const games = new GameService(store)
   const kataGo: KataGoAnalyzer =
@@ -323,49 +333,27 @@ export function createApp(
   app.get('/api/games/:id/analysis/events', async (request, reply) => {
     const {id} = request.params as {id: string}
     if (!games.get(id)) return notFound()
-    reply.hijack()
-    const response = reply.raw
-    response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    })
-    const send = (value: unknown) =>
-      response.write(`data: ${JSON.stringify(value)}\n\n`)
-    send(analysis.open(id))
-    const keepAlive = setInterval(
-      () => response.write(': keep-alive\n\n'),
+    openEventStream(
+      request,
+      reply,
+      analysis.events,
+      id,
+      analysis.open(id),
       runtime.sseKeepAliveMs,
     )
-    analysis.events.on(id, send)
-    request.raw.on('close', () => {
-      clearInterval(keepAlive)
-      analysis.events.off(id, send)
-    })
   })
 
   app.get('/api/games/:id/events', async (request, reply) => {
     const {id} = request.params as {id: string}
     if (!games.get(id)) return notFound()
-    reply.hijack()
-    const response = reply.raw
-    response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    })
-    const send = (game: unknown) =>
-      response.write(`data: ${JSON.stringify(game)}\n\n`)
-    send(games.get(id))
-    const keepAlive = setInterval(
-      () => response.write(': keep-alive\n\n'),
-      15_000,
+    openEventStream(
+      request,
+      reply,
+      games.events,
+      id,
+      games.get(id),
+      runtime.sseKeepAliveMs,
     )
-    games.events.on(id, send)
-    request.raw.on('close', () => {
-      clearInterval(keepAlive)
-      games.events.off(id, send)
-    })
   })
 
   app.post('/api/import', async (request, reply) => {
@@ -944,7 +932,7 @@ export function createApp(
 
   const clientDir = options.clientDir ?? join(process.cwd(), 'dist', 'client')
   if (
-    (process.env.NODE_ENV === 'production' || options.clientDir) &&
+    (runtime.nodeEnv === 'production' || options.clientDir) &&
     existsSync(clientDir)
   ) {
     void app.register(fastifyStatic, {root: clientDir})
@@ -971,6 +959,35 @@ export function createApp(
     benchmarks,
     benchmarkSessions,
   }
+}
+
+function openEventStream(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  events: EventEmitter,
+  id: string,
+  initial: unknown,
+  keepAliveMs: number,
+) {
+  reply.hijack()
+  const response = reply.raw
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  })
+  const send = (value: unknown) =>
+    response.write(`data: ${JSON.stringify(value)}\n\n`)
+  send(initial)
+  const keepAlive = setInterval(
+    () => response.write(': keep-alive\n\n'),
+    keepAliveMs,
+  )
+  events.on(id, send)
+  request.raw.on('close', () => {
+    clearInterval(keepAlive)
+    events.off(id, send)
+  })
 }
 
 function notFound(): never {

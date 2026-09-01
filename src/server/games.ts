@@ -2,6 +2,7 @@ import {EventEmitter} from 'node:events'
 import {randomUUID} from 'node:crypto'
 import {NoOutputGeneratedError} from 'ai'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
+import {DEFAULT_GAME_MOVE_CAP, DEFAULT_KOMI} from '../shared/constants'
 import type {
   Color,
   Game,
@@ -50,18 +51,21 @@ import {
   modelFingerprint,
 } from './llmGameContext'
 import {
-  MAX_PROVIDER_API_ATTEMPTS,
   publicProviderError,
   shouldRetryProviderError,
   type ProviderRetryWait,
   waitForProviderRetry,
 } from './network'
 import type {ImportedRecord} from './sgf'
+import {
+  MAX_PROVIDER_API_ATTEMPTS,
+  MAX_MODEL_OUTPUT_ATTEMPTS,
+  MAX_MODEL_OUTPUT_RETRIES,
+} from './config'
+import {transitionGame} from './stateMachines/game'
+import {transitionLlmContext} from './stateMachines/llmContext'
 
-/** Maximum number of repair retries after the initial provider response. */
-export const MAX_MODEL_OUTPUT_RETRIES = 3
-/** Total model responses allowed for one unchanged position. */
-export const MAX_MODEL_OUTPUT_ATTEMPTS = MAX_MODEL_OUTPUT_RETRIES + 1
+export {MAX_MODEL_OUTPUT_ATTEMPTS, MAX_MODEL_OUTPUT_RETRIES} from './config'
 
 type PlayerAdapterFactory = (
   ...args: Parameters<typeof createPlayerAdapter>
@@ -222,7 +226,10 @@ export class GameService {
     })
     game.moves = record.moves
     game.result = record.result
-    game.status = record.result ? 'finished' : 'active'
+    transitionGame(game, {
+      type: 'restore',
+      status: record.result ? 'finished' : 'active',
+    })
     game.autoplay = false
     this.refreshPosition(game)
     return this.commit(game)
@@ -237,11 +244,11 @@ export class GameService {
   }) {
     const game = this.create({
       size: 19,
-      komi: 7.5,
+      komi: DEFAULT_KOMI,
       black: {type: 'human', name: 'Black'},
       white: {type: 'human', name: 'White'},
       commentsVisible: true,
-      moveCap: 722,
+      moveCap: DEFAULT_GAME_MOVE_CAP,
       analysisEnabled: false,
     })
     const llm = {
@@ -559,6 +566,43 @@ export class GameService {
     )
   }
 
+  async recoverLlmProviderContext(input: {
+    adapter: PlayerAdapter
+    prepared: PreparedLlmTurn
+    signal: AbortSignal
+    error: unknown
+    gameId: string
+    color: Color
+  }) {
+    const managedContinuationFailed =
+      input.prepared.context.managedContinuation &&
+      Boolean(input.prepared.context.providerContinuationId) &&
+      NoOutputGeneratedError.isInstance(input.error)
+    if (
+      !input.prepared.context.providerContinuationId ||
+      (!isProviderContextError(input.error) && !managedContinuationFailed)
+    )
+      return false
+    let gameIntention: string | undefined
+    try {
+      gameIntention = await this.summarizeLlmContext(
+        input.adapter,
+        input.prepared,
+        input.signal,
+      )
+    } catch (summaryError) {
+      if (input.signal.aborted) throw summaryError
+    }
+    if (managedContinuationFailed)
+      this.disableManagedLlmContinuation(
+        input.gameId,
+        input.color,
+        gameIntention,
+      )
+    else this.rebaseLlmContext(input.gameId, input.color, gameIntention)
+    return true
+  }
+
   finishAutomated(
     id: string,
     result: string,
@@ -567,7 +611,7 @@ export class GameService {
     const game = this.requireGame(id)
     game.result = result
     game.benchmarkTermination = benchmarkTermination
-    game.status = 'finished'
+    transitionGame(game, {type: 'finish'})
     game.autoplay = false
     game.pauseAfterMove = false
     game.error = undefined
@@ -603,7 +647,7 @@ export class GameService {
   reportAutomatedError(id: string, error: string) {
     const game = this.requireGame(id)
     this.modelTurns.delete(id)
-    if (game.status === 'active') game.status = 'paused'
+    if (game.status === 'active') transitionGame(game, {type: 'pause'})
     game.error = error
     game.providerErrors = [error]
     game.autoplay = false
@@ -616,7 +660,7 @@ export class GameService {
     if (!game.error) return this.withPending(game)
     game.error = undefined
     game.pauseAfterMove = false
-    if (game.status === 'paused') game.status = 'active'
+    if (game.status === 'paused') transitionGame(game, {type: 'activate'})
     return this.commit(game)
   }
 
@@ -627,7 +671,7 @@ export class GameService {
 
     if (command.type === 'pause') {
       this.cancel(id)
-      game.status = 'paused'
+      transitionGame(game, {type: 'pause'})
       game.autoplay = false
       game.pauseAfterMove = false
       return this.commit(game)
@@ -641,7 +685,7 @@ export class GameService {
         )
       if (this.seat(game).type !== 'llm')
         throw new Error('The current seat is not controlled by a model')
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.autoplay = true
       game.pauseAfterMove = true
       const saved = this.commit(game)
@@ -649,7 +693,7 @@ export class GameService {
       return saved
     }
     if (command.type === 'resume' || command.type === 'retry') {
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.error = undefined
       game.autoplay = true
       game.pauseAfterMove = false
@@ -663,7 +707,7 @@ export class GameService {
       if (!game.moves.length) throw new Error('There is no move to undo')
       this.cancel(id)
       game.moves.pop()
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.error = undefined
       game.autoplay = false
       game.pauseAfterMove = false
@@ -685,7 +729,7 @@ export class GameService {
     }
     if (command.type === 'resume-play') {
       if (game.status !== 'scoring') throw new Error('Game is not in scoring')
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.dead = []
       game.approvals = []
       game.operatorConfirmationRequired = false
@@ -730,7 +774,7 @@ export class GameService {
         name: this.store.getProfile(command.profileId)!.name,
         profileId: command.profileId,
       }
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.error = undefined
       game.pauseAfterMove = false
       this.store.markLlmGameContextsNeedsRebase(id, command.color)
@@ -749,7 +793,7 @@ export class GameService {
       if (game.benchmarkRunId)
         throw new Error('Benchmark games are controlled by their benchmark run')
       this.cancel(id)
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.error = undefined
       game.autoplay = false
       game.pauseAfterMove = false
@@ -765,7 +809,7 @@ export class GameService {
       ['paused', 'error'].includes(game.status) &&
       Boolean(game.error)
     ) {
-      game.status = 'active'
+      transitionGame(game, {type: 'activate'})
       game.error = undefined
       game.autoplay = false
       game.pauseAfterMove = false
@@ -855,11 +899,11 @@ export class GameService {
     this.refreshPosition(game)
 
     if (action.action === 'resign') {
-      game.status = 'finished'
+      transitionGame(game, {type: 'finish'})
       game.result = `${opposite(color)}+R`
       game.autoplay = false
     } else if (replay(game.size, game.moves).consecutivePasses >= 2) {
-      game.status = 'scoring'
+      transitionGame(game, {type: 'score'})
       game.dead = []
       game.approvals = this.automaticApprovals(game)
       game.operatorConfirmationRequired =
@@ -867,7 +911,7 @@ export class GameService {
       game.autoplay = false
       this.finishScoreIfApproved(game)
     } else if (game.moves.length >= game.moveCap) {
-      game.status = 'paused'
+      transitionGame(game, {type: 'pause'})
       game.error = `Move cap of ${game.moveCap} reached`
       game.autoplay = false
     }
@@ -875,7 +919,7 @@ export class GameService {
     if (game.pauseAfterMove) {
       game.pauseAfterMove = false
       game.autoplay = false
-      if (game.status === 'active') game.status = 'paused'
+      if (game.status === 'active') transitionGame(game, {type: 'pause'})
     }
 
     const saved = this.commit(game, context)
@@ -1023,29 +1067,18 @@ export class GameService {
             error instanceof IllegalMoveError ||
             error instanceof MalformedModelOutputError ||
             error instanceof NoOutputGeneratedError
-          const managedContinuationFailed =
-            prepared.context.managedContinuation &&
-            Boolean(prepared.context.providerContinuationId) &&
-            NoOutputGeneratedError.isInstance(error)
           if (
             !rebasedProviderContext &&
-            prepared.context.providerContinuationId &&
-            (isProviderContextError(error) || managedContinuationFailed)
+            (await this.recoverLlmProviderContext({
+              adapter,
+              prepared,
+              signal: controller.signal,
+              error,
+              gameId: id,
+              color: game.toMove,
+            }))
           ) {
             rebasedProviderContext = true
-            let gameIntention: string | undefined
-            try {
-              gameIntention = await this.summarizeLlmContext(
-                adapter,
-                prepared,
-                controller.signal,
-              )
-            } catch (summaryError) {
-              if (controller.signal.aborted) throw summaryError
-            }
-            if (managedContinuationFailed)
-              this.disableManagedLlmContinuation(id, game.toMove, gameIntention)
-            else this.rebaseLlmContext(id, game.toMove, gameIntention)
             prepared = undefined
             continue
           }
@@ -1058,7 +1091,7 @@ export class GameService {
               apiFailures >= MAX_PROVIDER_API_ATTEMPTS
             ) {
               const latest = this.requireGame(id)
-              latest.status = 'paused'
+              transitionGame(latest, {type: 'pause'})
               latest.error = `LLM API request failed after ${apiFailures} ${apiFailures === 1 ? 'attempt' : 'attempts'}. The game has been paused. Last error: ${message}`
               latest.providerErrors = retryErrors
               latest.autoplay = false
@@ -1100,7 +1133,7 @@ export class GameService {
           this.emit(id)
           if (outputFailures > MAX_MODEL_OUTPUT_RETRIES) {
             const latest = this.requireGame(id)
-            latest.status = 'error'
+            transitionGame(latest, {type: 'fail'})
             latest.error = `Model failed to produce a legal action after ${MAX_MODEL_OUTPUT_ATTEMPTS} attempts: ${feedback}`
             latest.autoplay = false
             latest.pauseAfterMove = false
@@ -1114,7 +1147,7 @@ export class GameService {
       if (!controller.signal.aborted) {
         const game = this.store.getGame(id)
         if (game) {
-          game.status = 'error'
+          transitionGame(game, {type: 'fail'})
           game.error = publicProviderError(error)
           game.autoplay = false
           game.pauseAfterMove = false
@@ -1147,7 +1180,7 @@ export class GameService {
       !game.operatorConfirmationRequired
     ) {
       game.result = scoreBoard(game.board as any, game.komi, game.dead).result
-      game.status = 'finished'
+      transitionGame(game, {type: 'finish'})
     }
   }
 
@@ -1182,7 +1215,7 @@ export class GameService {
     game.version += 1
     game.updatedAt = new Date().toISOString()
     if (game.status === 'finished' && !game.benchmarkRunId && context)
-      context.status = 'complete'
+      transitionLlmContext(context, {type: 'complete'})
     if (context) {
       this.store.saveGameWithLlmContext(game, context)
       this.store.ensureGameAnalysis(

@@ -1,6 +1,13 @@
 import {z} from 'zod'
 import {existsSync} from 'node:fs'
-import {DEFAULT_NOTEBOOK_TOKEN_BUDGET} from '../shared/constants'
+import {join} from 'node:path'
+import {
+  DEFAULT_BENCHMARK_TRAINING_VISITS,
+  DEFAULT_KATAGO_VISITS,
+  DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+  MAX_KATAGO_VISITS,
+  MIN_KATAGO_VISITS,
+} from '../shared/constants'
 
 const booleanEnv = z
   .enum(['0', '1', 'true', 'false'])
@@ -9,13 +16,19 @@ const booleanEnv = z
 export const runtimeConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(4173),
   sseKeepAliveMs: z.number().int().positive().default(15_000),
-  defaultKataGoVisits: z.number().int().min(25).max(100_000).default(5_000),
+  nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
+  defaultKataGoVisits: z
+    .number()
+    .int()
+    .min(MIN_KATAGO_VISITS)
+    .max(MAX_KATAGO_VISITS)
+    .default(DEFAULT_KATAGO_VISITS),
   benchmarkTrainingVisits: z
     .number()
     .int()
-    .min(25)
-    .max(100_000)
-    .default(10_000),
+    .min(MIN_KATAGO_VISITS)
+    .max(MAX_KATAGO_VISITS)
+    .default(DEFAULT_BENCHMARK_TRAINING_VISITS),
   providerTimeoutMs: z
     .number()
     .int()
@@ -41,6 +54,7 @@ function envNumber(env: NodeJS.ProcessEnv, name: string) {
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env) {
   const parsed = runtimeConfigSchema.safeParse({
+    nodeEnv: env.NODE_ENV,
     port: envNumber(env, 'PORT'),
     sseKeepAliveMs: envNumber(env, 'LINGGO_SSE_KEEP_ALIVE_MS'),
     defaultKataGoVisits: envNumber(env, 'LINGGO_DEFAULT_KATAGO_VISITS'),
@@ -75,6 +89,31 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export const runtimeConfig = loadRuntimeConfig()
+
+export const MAX_PROVIDER_API_ATTEMPTS = runtimeConfig.providerRetryLimit
+export const MAX_MODEL_OUTPUT_RETRIES = runtimeConfig.modelRepairRetryLimit
+export const MAX_MODEL_OUTPUT_ATTEMPTS = MAX_MODEL_OUTPUT_RETRIES + 1
+
+export function loadStorageConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+) {
+  return {
+    databasePath: env.LINGGO_DB_PATH ?? join(cwd, 'data', 'linggo.db'),
+    techniquesDir: env.LINGGO_TECHNIQUES_DIR ?? join(cwd, 'data', 'techniques'),
+  }
+}
+
+export function loadProxyEnvironment(env: NodeJS.ProcessEnv = process.env) {
+  return env
+}
+
+export function readEnvironmentSecret(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return env[name]
+}
 
 export const KATAGO_LEGACY_DEFAULTS = {
   executablePath: '/home/comb1e/tools/KataGo/cpp/katago',

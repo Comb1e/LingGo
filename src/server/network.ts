@@ -1,9 +1,9 @@
 import * as http from 'node:http'
 import {createConnection, type Socket} from 'node:net'
 import {connect as createTlsConnection} from 'node:tls'
-import {runtimeConfig} from './config'
+import {loadProxyEnvironment, runtimeConfig} from './config'
 
-export const MAX_PROVIDER_API_ATTEMPTS = runtimeConfig.providerRetryLimit
+export {MAX_PROVIDER_API_ATTEMPTS} from './config'
 
 export type ProviderRetryWait = (
   failedAttempts: number,
@@ -23,7 +23,9 @@ export interface ProviderFailure {
 
 type ProxyConnector = (proxy: URL, timeoutMs: number) => Promise<void>
 
-export function configureNetworkProxy(env: NodeJS.ProcessEnv = process.env) {
+export function configureNetworkProxy(
+  env: NodeJS.ProcessEnv = loadProxyEnvironment(),
+) {
   const proxyUrl = env.LINGGO_PROXY_URL?.trim()
   if (proxyUrl) validateProxyUrl(proxyUrl)
   const httpProxy = proxyUrl || env.HTTP_PROXY || env.http_proxy
@@ -46,7 +48,7 @@ export function configureNetworkProxy(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export async function verifyDedicatedProxy(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = loadProxyEnvironment(),
   connect: ProxyConnector = connectToProxy,
 ) {
   const value = env.LINGGO_PROXY_URL?.trim()

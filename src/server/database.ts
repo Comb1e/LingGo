@@ -20,10 +20,13 @@ import type {
   TechniqueNotebook,
   TechniqueNotebookSummary,
 } from '../shared/types'
+import {DEFAULT_KATAGO_VISITS} from '../shared/constants'
 import type {LlmGameContext} from './llmGameContext'
+import {transitionLlmContext} from './stateMachines/llmContext'
 import {
   KATAGO_LEGACY_DEFAULTS,
   KATAGO_PORTABLE_DEFAULTS,
+  loadStorageConfig,
   resolveKataGoDefaults,
 } from './config'
 
@@ -33,10 +36,7 @@ export class Store {
   readonly db: Database.Database
   private deletedBenchmarkIds = new Set<string>()
 
-  constructor(
-    filename = process.env.LINGGO_DB_PATH ??
-      join(process.cwd(), 'data', 'linggo.db'),
-  ) {
+  constructor(filename = loadStorageConfig().databasePath) {
     if (filename !== ':memory:') mkdirSync(dirname(filename), {recursive: true})
     this.db = new Database(filename)
     this.db.pragma('journal_mode = WAL')
@@ -95,9 +95,7 @@ export class Store {
     const key = 'named_notebooks_legacy_imported'
     if (this.db.prepare('SELECT 1 FROM app_metadata WHERE key = ?').get(key))
       return
-    const root =
-      process.env.LINGGO_TECHNIQUES_DIR ??
-      join(process.cwd(), 'data', 'techniques')
+    const root = loadStorageConfig().techniquesDir
     const importNotebook = this.db.transaction(() => {
       for (const profile of this.listProfiles()) {
         const path = join(root, `${profile.id}.md`)
@@ -145,7 +143,7 @@ export class Store {
       if (legacy.protocolVersion === 2) continue
       const now = new Date().toISOString()
       const successorId = randomUUID()
-      const visits = legacy.config.visits ?? 5000
+      const visits = legacy.config.visits ?? DEFAULT_KATAGO_VISITS
       const successor: BenchmarkRun = {
         id: successorId,
         protocolVersion: 2,
@@ -430,22 +428,20 @@ export class Store {
     gameIntention?: string,
     intentionTurn?: number,
   ) {
-    const where = color ? 'game_id = ? AND color = ?' : 'game_id = ?'
-    this.db
-      .prepare(
-        `UPDATE llm_game_contexts SET status = 'needs_rebase',
-         pending_turn_json = NULL, provider_continuation_id = NULL,
-         game_intention = COALESCE(?, game_intention),
-         intention_turn = COALESCE(?, intention_turn),
-         updated_at = ? WHERE ${where}`,
-      )
-      .run(
-        gameIntention ?? null,
-        intentionTurn ?? null,
-        new Date().toISOString(),
-        gameId,
-        ...(color ? [color] : []),
-      )
+    const contexts = this.listLlmGameContexts(gameId).filter(
+      (context) => !color || context.color === color,
+    )
+    this.transaction(() => {
+      for (const context of contexts) {
+        transitionLlmContext(context, {type: 'rebase'})
+        context.pendingTurn = undefined
+        context.providerContinuationId = undefined
+        context.gameIntention = gameIntention ?? context.gameIntention
+        context.lastIntentionTurn = intentionTurn ?? context.lastIntentionTurn
+        context.updatedAt = new Date().toISOString()
+        this.saveLlmGameContext(context)
+      }
+    })
   }
 
   disableManagedLlmContinuation(
@@ -454,31 +450,28 @@ export class Store {
     gameIntention?: string,
     intentionTurn?: number,
   ) {
-    this.db
-      .prepare(
-        `UPDATE llm_game_contexts SET status = 'needs_rebase',
-         pending_turn_json = NULL, provider_continuation_id = NULL,
-         managed_continuation = 0,
-         game_intention = COALESCE(?, game_intention),
-         intention_turn = COALESCE(?, intention_turn), updated_at = ?
-         WHERE game_id = ? AND color = ?`,
-      )
-      .run(
-        gameIntention ?? null,
-        intentionTurn ?? null,
-        new Date().toISOString(),
-        gameId,
-        color,
-      )
+    const context = this.getLlmGameContext(gameId, color)
+    if (!context) return
+    transitionLlmContext(context, {type: 'rebase'})
+    context.pendingTurn = undefined
+    context.providerContinuationId = undefined
+    context.managedContinuation = false
+    context.gameIntention = gameIntention ?? context.gameIntention
+    context.lastIntentionTurn = intentionTurn ?? context.lastIntentionTurn
+    context.updatedAt = new Date().toISOString()
+    this.saveLlmGameContext(context)
   }
 
   completeLlmGameContexts(gameId: string) {
-    this.db
-      .prepare(
-        `UPDATE llm_game_contexts SET status = 'complete',
-         pending_turn_json = NULL, updated_at = ? WHERE game_id = ?`,
-      )
-      .run(new Date().toISOString(), gameId)
+    const contexts = this.listLlmGameContexts(gameId)
+    this.transaction(() => {
+      for (const context of contexts) {
+        transitionLlmContext(context, {type: 'complete'})
+        context.pendingTurn = undefined
+        context.updatedAt = new Date().toISOString()
+        this.saveLlmGameContext(context)
+      }
+    })
   }
 
   deleteGame(id: string) {
@@ -1311,26 +1304,8 @@ export class Store {
     run: BenchmarkRun,
     content: string,
   ) {
-    const updatedAt = run.notebook.updatedAt ?? new Date().toISOString()
     this.db.transaction(() => {
-      const notebookResult = this.db
-        .prepare(
-          `UPDATE technique_notebooks SET content = ?, updated_at = ?
-           WHERE profile_id = ? AND id = ?`,
-        )
-        .run(content, updatedAt, notebook.profileId, notebook.id)
-      if (!notebookResult.changes)
-        throw new Error('The selected technique notebook no longer exists')
-      this.db
-        .prepare(
-          `INSERT INTO benchmark_notebook_snapshots
-           (run_id, notebook_id, notebook_name, content, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
-           updated_at = excluded.updated_at`,
-        )
-        .run(run.id, notebook.id, notebook.name, content, updatedAt)
-      this.saveBenchmark(run)
+      this.saveReflectionRecords(notebook, run, content)
     })()
   }
 
@@ -1341,27 +1316,35 @@ export class Store {
     context: LlmGameContext,
   ) {
     this.db.transaction(() => {
-      const updatedAt = run.notebook.updatedAt ?? new Date().toISOString()
-      const notebookResult = this.db
-        .prepare(
-          `UPDATE technique_notebooks SET content = ?, updated_at = ?
-           WHERE profile_id = ? AND id = ?`,
-        )
-        .run(content, updatedAt, notebook.profileId, notebook.id)
-      if (!notebookResult.changes)
-        throw new Error('The selected technique notebook no longer exists')
-      this.db
-        .prepare(
-          `INSERT INTO benchmark_notebook_snapshots
-           (run_id, notebook_id, notebook_name, content, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
-           updated_at = excluded.updated_at`,
-        )
-        .run(run.id, notebook.id, notebook.name, content, updatedAt)
-      this.saveBenchmark(run)
+      this.saveReflectionRecords(notebook, run, content)
       this.saveLlmGameContext(context)
     })()
+  }
+
+  private saveReflectionRecords(
+    notebook: TechniqueNotebook,
+    run: BenchmarkRun,
+    content: string,
+  ) {
+    const updatedAt = run.notebook.updatedAt ?? new Date().toISOString()
+    const notebookResult = this.db
+      .prepare(
+        `UPDATE technique_notebooks SET content = ?, updated_at = ?
+         WHERE profile_id = ? AND id = ?`,
+      )
+      .run(content, updatedAt, notebook.profileId, notebook.id)
+    if (!notebookResult.changes)
+      throw new Error('The selected technique notebook no longer exists')
+    this.db
+      .prepare(
+        `INSERT INTO benchmark_notebook_snapshots
+         (run_id, notebook_id, notebook_name, content, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(run_id) DO UPDATE SET content = excluded.content,
+         updated_at = excluded.updated_at`,
+      )
+      .run(run.id, notebook.id, notebook.name, content, updatedAt)
+    this.saveBenchmark(run)
   }
 
   listConnections(): ProviderConnection[] {

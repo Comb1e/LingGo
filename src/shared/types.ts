@@ -1,7 +1,12 @@
 import {z} from 'zod'
 import {
+  DEFAULT_BENCHMARK_TRAINING_VISITS,
+  DEFAULT_GAME_MOVE_CAP,
+  DEFAULT_KOMI,
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+  MAX_KATAGO_VISITS,
+  MIN_KATAGO_VISITS,
 } from './constants'
 
 export const boardSizeSchema = z.union([
@@ -190,7 +195,7 @@ export const seatSchema = z.discriminatedUnion('type', [
 
 export const newGameSchema = z.object({
   size: boardSizeSchema.default(19),
-  komi: z.number().min(-100).max(100).default(7.5),
+  komi: z.number().min(-100).max(100).default(DEFAULT_KOMI),
   black: seatSchema,
   white: seatSchema,
   commentsVisible: z.boolean().default(true),
@@ -389,6 +394,33 @@ export type BenchmarkSessionProcess = z.infer<
   typeof benchmarkSessionProcessSchema
 >
 
+const benchmarkResourceFields = {
+  notebookTokenBudget: z
+    .number()
+    .int()
+    .min(256)
+    .max(MAX_KATAGO_VISITS)
+    .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
+  notebookInitializationTokenLimit: z
+    .number()
+    .int()
+    .min(256)
+    .max(MAX_KATAGO_VISITS)
+    .optional(),
+  trainingVisits: z
+    .number()
+    .int()
+    .min(MIN_KATAGO_VISITS)
+    .max(MAX_KATAGO_VISITS)
+    .default(DEFAULT_BENCHMARK_TRAINING_VISITS),
+  evaluationVisits: z
+    .number()
+    .int()
+    .min(MIN_KATAGO_VISITS)
+    .max(MAX_KATAGO_VISITS)
+    .default(DEFAULT_BENCHMARK_TRAINING_VISITS),
+}
+
 export const benchmarkSessionConfigSchema = z
   .object({
     process: benchmarkSessionProcessSchema.optional(),
@@ -400,20 +432,7 @@ export const benchmarkSessionConfigSchema = z
     trainingGamesWithWinRates: z.number().int().min(0).max(1000),
     trainingGamesWithoutWinRates: z.number().int().min(0).max(1000),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
-    notebookTokenBudget: z
-      .number()
-      .int()
-      .min(256)
-      .max(100_000)
-      .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
-    notebookInitializationTokenLimit: z
-      .number()
-      .int()
-      .min(256)
-      .max(100_000)
-      .optional(),
-    trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
-    evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
+    ...benchmarkResourceFields,
   })
   .strict()
   .superRefine((value, context) => {
@@ -487,20 +506,7 @@ export const benchmarkConfigSchema = z
     trainingGamesWithoutWinRates: z.number().int().min(0).max(1000).optional(),
     notebookSeed: notebookSeedSchema.default({mode: 'rules_only'}),
     trainingFeedback: z.enum(['none', 'structured']).default('structured'),
-    notebookTokenBudget: z
-      .number()
-      .int()
-      .min(256)
-      .max(100_000)
-      .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
-    notebookInitializationTokenLimit: z
-      .number()
-      .int()
-      .min(256)
-      .max(100_000)
-      .optional(),
-    trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
-    evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
+    ...benchmarkResourceFields,
     problemSetId: z.string().min(1).optional(),
     problemSetChecksum: z
       .string()
@@ -849,12 +855,22 @@ export const researchManifestSchema = z.object({
     profileId: z.string().min(1).optional(),
   }),
   boardSize: boardSizeSchema.default(9),
-  komi: z.number().min(-100).max(100).default(7.5),
+  komi: z.number().min(-100).max(100).default(DEFAULT_KOMI),
   rules: z.string().default('chinese'),
-  moveCap: z.number().int().positive().max(10_000).default(722),
+  moveCap: z
+    .number()
+    .int()
+    .positive()
+    .max(DEFAULT_BENCHMARK_TRAINING_VISITS)
+    .default(DEFAULT_GAME_MOVE_CAP),
   trainingGameCount: z.number().int().min(0).max(1000).default(1),
   evaluationGameCount: z.number().int().min(0).max(1000).default(1),
-  evaluationPositionCount: z.number().int().min(0).max(100_000).default(0),
+  evaluationPositionCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_KATAGO_VISITS)
+    .default(0),
   evaluator: z
     .object({
       executable: z.string().default('deterministic'),

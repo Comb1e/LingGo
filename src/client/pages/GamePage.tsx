@@ -8,7 +8,6 @@ import {
   Download,
   Eye,
   EyeOff,
-  MessagesSquare,
   Pause,
   Pencil,
   Play,
@@ -30,6 +29,7 @@ import {
 } from 'react'
 import {useTranslation} from 'react-i18next'
 import {Link, useNavigate, useParams} from 'react-router-dom'
+import {LlmMessageInspector as SharedLlmMessageInspector} from '../BenchmarkLlmMessageInspector'
 import {pointToCoordinate} from '../../shared/coordinates'
 import {isDeepSeekMove, normalizeReasoning} from '../../shared/reasoning'
 import type {
@@ -874,41 +874,11 @@ function LlmMessageInspector({
 }) {
   const {t} = useTranslation()
   return (
-    <details className="llm-message-inspector">
-      <summary>
-        <MessagesSquare size={16} aria-hidden="true" />
-        <span>{t('llmMessages')}</span>
-        <ChevronDown size={16} aria-hidden="true" />
-      </summary>
-      <div className="llm-message-content">
-        {loading ? (
-          <p className="muted">{t('loadingMessages')}</p>
-        ) : sets.length ? (
-          sets.map((set) => (
-            <section className="llm-message-set" key={set.color}>
-              <header>
-                <strong>{set.color === 'B' ? t('black') : t('white')}</strong>
-                <span>{t(`llmContextStatus.${set.status}`)}</span>
-                <span>{t(`llmContinuationMode.${set.continuationMode}`)}</span>
-              </header>
-              <ol>
-                {set.messages.map((message, index) => (
-                  <li key={`${message.role}-${index}`}>
-                    <div>
-                      <strong>{t(`llmMessageRole.${message.role}`)}</strong>
-                      {message.pending && <span>{t('pendingMessage')}</span>}
-                    </div>
-                    <pre>{message.content}</pre>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ))
-        ) : (
-          <p className="muted">{t('noLlmMessages')}</p>
-        )}
-      </div>
-    </details>
+    <SharedLlmMessageInspector
+      sets={sets}
+      loading={loading}
+      label={(set) => (set.color === 'B' ? t('black') : t('white'))}
+    />
   )
 }
 
