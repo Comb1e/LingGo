@@ -1309,7 +1309,7 @@ export class BenchmarkService {
           const position = [
             'CURRENT BOARD',
             LIFE_DEATH_BOARD_SYMBOL_LEGEND,
-            `Expected side to move: ${currentSnapshot.toMove}`,
+            `Player to move now: ${currentSnapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}.`,
             `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
             asciiBoard(currentSnapshot),
           ]
@@ -1327,10 +1327,10 @@ export class BenchmarkService {
                 progress.actions.length
                   ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
                   : 'Solve the life-and-death Go problem. Use exactly one legal action.',
+                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 'OUTPUT JSON SCHEMA',
                 '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
                 'Return exactly one JSON action object and no other fields or prose.',
-                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
                 ...position,
                 'Move list:',
                 progress.actions.length

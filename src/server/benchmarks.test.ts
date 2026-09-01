@@ -1346,6 +1346,9 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[1]).not.toContain('Your previous action was')
     expect(actionPrompts[1]).not.toContain('Move list:')
     expect(actionPrompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
+      actionPrompts[0].indexOf('OUTPUT JSON SCHEMA'),
+    )
+    expect(actionPrompts[0].indexOf('OUTPUT JSON SCHEMA')).toBeLessThan(
       actionPrompts[0].indexOf('CURRENT BOARD'),
     )
     expect(actionPrompts.slice(1)).toEqual(
@@ -1562,8 +1565,8 @@ describe('benchmark scoring and prompts', () => {
         .every((prompt) => !prompt.includes('SELF-WRITTEN SKILLS')),
     ).toBe(true)
     expect(prompts[1]).toContain('Continue solving')
-    expect(prompts[1]).toContain('Expected side to move: W')
-    expect(prompts[2]).toContain('Expected side to move: B')
+    expect(prompts[1]).toContain('Player to move now: White (O).')
+    expect(prompts[2]).toContain('Player to move now: Black (X).')
     expect(new Set(cacheKeys)).toEqual(
       new Set([`linggo:benchmark:${created.id}:problem:${problem.id}`]),
     )
