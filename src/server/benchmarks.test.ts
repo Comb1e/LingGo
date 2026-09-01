@@ -1642,7 +1642,7 @@ describe('benchmark scoring and prompts', () => {
         .every(
           (prompt) =>
             prompt.includes('SELF-WRITTEN SKILLS') &&
-            prompt.includes('ASSISTANT:'),
+            prompt.match(/SELF-WRITTEN SKILLS/g)!.length >= 2,
         ),
     ).toBe(true)
     expect(prompts[1]).toContain('Continue solving')

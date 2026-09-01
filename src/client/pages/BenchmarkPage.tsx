@@ -130,6 +130,10 @@ export function BenchmarkPage() {
         })
       if (run.config.problemSetId)
         void queryClient.invalidateQueries({
+          queryKey: ['benchmark-problem-attempts', id],
+        })
+      if (run.config.problemSetId)
+        void queryClient.invalidateQueries({
           queryKey: ['benchmark-notebook-versions', id],
         })
       void queryClient.invalidateQueries({

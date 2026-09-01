@@ -1347,10 +1347,7 @@ export class BenchmarkService {
             break
           }
           const retry = Boolean(failureFeedback)
-          const notebook =
-            !progress.actions.length || retry
-              ? await this.runNotebook(run.id)
-              : ''
+          const notebook = await this.runNotebook(run.id)
           const position = [
             'CURRENT BOARD',
             LIFE_DEATH_BOARD_SYMBOL_LEGEND,
@@ -1451,6 +1448,7 @@ export class BenchmarkService {
             createdAt: new Date().toISOString(),
           }
           this.store.saveBenchmarkProblemAttempt(attempt)
+          this.emit(run)
           if (correct && progress.step >= problem.solution.length) {
             run.problemSuccessStreak = (run.problemSuccessStreak ?? 0) + 1
             run.pendingProblem = {
