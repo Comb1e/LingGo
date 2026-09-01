@@ -1351,11 +1351,25 @@ describe('benchmark scoring and prompts', () => {
       'The hard maximum for this entire initialization response is 12,000 output tokens.',
     )
     expect(prompts[0]).toContain(
-      'later life-and-death problem prompts will no longer provide the Go or life-and-death rules',
+      'They will not repeat the Go or life-and-death rules',
     )
-    expect(prompts[0]).toContain('A defender aims for unconditional life')
     expect(prompts[0]).toContain(
-      'Record reusable reading techniques, shapes, vital points, liberties, eye-space concepts, and move-order principles.',
+      "answer every candidate with the opponent's strongest resistance",
+    )
+    expect(prompts[0]).toContain(
+      'unconditional life through two independent real eyes',
+    )
+    expect(prompts[0]).toContain(
+      'throw-ins, sacrifices, snapback, shortage of liberties',
+    )
+    expect(prompts[0]).toContain(
+      'whether a proposed sequence assumes a cooperative reply',
+    )
+    expect(prompts[0]).toContain(
+      'each numbered point must stand on its own as a reusable lesson',
+    )
+    expect(prompts[0]).toContain(
+      'Do not write the direct answer to an individual life-and-death problem',
     )
     expect(prompts[0]).not.toContain('AUTHORITATIVE GO RULES')
     expect(prompts[0]).not.toContain('komi')

@@ -123,17 +123,26 @@ const LIFE_DEATH_BOARD_SYMBOL_LEGEND =
   'Board symbols: X = Black stone, O = White stone, . = empty intersection.'
 
 const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
-  'Write a complete Markdown life-and-death Go technique notebook.',
-  'After this initialization, later life-and-death problem prompts will no longer provide the Go or life-and-death rules, so record the reusable rules and principles you will need now.',
+  'Create a comprehensive, self-contained Markdown technique notebook for solving Go life-and-death problems.',
+  'Later problem prompts will provide only the board, the side to move, capture totals, and the notebook. They will not repeat the Go or life-and-death rules. Record all reusable knowledge needed to choose and verify each action without relying on outside context.',
   'A life-and-death problem is a local tactical position about whether an unsettled group can survive or be captured under best play.',
-  "The side to move must find the correct first move and read the opponent's strongest resistance.",
-  'A defender aims for unconditional life, normally through two independent eyes, a safe connection, or escape.',
-  'An attacker aims to prevent life and force capture. Ko and seki should be recognized where relevant.',
-  'Record reusable reading techniques, shapes, vital points, liberties, eye-space concepts, and move-order principles.',
-  'Write the reusable knowledge as individually numbered points such as 1. ... and 2. ... so later lessons can be edited by point number.',
+  '',
+  'Cover at least the following subjects:',
+  '- Core mechanics: orthogonal adjacency, chains, liberties, capture order, suicide, ko or whole-board repetition, and how captures can create new liberties or eye space.',
+  '- Objectives and settled outcomes: attack versus defense, unconditional life through two independent real eyes, capture, escape or connection to a living group, seki, ko life, and unsettled positions.',
+  '- Eye-space analysis: real and false eyes, shared liberties, cutting points, internal defects, vital points, eye-stealing moves, and common nakade principles and shapes.',
+  "- A disciplined reading process: identify the critical group and each side's goal; count liberties and eye potential; generate forcing moves, vital points, and candidate defenses; answer every candidate with the opponent's strongest resistance; compare move orders; and read until the result is stable.",
+  '- Tactical and shape techniques: atari and double atari, throw-ins, sacrifices, snapback, shortage of liberties, approach moves, connection and cutting tesuji, under-the-stones ideas, capturing races, and damezumari.',
+  '- Local geometry: how corner and edge boundaries change liberties, eyes, placement points, and standard first-line or second-line techniques.',
+  '- Verification and failure checks: legality, self-atari, hidden liberties, false-eye defects, ko recaptures, opponent counter-atari, whether two eyes are truly independent, and whether a proposed sequence assumes a cooperative reply.',
+  '- Practical move selection: prefer forcing and dual-purpose moves, distinguish sente from gote, preserve flexibility, and use accurate local reading rather than vague shape memory.',
+  '',
+  'Make every note operational: state what cues to inspect, what candidate move or sequence to consider, how the opponent can resist, and how to confirm the resulting status. Distinguish unconditional results from ko, seki, or unresolved outcomes instead of treating them as equivalent.',
+  'Organize the reusable knowledge as individually numbered points such as 1. ... and 2. ... so later lessons can replace or add a point by number. Headings may group the numbered points, but each numbered point must stand on its own as a reusable lesson.',
   LIFE_DEATH_NOTEBOOK_INSTRUCTION,
   'Do not record individual problem coordinates, positions, or solution sequences.',
-  'Choose the organization, headings, level of detail, and writing style yourself.',
+  'Do not claim that one heuristic, shape, or first move is universally correct; include exceptions or verification conditions where they matter.',
+  'Choose the headings and writing style yourself, eliminate redundant advice, and use the available notebook budget for concrete, technically precise guidance.',
 ].join('\n')
 
 const MAX_LIFE_DEATH_PROBLEM_ATTEMPTS = runtimeConfig.benchmarkProblemAttempts
