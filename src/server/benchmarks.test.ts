@@ -1163,6 +1163,7 @@ describe('benchmark scoring and prompts', () => {
       notebookSeed: {mode: 'refine_existing', notebookId: source.id},
       trainingFeedback: 'structured',
       notebookTokenBudget: 8000,
+      notebookInitializationTokenLimit: 12_000,
       trainingVisits: 25,
       evaluationVisits: 50,
     })
@@ -1191,12 +1192,14 @@ describe('benchmark scoring and prompts', () => {
     }
     expect(prompts[0]).toContain('# Original source')
     expect(prompts[0].split('\n', 1)[0]).toBe(
-      'This initialization response has a maximum output budget of 8,000 tokens.',
+      'The recommended notebook content budget is 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
     )
     expect(prompts[0]).toContain(
-      'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
+      'The hard maximum for this entire initialization response is 12,000 output tokens.',
     )
-    expect(prompts[0].indexOf('at most 8,000 estimated tokens')).toBeLessThan(
+    expect(
+      prompts[0].indexOf('recommended notebook content budget'),
+    ).toBeLessThan(
       prompts[0].indexOf('Write a complete Markdown Go technique notebook'),
     )
     expect(prompts[0]).not.toContain('Use exactly this Markdown structure')
@@ -1205,7 +1208,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).not.toContain('## Shape and Life')
     expect(prompts[0]).not.toContain('## Endgame')
     expect(prompts[0]).not.toContain('## Move Checklist')
-    expect(outputTokenLimits[0]).toBe(8_000)
+    expect(outputTokenLimits[0]).toBe(12_000)
     initializationGate.resolve()
     expect(
       await waitFor(
@@ -1332,10 +1335,10 @@ describe('benchmark scoring and prompts', () => {
       'A life-and-death problem is a local tactical position',
     )
     expect(prompts[0].split('\n', 1)[0]).toBe(
-      'This initialization response has a maximum output budget of 8,000 tokens.',
+      'The recommended notebook content budget is 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
     )
     expect(prompts[0]).toContain(
-      'Keep the complete Markdown notebook to at most 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
+      'The hard maximum for this entire initialization response is 12,000 output tokens.',
     )
     expect(prompts[0]).toContain(
       'later life-and-death problem prompts will no longer provide the Go or life-and-death rules',
@@ -1348,7 +1351,7 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).not.toContain('komi')
     expect(prompts[0]).not.toContain('passing')
     expect(prompts[0]).not.toContain('resignation')
-    expect(outputTokenLimits[0]).toBe(8_000)
+    expect(outputTokenLimits[0]).toBe(12_000)
     expect(actionPrompts).toHaveLength(4)
     const solvingPrompt = actionPrompts[0]
     expect(solvingPrompt).not.toContain('AUTHORITATIVE GO RULES')
@@ -1801,6 +1804,7 @@ function v2Config(profileId: string) {
     notebookSeed: {mode: 'rules_only' as const},
     trainingFeedback: 'structured' as const,
     notebookTokenBudget: 8000,
+    notebookInitializationTokenLimit: 12_000,
     trainingVisits: 25,
     evaluationVisits: 50,
   }

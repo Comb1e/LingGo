@@ -12,6 +12,7 @@ const base = {
   notebookSeed: {mode: 'rules_only' as const},
   trainingFeedback: 'none' as const,
   notebookTokenBudget: 10_000,
+  notebookInitializationTokenLimit: 12_000,
   trainingVisits: 10_000,
   evaluationVisits: 10_000,
 }
@@ -61,6 +62,7 @@ describe('benchmark configuration', () => {
       notebookSeed: {mode: 'rules_only'},
       trainingFeedback: 'structured',
       notebookTokenBudget: 3_000,
+      notebookInitializationTokenLimit: 8_000,
       trainingVisits: 10_000,
       evaluationVisits: 10_000,
     })
@@ -111,6 +113,7 @@ describe('benchmark session configuration', () => {
     trainingGamesWithoutWinRates: 2,
     trainingFeedback: 'structured' as const,
     notebookTokenBudget: 10_000,
+    notebookInitializationTokenLimit: 12_000,
     trainingVisits: 5_000,
     evaluationVisits: 10_000,
   }
@@ -149,5 +152,24 @@ describe('benchmark session configuration', () => {
         evaluationVisits: 1_000,
       }),
     ).toThrow('at least training visits')
+  })
+
+  it('requires the initialization limit to cover the recommended budget', () => {
+    expect(() =>
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        notebookTokenBudget: 12_000,
+        notebookInitializationTokenLimit: 8_000,
+      }),
+    ).toThrow('must be at least the recommended notebook budget')
+  })
+
+  it('defaults an omitted initialization limit above the recommended budget', () => {
+    expect(
+      benchmarkSessionConfigSchema.parse({
+        ...session,
+        notebookInitializationTokenLimit: undefined,
+      }).notebookInitializationTokenLimit,
+    ).toBe(10_000)
   })
 })

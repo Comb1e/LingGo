@@ -4,6 +4,7 @@ import {NoOutputGeneratedError} from 'ai'
 import {z} from 'zod'
 import type {
   BenchmarkConfig,
+  BenchmarkConfigInput,
   BenchmarkMoveReview,
   BenchmarkMetrics,
   BenchmarkNotebookVersion,
@@ -22,6 +23,10 @@ import type {
   GameSnapshot,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
+import {
+  DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+  DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+} from '../shared/constants'
 import {Store} from './database'
 import {
   asciiBoard,
@@ -227,7 +232,7 @@ export class BenchmarkService {
     return problemView(set.problems[cursor % set.problems.length])
   }
 
-  async create(input: BenchmarkConfig | LegacyBenchmarkConfig) {
+  async create(input: BenchmarkConfigInput | LegacyBenchmarkConfig) {
     const config = normalizeConfig(input)
     const problemSet = config.problemSetId
       ? loadProblemSet(config.problemSetId)
@@ -1168,9 +1173,12 @@ export class BenchmarkService {
           'Preserve correct, useful knowledge while improving clarity and actionability.',
         ]
       : []
+    const initializationTokenLimit =
+      run.config.notebookInitializationTokenLimit ??
+      DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT
     const notebookBudgetInstruction = [
-      `This initialization response has a maximum output budget of ${run.config.notebookTokenBudget.toLocaleString()} tokens.`,
-      `Keep the complete Markdown notebook to at most ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+      `The recommended notebook content budget is ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+      `The hard maximum for this entire initialization response is ${initializationTokenLimit.toLocaleString()} output tokens.`,
     ].join('\n')
     const prompt = isLifeDeath(run)
       ? [
@@ -1878,7 +1886,8 @@ export class BenchmarkService {
         signal,
         undefined,
         sourcePhase === 'initializing_notebook'
-          ? run.config.notebookTokenBudget
+          ? (run.config.notebookInitializationTokenLimit ??
+              DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT)
           : undefined,
       )
       addUsage(
@@ -2278,9 +2287,26 @@ function addUsage(
 }
 
 function normalizeConfig(
-  input: BenchmarkConfig | LegacyBenchmarkConfig,
+  input: BenchmarkConfigInput | LegacyBenchmarkConfig,
 ): BenchmarkConfig {
-  if ('notebookSeed' in input) return input
+  if (!('visits' in input)) {
+    const notebookTokenBudget =
+      input.notebookTokenBudget ?? DEFAULT_NOTEBOOK_TOKEN_BUDGET
+    return {
+      ...input,
+      notebookSeed: input.notebookSeed ?? {mode: 'rules_only'},
+      trainingFeedback: input.trainingFeedback ?? 'structured',
+      notebookTokenBudget,
+      notebookInitializationTokenLimit:
+        input.notebookInitializationTokenLimit ??
+        Math.max(
+          DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+          notebookTokenBudget,
+        ),
+      trainingVisits: input.trainingVisits ?? 10_000,
+      evaluationVisits: input.evaluationVisits ?? 10_000,
+    }
+  }
   return {
     profileId: input.profileId,
     finalColor: input.finalColor,
@@ -2294,6 +2320,8 @@ function normalizeConfig(
       ? 0
       : input.trainingGameCount,
     notebookTokenBudget: runtimeConfig.notebookTokenBudget,
+    notebookInitializationTokenLimit:
+      DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
     trainingVisits: input.visits,
     evaluationVisits: input.visits,
   }

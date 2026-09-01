@@ -329,6 +329,7 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   let ordinaryAttempt = 1
   let sessionDeleted = false
   let createdNotebookTokenBudget: number | undefined
+  let createdNotebookInitializationTokenLimit: number | undefined
   const sessionValue = () =>
     mockedSession(
       lifeNotebook.id,
@@ -385,9 +386,10 @@ test('advances a six-stage benchmark session with role notebooks', async ({
       path === '/api/benchmark-sessions' &&
       route.request().method() === 'POST'
     ) {
-      createdNotebookTokenBudget = route
-        .request()
-        .postDataJSON().notebookTokenBudget
+      const payload = route.request().postDataJSON()
+      createdNotebookTokenBudget = payload.notebookTokenBudget
+      createdNotebookInitializationTokenLimit =
+        payload.notebookInitializationTokenLimit
       return route.fulfill({status: 201, json: sessionValue()})
     }
     if (path.includes('/stages/')) return route.fulfill({json: []})
@@ -480,10 +482,12 @@ test('advances a six-stage benchmark session with role notebooks', async ({
   await expect(managers).toHaveCount(2)
   await managers.nth(0).getByRole('combobox').selectOption(lifeNotebook.id)
   await managers.nth(1).getByRole('combobox').selectOption(ordinaryNotebook.id)
-  await page.getByLabel('Notebook token limit (recommended 3,000)').fill('4096')
+  await page.getByLabel('Recommended notebook token budget').fill('4096')
+  await page.getByLabel('Initialization output token limit').fill('12288')
   await page.getByRole('button', {name: 'Start six-stage session'}).click()
   await expect(page).toHaveURL(/\/benchmark-sessions\/mock-session/)
   expect(createdNotebookTokenBudget).toBe(4_096)
+  expect(createdNotebookInitializationTokenLimit).toBe(12_288)
 
   await expect(page.locator('.session-stage-card.current')).toContainText(
     'Initialize life-and-death notebook',
@@ -613,6 +617,7 @@ function mockedSession(
       trainingGamesWithoutWinRates: 1,
       trainingFeedback: 'structured',
       notebookTokenBudget: 10000,
+      notebookInitializationTokenLimit: 12000,
       trainingVisits: 10000,
       evaluationVisits: 10000,
     },

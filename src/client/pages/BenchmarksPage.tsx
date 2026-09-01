@@ -5,6 +5,7 @@ import {useTranslation} from 'react-i18next'
 import {Link, useNavigate} from 'react-router-dom'
 import {
   DEFAULT_BENCHMARK_TRAINING_VISITS,
+  DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
 } from '../../shared/constants'
 import type {BenchmarkSession, Color} from '../../shared/types'
@@ -42,6 +43,10 @@ export function BenchmarksPage() {
   const [notebookTokenBudget, setNotebookTokenBudget] = useState(
     DEFAULT_NOTEBOOK_TOKEN_BUDGET,
   )
+  const [
+    notebookInitializationTokenLimit,
+    setNotebookInitializationTokenLimit,
+  ] = useState(DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT)
   const [withWinRates, setWithWinRates] = useState(5)
   const [withoutWinRates, setWithoutWinRates] = useState(5)
   const profileNotebooks = useQuery({
@@ -82,6 +87,7 @@ export function BenchmarksPage() {
         trainingGamesWithoutWinRates: withoutWinRates,
         trainingFeedback: 'structured',
         notebookTokenBudget,
+        notebookInitializationTokenLimit,
         trainingVisits,
         evaluationVisits,
       }),
@@ -207,12 +213,20 @@ export function BenchmarksPage() {
             onChange={setEvaluationVisits}
           />
           <NumberField
-            label={t('notebookTokenBudget', {
-              budget: DEFAULT_NOTEBOOK_TOKEN_BUDGET.toLocaleString(),
-            })}
+            label={t('notebookTokenBudget')}
             value={notebookTokenBudget}
             min={256}
-            onChange={setNotebookTokenBudget}
+            onChange={(value) => {
+              setNotebookTokenBudget(value)
+              if (notebookInitializationTokenLimit < value)
+                setNotebookInitializationTokenLimit(value)
+            }}
+          />
+          <NumberField
+            label={t('notebookInitializationTokenLimit')}
+            value={notebookInitializationTokenLimit}
+            min={notebookTokenBudget}
+            onChange={setNotebookInitializationTokenLimit}
           />
           <Button
             className="primary"

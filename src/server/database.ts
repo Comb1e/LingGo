@@ -170,6 +170,7 @@ export class Store {
             ? 'structured'
             : 'none',
           notebookTokenBudget: 8000,
+          notebookInitializationTokenLimit: 8000,
           trainingVisits: visits,
           evaluationVisits: visits,
         },

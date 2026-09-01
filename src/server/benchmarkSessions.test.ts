@@ -164,6 +164,7 @@ function setup() {
     trainingGamesWithoutWinRates: 1,
     trainingFeedback: 'structured',
     notebookTokenBudget: 10_000,
+    notebookInitializationTokenLimit: 12_000,
     trainingVisits: 25,
     evaluationVisits: 25,
   }

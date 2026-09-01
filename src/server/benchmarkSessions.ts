@@ -510,6 +510,7 @@ function childConfig(
       notebookSeed: {mode: 'refine_existing', notebookId},
       trainingFeedback: 'none',
       notebookTokenBudget: config.notebookTokenBudget,
+      notebookInitializationTokenLimit: config.notebookInitializationTokenLimit,
       trainingVisits: config.trainingVisits,
       evaluationVisits: config.evaluationVisits,
     }
@@ -524,6 +525,7 @@ function childConfig(
       notebookSeed: {mode: 'refine_existing', notebookId},
       trainingFeedback: 'none',
       notebookTokenBudget: config.notebookTokenBudget,
+      notebookInitializationTokenLimit: config.notebookInitializationTokenLimit,
       trainingVisits: config.trainingVisits,
       evaluationVisits: config.evaluationVisits,
     }
@@ -537,6 +539,7 @@ function childConfig(
       notebookSeed: {mode: 'refine_existing', notebookId},
       trainingFeedback: 'structured',
       notebookTokenBudget: config.notebookTokenBudget,
+      notebookInitializationTokenLimit: config.notebookInitializationTokenLimit,
       trainingVisits: config.trainingVisits,
       evaluationVisits: config.evaluationVisits,
       problemSetId: set.id,
@@ -552,6 +555,7 @@ function childConfig(
     notebookSeed: {mode: 'refine_existing', notebookId},
     trainingFeedback: config.trainingFeedback,
     notebookTokenBudget: config.notebookTokenBudget,
+    notebookInitializationTokenLimit: config.notebookInitializationTokenLimit,
     trainingVisits: config.trainingVisits,
     evaluationVisits: config.evaluationVisits,
   }

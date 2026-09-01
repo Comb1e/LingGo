@@ -1,5 +1,8 @@
 import {z} from 'zod'
-import {DEFAULT_NOTEBOOK_TOKEN_BUDGET} from './constants'
+import {
+  DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+  DEFAULT_NOTEBOOK_TOKEN_BUDGET,
+} from './constants'
 
 export const boardSizeSchema = z.union([
   z.literal(9),
@@ -397,6 +400,12 @@ export const benchmarkSessionConfigSchema = z
       .min(256)
       .max(100_000)
       .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
+    notebookInitializationTokenLimit: z
+      .number()
+      .int()
+      .min(256)
+      .max(100_000)
+      .optional(),
     trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
   })
@@ -423,7 +432,26 @@ export const benchmarkSessionConfigSchema = z
         path: ['evaluationVisits'],
         message: 'Evaluation visits must be at least training visits',
       })
+    if (
+      value.notebookInitializationTokenLimit !== undefined &&
+      value.notebookInitializationTokenLimit < value.notebookTokenBudget
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['notebookInitializationTokenLimit'],
+        message:
+          'Notebook initialization token limit must be at least the recommended notebook budget',
+      })
   })
+  .transform((value) => ({
+    ...value,
+    notebookInitializationTokenLimit:
+      value.notebookInitializationTokenLimit ??
+      Math.max(
+        DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+        value.notebookTokenBudget,
+      ),
+  }))
 export type BenchmarkSessionConfig = z.infer<
   typeof benchmarkSessionConfigSchema
 >
@@ -443,6 +471,12 @@ export const benchmarkConfigSchema = z
       .min(256)
       .max(100_000)
       .default(DEFAULT_NOTEBOOK_TOKEN_BUDGET),
+    notebookInitializationTokenLimit: z
+      .number()
+      .int()
+      .min(256)
+      .max(100_000)
+      .optional(),
     trainingVisits: z.number().int().min(25).max(100_000).default(10_000),
     evaluationVisits: z.number().int().min(25).max(100_000).default(10_000),
     problemSetId: z.string().min(1).optional(),
@@ -453,6 +487,16 @@ export const benchmarkConfigSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (
+      value.notebookInitializationTokenLimit !== undefined &&
+      value.notebookInitializationTokenLimit < value.notebookTokenBudget
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['notebookInitializationTokenLimit'],
+        message:
+          'Notebook initialization token limit must be at least the recommended notebook budget',
+      })
     if (
       (value.problemSetId === undefined) !==
       (value.problemSetChecksum === undefined)
@@ -489,7 +533,17 @@ export const benchmarkConfigSchema = z
     message: 'Evaluation visits must be at least training visits',
     path: ['evaluationVisits'],
   })
+  .transform((value) => ({
+    ...value,
+    notebookInitializationTokenLimit:
+      value.notebookInitializationTokenLimit ??
+      Math.max(
+        DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
+        value.notebookTokenBudget,
+      ),
+  }))
 export type BenchmarkConfig = z.infer<typeof benchmarkConfigSchema>
+export type BenchmarkConfigInput = z.input<typeof benchmarkConfigSchema>
 
 export interface BenchmarkUsage {
   calls: number
