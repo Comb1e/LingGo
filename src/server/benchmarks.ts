@@ -75,6 +75,10 @@ import {
 import {MAX_PROVIDER_API_ATTEMPTS, runtimeConfig} from './config'
 import {transitionBenchmark} from './stateMachines/benchmark'
 import {transitionAnalysis} from './stateMachines/analysis'
+import {
+  transitionLifeDeathProblem,
+  type LifeDeathProblemWorkflowState,
+} from './stateMachines/lifeDeathProblem'
 
 type InternalRun = BenchmarkRun & {
   pointLosses?: number[]
@@ -102,6 +106,7 @@ type InternalRun = BenchmarkRun & {
     cursor: number
     actions: PlayerAction[]
     step: number
+    workflow?: LifeDeathProblemWorkflowState
     lastFailureAction?: PlayerAction
     lastFailureReason?: string
   }
@@ -1315,21 +1320,39 @@ export class BenchmarkService {
                 actions: [],
                 step: 0,
               }
+        if (!progress.workflow) {
+          const failedTries = this.store
+            .listBenchmarkProblemAttempts(run.id)
+            .filter(
+              (attempt) =>
+                attempt.problemId === problem.id &&
+                attempt.cursor === cursor &&
+                attempt.notebookVersionBefore === run.notebookVersion &&
+                !attempt.correct,
+            ).length
+          const hadFailedBranch = Boolean(
+            progress.lastFailureReason && progress.actions.length,
+          )
+          if (hadFailedBranch) {
+            progress.actions = []
+            progress.step = 0
+          }
+          progress.workflow = {
+            failedTries,
+            phase: hadFailedBranch
+              ? 'redo_problem'
+              : progress.actions.length
+                ? 'continuing_solution'
+                : progress.lastFailureReason
+                  ? 'root_feedback'
+                  : 'initial_problem',
+          }
+        }
         run.problemProgress = progress
-        let failureFeedback = progress.lastFailureReason
-          ? progress.lastFailureReason
-          : undefined
-        let lastFailureAction = progress.lastFailureAction
-        let lastFailureReason = progress.lastFailureReason
-        for (
-          let responseAttempt = 0;
-          responseAttempt < problemAttemptLimit;
-          responseAttempt += 1
-        ) {
+        while (run.status === 'running' && !run.pendingProblem) {
+          const workflow = progress.workflow!
           const currentSnapshot = problemSnapshotAt(problem, progress.actions)
           const expectedAction = problem.solution[progress.step]
-          const firstResponse =
-            progress.actions.length === 0 && !progress.lastFailureReason
           if (!expectedAction) {
             run.pendingProblem = {
               problemId: problem.id,
@@ -1344,51 +1367,22 @@ export class BenchmarkService {
             }
             break
           }
-          const retry = Boolean(failureFeedback)
-          const notebook =
-            !progress.actions.length || retry
-              ? await this.runNotebook(run.id)
-              : ''
-          const position = [
-            'CURRENT BOARD',
-            LIFE_DEATH_BOARD_SYMBOL_LEGEND,
-            `Player to move now: ${currentSnapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}.`,
-            `Captures: Black ${currentSnapshot.captures.B}, White ${currentSnapshot.captures.W}.`,
-            asciiBoard(currentSnapshot),
-          ]
-          const prompt = retry
-            ? [
-                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
-                'The previous attempt failed.',
-                `Reason: ${failureFeedback}`,
-                'Redo the problem from this current position.',
-                'OUTPUT JSON SCHEMA',
-                '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
-                'Return exactly one JSON action object and no other fields or prose.',
-                ...position,
-              ].join('\n')
-            : [
-                ...(notebook ? ['SELF-WRITTEN SKILLS', notebook, ''] : []),
-                progress.actions.length
-                  ? 'Continue solving the life-and-death Go problem. Complete exactly one next legal action in the current position.'
-                  : 'Solve the life-and-death Go problem. Use exactly one legal action.',
-                'OUTPUT JSON SCHEMA',
-                '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
-                'Return exactly one JSON action object and no other fields or prose.',
-                ...position,
-                'Move list:',
-                progress.actions.length
-                  ? progress.actions
-                      .map(
-                        (move, index) =>
-                          `${index + 1}. ${index % 2 === 0 ? problem.sideToMove : problem.sideToMove === 'B' ? 'W' : 'B'} ${move.action === 'play' ? move.coordinate : move.action}`,
-                      )
-                      .join('\n')
-                  : '(none)',
-              ].join('\n')
+          const startsNewTry =
+            workflow.phase === 'initial_problem' ||
+            workflow.phase === 'redo_problem'
+          const prompt = startsNewTry
+            ? initialLifeDeathProblemPrompt(
+                await this.runNotebook(run.id),
+                problem.snapshot,
+                workflow.phase === 'redo_problem'
+                  ? progress.lastFailureReason
+                  : undefined,
+              )
+            : workflow.phase === 'root_feedback'
+              ? lifeDeathFailureFeedbackPrompt(progress.lastFailureReason)
+              : continuingLifeDeathProblemPrompt(currentSnapshot)
           const digest = createHash('sha256').update(prompt).digest('hex')
-          if ((responseAttempt === 0 && !progress.actions.length) || retry)
-            this.clearProblemContext(run)
+          if (startsNewTry) this.clearProblemContext(run)
           let actual: PlayerAction | undefined
           let responseDigest: string | undefined
           let failureReason: string | undefined
@@ -1402,7 +1396,7 @@ export class BenchmarkService {
               prompt,
               `linggo:benchmark:${run.id}:problem:${problem.id}`,
               signal,
-              retry ? [] : undefined,
+              startsNewTry ? [] : undefined,
             )
             addUsage(run, response, 'solving_problem')
             actual = response.action
@@ -1421,6 +1415,10 @@ export class BenchmarkService {
             if (correct) {
               progress.actions.push(actual!)
               progress.step = progress.actions.length
+              progress.workflow = transitionLifeDeathProblem(workflow, {
+                type: 'correct_action',
+                complete: progress.step >= problem.solution.length,
+              })
               progress.lastFailureAction = undefined
               progress.lastFailureReason = undefined
               run.problemProgress = progress
@@ -1428,6 +1426,7 @@ export class BenchmarkService {
             }
           } catch (error) {
             if (signal.aborted) throw error
+            if (!isRepairableMoveError(error)) throw error
             failureReason =
               error instanceof Error ? error.message : 'Malformed action'
           }
@@ -1441,7 +1440,7 @@ export class BenchmarkService {
             expectedAction,
             legal,
             correct,
-            firstResponse,
+            firstResponse: startsNewTry,
             failureReason,
             notebookVersionBefore: run.notebookVersion,
             promptDigest: digest,
@@ -1465,38 +1464,42 @@ export class BenchmarkService {
               actions: progress.actions,
               step: progress.step,
             }
-            run.problemProgress = undefined
             this.save(run)
             break
           }
-          if (correct) {
-            failureFeedback = undefined
-            responseAttempt = -1
-            continue
-          }
+          if (correct) continue
           run.problemSuccessStreak = 0
-          lastFailureAction = actual
-          lastFailureReason = failureReason
+          const hadCorrectProgress = progress.actions.length > 0
+          progress.workflow = transitionLifeDeathProblem(workflow, {
+            type: 'failed_action',
+            attemptLimit: problemAttemptLimit,
+            hadCorrectProgress,
+          })
+          if (
+            progress.workflow.phase === 'redo_problem' &&
+            hadCorrectProgress
+          ) {
+            progress.actions = []
+            progress.step = 0
+          }
           progress.lastFailureAction = actual
           progress.lastFailureReason = failureReason
           run.problemProgress = progress
-          failureFeedback = failureReason ?? 'the action was incorrect'
-          this.save(run)
-        }
-        if (!run.pendingProblem) {
-          run.pendingProblem = {
-            problemId: problem.id,
-            cursor,
-            actualAction: lastFailureAction,
-            legal: false,
-            correct: false,
-            failureReason: lastFailureReason ?? failureFeedback,
-            promptDigest: '',
-            notebookVersionBefore: run.notebookVersion,
-            actions: progress.actions,
-            step: progress.step,
+          if (progress.workflow.phase === 'updating_notebook') {
+            run.pendingProblem = {
+              problemId: problem.id,
+              cursor,
+              actualAction: actual,
+              legal,
+              correct: false,
+              failureReason: failureReason ?? 'the action was incorrect',
+              promptDigest: digest,
+              responseDigest,
+              notebookVersionBefore: run.notebookVersion,
+              actions: progress.actions,
+              step: progress.step,
+            }
           }
-          run.problemProgress = undefined
           this.save(run)
         }
       }
@@ -1565,6 +1568,12 @@ export class BenchmarkService {
       run.notebookEstimatedTokens = version.estimatedTokens
       run.notebook.updatedAt = version.createdAt
       const solved = pending.correct
+      const completedWorkflow = run.problemProgress?.workflow
+      if (completedWorkflow?.phase === 'updating_notebook')
+        run.problemProgress!.workflow = transitionLifeDeathProblem(
+          completedWorkflow,
+          {type: 'notebook_updated'},
+        )
       run.pendingProblem = undefined
       run.problemProgress = undefined
       run.problemCursor = solved ? (cursor + 1) % required : cursor
@@ -1673,6 +1682,8 @@ export class BenchmarkService {
         if (signal.aborted) throw error
         if (error instanceof MalformedModelOutputError)
           this.recordLlmResponse(run, error.responseContent)
+        else if (NoOutputGeneratedError.isInstance(error))
+          this.recordLlmResponse(run, '')
         if (
           isRepairableMoveError(error) ||
           !shouldRetryProviderError(error) ||
@@ -2281,7 +2292,7 @@ function isRepairableMoveError(error: unknown) {
   return (
     error instanceof IllegalMoveError ||
     error instanceof MalformedModelOutputError ||
-    error instanceof NoOutputGeneratedError
+    NoOutputGeneratedError.isInstance(error)
   )
 }
 
@@ -2409,6 +2420,51 @@ function firstResponseSuccessRate(attempts: BenchmarkProblemAttempt[]) {
 function formatProblemAction(action: PlayerAction | undefined) {
   if (!action) return '(no valid action parsed)'
   return action.action === 'play' ? action.coordinate : action.action
+}
+
+function lifeDeathPositionPrompt(snapshot: GameSnapshot) {
+  return [
+    'CURRENT BOARD',
+    LIFE_DEATH_BOARD_SYMBOL_LEGEND,
+    `Player to move now: ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}.`,
+    `Captures: Black ${snapshot.captures.B}, White ${snapshot.captures.W}.`,
+    asciiBoard(snapshot),
+  ]
+}
+
+function initialLifeDeathProblemPrompt(
+  notebook: string,
+  snapshot: GameSnapshot,
+  redoReason?: string,
+) {
+  return [
+    'SELF-WRITTEN SKILLS',
+    notebook,
+    '',
+    ...(redoReason
+      ? [
+          'The previous try failed after making some correct progress.',
+          `Reason: ${redoReason}`,
+          'Redo the initial problem from the beginning.',
+        ]
+      : ['Solve the life-and-death Go problem. Use exactly one legal action.']),
+    'OUTPUT JSON SCHEMA',
+    '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
+    'Return exactly one JSON action object and no other fields or prose.',
+    ...lifeDeathPositionPrompt(snapshot),
+  ].join('\n')
+}
+
+function lifeDeathFailureFeedbackPrompt(reason?: string) {
+  return `Reason: ${reason ?? 'The action was incorrect.'}`
+}
+
+function continuingLifeDeathProblemPrompt(snapshot: GameSnapshot) {
+  return [
+    `You now play as ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}.`,
+    'Continue solving the life-and-death problem with exactly one legal action.',
+    ...lifeDeathPositionPrompt(snapshot),
+  ].join('\n')
 }
 
 function addUsage(

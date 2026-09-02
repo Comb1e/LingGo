@@ -1397,13 +1397,10 @@ describe('benchmark scoring and prompts', () => {
     expect(solvingPrompt).toContain(
       'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
     )
-    expect(actionPrompts[1]).toContain('The previous attempt failed.')
-    expect(actionPrompts[1]).toContain('Reason:')
-    expect(actionPrompts[1]).toContain(
+    expect(actionPrompts[1]).toContain('USER: Reason:')
+    expect(actionPrompts[1]).not.toContain('The previous attempt failed.')
+    expect(actionPrompts[1]).not.toContain(
       'Redo the problem from this current position.',
-    )
-    expect(actionPrompts[1]).toMatch(
-      /^SELF-WRITTEN SKILLS\n# Life techniques\n/,
     )
     expect(actionPrompts[1]).toContain('SELF-WRITTEN SKILLS')
     expect(actionPrompts[1]).toContain('# Life techniques')
@@ -1430,6 +1427,7 @@ describe('benchmark scoring and prompts', () => {
     expect(
       actionPrompts.slice(2).every((prompt) => prompt.includes('ASSISTANT:')),
     ).toBe(true)
+    expect(actionPrompts[2]).toContain('You now play as White (O).')
     expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )
@@ -1456,6 +1454,7 @@ describe('benchmark scoring and prompts', () => {
     let patchRepairRequest: LlmTurnRequest | undefined
     let redoRequest: LlmTurnRequest | undefined
     let patchCalls = 0
+    const actionRequests: LlmTurnRequest[] = []
     const adapter = {
       async requestAction() {
         throw new Error('Transcript turn path should be used')
@@ -1479,6 +1478,7 @@ describe('benchmark scoring and prompts', () => {
           }
         }
         actionCalls += 1
+        actionRequests.push(request)
         if (actionCalls === 11) {
           redoRequest = request
           redoReady.resolve()
@@ -1492,7 +1492,7 @@ describe('benchmark scoring and prompts', () => {
         return {
           text: JSON.stringify({
             move: action.action === 'play' ? action.coordinate : action.action,
-            reason: action.comment ?? 'Continue reading.',
+            reason: action.comment?.trim() || 'Continue reading.',
           }),
           latencyMs: 0,
           inputTokens: 0,
@@ -1528,6 +1528,17 @@ describe('benchmark scoring and prompts', () => {
     await redoReady.promise
     expect(actionCalls).toBe(11)
     expect(service.problemAttempts(created.id)).toHaveLength(10)
+    expect(actionRequests[0].kind).toBe('initial')
+    expect(actionRequests[0].transcript).toEqual([])
+    expect(actionRequests[1].content).toBe(
+      'Reason: Action did not match expected answer',
+    )
+    expect(actionRequests[1].content).not.toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[1].content).not.toContain('CURRENT BOARD')
+    expect(actionRequests[1].content).not.toContain('OUTPUT JSON SCHEMA')
+    expect(
+      actionRequests.slice(1, 10).every(({kind}) => kind === 'continuation'),
+    ).toBe(true)
     expect(patchRequest?.transcript).toEqual([])
     expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
     expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(10)
@@ -1568,6 +1579,7 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(patchRepairRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
     expect(redoRequest?.transcript).toEqual([])
+    expect(redoRequest?.kind).toBe('initial')
     expect(redoRequest?.content).toMatch(
       /^SELF-WRITTEN SKILLS\n# Life techniques/,
     )
@@ -1578,6 +1590,101 @@ describe('benchmark scoring and prompts', () => {
 
     service.pause(created.id)
     redoGate.resolve()
+    expect(
+      await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
+    ).toBe(true)
+    await service.close()
+  })
+
+  it('restarts from the initial problem after a failed partial solution', async () => {
+    store = new Store(':memory:')
+    directory = await mkdtemp(join(tmpdir(), 'linggo-life-branch-reset-'))
+    const problem = loadProblemSet('gogameguru-easy').problems[0]
+    const thirdRequestReady = deferred()
+    const thirdRequestGate = deferred()
+    const actionRequests: LlmTurnRequest[] = []
+    const wrongSecondAction =
+      problem.solution[1].action === 'pass'
+        ? ({action: 'resign', comment: 'Wrong branch.'} as const)
+        : ({action: 'pass', comment: 'Wrong branch.'} as const)
+    const adapter = {
+      async requestText() {
+        return {
+          text: '# Life techniques',
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+        }
+      },
+      async requestAction() {
+        throw new Error('Transcript turn path should be used')
+      },
+      async requestTurn(request: LlmTurnRequest, signal: AbortSignal) {
+        actionRequests.push(request)
+        if (actionRequests.length === 3) {
+          thirdRequestReady.resolve()
+          await thirdRequestGate.promise
+          signal.throwIfAborted()
+        }
+        const action =
+          actionRequests.length === 1
+            ? problem.solution[0]
+            : actionRequests.length === 2
+              ? wrongSecondAction
+              : problem.solution[0]
+        return {
+          text: JSON.stringify({
+            move: action.action === 'play' ? action.coordinate : action.action,
+            reason: action.comment?.trim() || 'Continue reading.',
+          }),
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          model: 'test-model',
+          providerKind: 'fake' as const,
+        }
+      },
+    } satisfies PlayerAdapter
+    const service = new BenchmarkService(
+      store,
+      new GameService(store),
+      fakeKataGo,
+      new NotebookStore(directory),
+      () => adapter,
+    )
+    const created = await service.create({
+      ...v2Config('builtin-fake-profile'),
+      problemSetId: 'gogameguru-easy',
+      problemSetChecksum: loadProblemSet('gogameguru-easy').checksum,
+    })
+
+    await thirdRequestReady.promise
+    expect(actionRequests).toHaveLength(3)
+    expect(actionRequests[0]).toMatchObject({kind: 'initial', transcript: []})
+    expect(actionRequests[0].content).toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[1].kind).toBe('continuation')
+    expect(actionRequests[1].content).toContain('You now play as White (O).')
+    expect(actionRequests[1].content).toContain('CURRENT BOARD')
+    expect(actionRequests[1].content).not.toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[1].content).not.toContain('OUTPUT JSON SCHEMA')
+    expect(actionRequests[2]).toMatchObject({kind: 'initial', transcript: []})
+    expect(actionRequests[2].content).toContain(
+      'Redo the initial problem from the beginning.',
+    )
+    expect(actionRequests[2].content).toContain(
+      'Reason: Action did not match expected answer',
+    )
+    expect(actionRequests[2].content).toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[2].content).toContain('OUTPUT JSON SCHEMA')
+    expect(actionRequests[2].snapshot.board).toEqual(problem.snapshot.board)
+    expect(service.problemAttempts(created.id)).toMatchObject([
+      {correct: true, firstResponse: true},
+      {correct: false, firstResponse: false},
+    ])
+
+    service.pause(created.id)
+    thirdRequestGate.resolve()
     expect(
       await waitFor(() => service.get(created.id)?.status === 'paused', 2000),
     ).toBe(true)
