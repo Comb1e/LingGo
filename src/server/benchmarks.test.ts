@@ -87,6 +87,12 @@ describe('benchmark scoring and prompts', () => {
         '{"1":"Read forcing replies.","2":"Preserve eye shape."}',
       ),
     ).toBe('# Life notes\n\n1. Read forcing replies.\n2. Preserve eye shape.')
+    expect(applyLifeDeathNotebookPatch(prior, '{"2":null}')).toBe(
+      '# Life notes\n\n1. Read liberties.',
+    )
+    expect(() => applyLifeDeathNotebookPatch(prior, '{"9":null}')).toThrow(
+      'Cannot delete missing note 9',
+    )
   })
 
   it('applies all point-loss score bands and combines result equally', () => {
@@ -1315,7 +1321,7 @@ describe('benchmark scoring and prompts', () => {
       ) {
         prompts.push(prompt)
         outputTokenLimits.push(maxOutputTokens)
-        if (prompt.includes('Update the technique notebook')) {
+        if (prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')) {
           promptReady.resolve()
           await responseGate.promise
         }
@@ -1349,17 +1355,16 @@ describe('benchmark scoring and prompts', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'user',
-          content: expect.stringContaining('Update the technique notebook'),
+          content: expect.stringContaining(
+            'Update your self-written life-and-death technique notebook now.',
+          ),
           pending: true,
         }),
       ]),
     )
     expect(
-      visibleMessages[0].messages
-        .map(({content}) => content)
-        .join('\n')
-        .match(/PRIOR NOTEBOOK/g),
-    ).toHaveLength(1)
+      visibleMessages[0].messages.map(({content}) => content).join('\n'),
+    ).not.toContain('PRIOR NOTEBOOK')
     expect(prompts[0]).toContain(
       'A life-and-death problem is a local tactical position',
     )
@@ -1549,15 +1554,25 @@ describe('benchmark scoring and prompts', () => {
     expect(
       actionRequests.slice(1, 10).every(({kind}) => kind === 'continuation'),
     ).toBe(true)
-    expect(patchRequest?.transcript).toEqual([])
-    expect(patchRequest?.content).toContain('FAILED ATTEMPTS')
-    expect(patchRequest?.content.match(/Feedback:/g)).toHaveLength(10)
-    expect(patchRequest?.content.match(/Action: O4\./g)).toHaveLength(10)
-    expect(patchRequest?.content).toContain(
-      'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
-    )
+    expect(patchRequest?.kind).toBe('continuation')
+    expect(patchRequest?.transcript[0]).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('SELF-WRITTEN SKILLS'),
+    })
+    expect(patchRequest?.transcript.at(-1)?.role).toBe('assistant')
+    expect(patchRequest?.content).not.toContain('FAILED ATTEMPTS')
+    expect(patchRequest?.content).not.toContain('Feedback:')
+    expect(patchRequest?.content).not.toContain('CURRENT BOARD')
+    expect(patchRequest?.content).not.toContain('# Life techniques')
     expect(patchRequest?.content).toContain(
       'UPDATE TRIGGER: FAILED_AFTER_10_ATTEMPTS',
+    )
+    expect(patchRequest?.content).toContain('UPDATE GOAL')
+    expect(patchRequest?.content).toContain(
+      'more effective for solving future life-and-death problems',
+    )
+    expect(patchRequest?.content).toContain(
+      'improve a weak or inaccurate numbered point, add a missing generalizable point, or delete a misleading or redundant point',
     )
     expect(patchRequest?.content).toContain('NOTEBOOK PATCH OUTPUT FORMAT')
     expect(patchRequest?.content).toContain(
@@ -1567,6 +1582,9 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.content).toContain(
       'Example - replace note 2 and add note 5:',
     )
+    expect(patchRequest?.content).toContain(
+      'Example - delete misleading note 4: {"4":null}',
+    )
     expect(patchRequest?.content).toContain('do not choose note 1 by default')
     expect(patchRequest?.content).not.toContain(
       '{"1":"Read every forcing reply before choosing the vital point."}',
@@ -1574,13 +1592,11 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.content).toContain(
       'Add a note only when no existing note covers the lesson.',
     )
-    expect(patchRequest?.content).toContain('PRIOR NOTEBOOK')
-    expect(patchRequest?.content).toContain('1. Read liberties.')
-    expect(patchRequest?.content).toMatch(/^PRIOR NOTEBOOK\n# Life techniques/)
-    expect(patchRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
+    expect(patchRequest?.content).not.toContain('PRIOR NOTEBOOK')
+    expect(patchRequest?.content).not.toContain('1. Read liberties.')
     expect(patchRequest?.content).not.toContain('MODEL ANSWER')
     expect(patchRepairRequest?.kind).toBe('continuation')
-    expect(patchRepairRequest?.transcript).toEqual([
+    expect(patchRepairRequest?.transcript.slice(-2)).toEqual([
       {role: 'user', content: patchRequest?.content},
       {role: 'assistant', content: '# Invalid patch'},
     ])
@@ -1745,7 +1761,7 @@ describe('benchmark scoring and prompts', () => {
         }
       },
       async requestText(prompt: string, signal: AbortSignal) {
-        if (prompt.includes('Update the technique notebook')) {
+        if (prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')) {
           notebookUpdatePrompt = prompt
           updateReady.resolve()
           await updateGate.promise
@@ -1808,6 +1824,7 @@ describe('benchmark scoring and prompts', () => {
     expect(snapshots[2].board[secondPoint![1]][secondPoint![0]]).toBe(2)
     expect(service.get(created.id)?.usage.cachedInputTokens).toBe(16)
     expect(notebookUpdatePrompt).toContain('UPDATE TRIGGER: SUCCESS')
+    expect(notebookUpdatePrompt).toContain('UPDATE GOAL')
     expect(notebookUpdatePrompt).toContain('NOTEBOOK PATCH OUTPUT FORMAT')
     expect(notebookUpdatePrompt).toContain(
       'Do not include unchanged notes, the complete notebook',

@@ -153,7 +153,10 @@ const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
 ].join('\n')
 
 const lifeDeathNotebookPatchSchema = z
-  .record(z.string().regex(/^[1-9]\d*$/), z.string().trim().min(1))
+  .record(
+    z.string().regex(/^[1-9]\d*$/),
+    z.union([z.string().trim().min(1), z.null()]),
+  )
   .refine((patch) => Object.keys(patch).length > 0, {
     message: 'At least one numbered note edit is required',
   })
@@ -161,11 +164,12 @@ const lifeDeathNotebookPatchSchema = z
 const LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION = [
   'NOTEBOOK PATCH OUTPUT FORMAT',
   'Return one JSON object and no other text.',
-  'Format: {"<note number>":"<complete replacement note text>"}',
-  'Use an existing note number to replace that note. Use a new positive integer to add a note.',
+  'Format: {"<note number>":"<complete replacement note text>"} or {"<note number>":null}.',
+  'Use an existing note number with text to improve that point. Use a new positive integer with text to add a point. Use null with an existing note number to delete that point.',
   'Write the complete new text for each changed note, without its leading number and period.',
   'Example - replace note 2: {"2":"Read the strongest forcing reply before choosing the vital point."}',
   'Example - replace note 2 and add note 5: {"2":"Read every forcing reply.","5":"Check for hidden outside liberties before starting a capturing race."}',
+  'Example - delete misleading note 4: {"4":null}',
   'Change multiple notes only when the attempt provides separate useful lessons.',
   'Improve the relevant weak note; do not choose note 1 by default.',
   'Add a note only when no existing note covers the lesson.',
@@ -1509,39 +1513,15 @@ export class BenchmarkService {
       })
       const pending = run.pendingProblem!
       const prior = await this.runNotebook(run.id)
-      const failedAttempts = this.store
-        .listBenchmarkProblemAttempts(run.id)
-        .filter(
-          (attempt) =>
-            attempt.problemId === problem.id &&
-            attempt.cursor === cursor &&
-            attempt.notebookVersionBefore === pending.notebookVersionBefore &&
-            !attempt.correct,
-        )
-        .slice(-problemAttemptLimit)
       const updatePrompt = [
-        'PRIOR NOTEBOOK',
-        prior.trim() || '(empty)',
-        '',
-        'Update the technique notebook after this life-and-death problem attempt.',
+        'Update your self-written life-and-death technique notebook now.',
         pending.correct
           ? 'UPDATE TRIGGER: SUCCESS. The complete problem solution was correct.'
           : `UPDATE TRIGGER: FAILED_AFTER_${problemAttemptLimit}_ATTEMPTS. The problem was not solved after ${problemAttemptLimit} attempts.`,
+        'UPDATE GOAL',
+        'Make the notebook more effective for solving future life-and-death problems. Use what this problem conversation revealed to improve a weak or inaccurate numbered point, add a missing generalizable point, or delete a misleading or redundant point.',
+        'Preserve correct and useful knowledge. Make only changes supported by this conversation, and keep every changed point operational for future reading and verification.',
         LIFE_DEATH_NOTEBOOK_INSTRUCTION,
-        'Use the current problem position and failure feedback to choose the most useful existing note to improve.',
-        'PROBLEM',
-        LIFE_DEATH_BOARD_SYMBOL_LEGEND,
-        asciiBoard(problem.snapshot),
-        `RESULT: ${pending.correct ? 'solved' : 'not solved'}`,
-        ...(failedAttempts.length
-          ? [
-              'FAILED ATTEMPTS',
-              ...failedAttempts.map(
-                (attempt, index) =>
-                  `${index + 1}. Action: ${formatProblemAction(attempt.actualAction)}. Feedback: ${attempt.failureReason ?? 'incorrect'}`,
-              ),
-            ]
-          : []),
         LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION,
       ].join('\n')
       const notebookAdapter = this.adapter(run)
@@ -1554,7 +1534,6 @@ export class BenchmarkService {
         this.save(run)
         return false
       }
-      this.clearProblemContext(run)
       const content = await this.requestValidProblemNotebookPatch(
         run,
         notebookAdapter,
@@ -1859,7 +1838,7 @@ export class BenchmarkService {
         {
           snapshot,
           cacheKey: `linggo:benchmark:${run.id}:problem:${run.currentProblemId}`,
-          includeTranscript: invalidAttempt > 1,
+          includeTranscript: true,
         },
       )
       addUsage(run, response, 'updating_problem_notebook')
@@ -2299,14 +2278,17 @@ export function applyLifeDeathNotebookPatch(prior: string, response: string) {
   const parsed = lifeDeathNotebookPatchSchema.safeParse(json)
   if (!parsed.success)
     throw new Error(
-      `Patch must map positive integer note numbers to non-empty strings: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+      `Patch must map positive integer note numbers to non-empty strings or null: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
     )
   const lines = prior.trim() ? prior.trim().split('\n') : []
   for (const [number, replacement] of Object.entries(parsed.data)) {
     const index = lines.findIndex((line) =>
       new RegExp(`^${number}\\.\\s+`).test(line.trim()),
     )
-    if (index < 0) lines.push(`${number}. ${replacement}`)
+    if (replacement === null) {
+      if (index < 0) throw new Error(`Cannot delete missing note ${number}`)
+      lines.splice(index, 1)
+    } else if (index < 0) lines.push(`${number}. ${replacement}`)
     else lines[index] = `${number}. ${replacement}`
   }
   return lines.join('\n').trim()
@@ -2406,11 +2388,6 @@ function firstResponseSuccessRate(attempts: BenchmarkProblemAttempt[]) {
     firstResponses.filter((attempt) => attempt.correct).length /
     Math.max(1, firstResponses.length)
   )
-}
-
-function formatProblemAction(action: PlayerAction | undefined) {
-  if (!action) return '(no valid action parsed)'
-  return action.action === 'play' ? action.coordinate : action.action
 }
 
 function lifeDeathPositionPrompt(snapshot: GameSnapshot) {
