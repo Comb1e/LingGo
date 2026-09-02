@@ -2435,6 +2435,7 @@ function initialLifeDeathProblemPrompt(
     ...(redoReason
       ? [
           'The previous try failed after making some correct progress.',
+          'Your previous action was wrong.',
           `Reason: ${redoReason}`,
           'Redo the initial problem from the beginning.',
         ]
@@ -2447,7 +2448,10 @@ function initialLifeDeathProblemPrompt(
 }
 
 function lifeDeathFailureFeedbackPrompt(reason?: string) {
-  return `Reason: ${reason ?? 'The action was incorrect.'}`
+  return [
+    'Your previous action was wrong.',
+    `Reason: ${reason ?? 'The action was incorrect.'}`,
+  ].join('\n')
 }
 
 function continuingLifeDeathProblemPrompt(snapshot: GameSnapshot) {

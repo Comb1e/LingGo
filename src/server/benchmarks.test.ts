@@ -1403,7 +1403,9 @@ describe('benchmark scoring and prompts', () => {
     expect(solvingPrompt).toContain(
       'Board symbols: X = Black stone, O = White stone, . = empty intersection.',
     )
-    expect(actionPrompts[1]).toContain('USER: Reason:')
+    expect(actionPrompts[1]).toContain(
+      'USER: Your previous action was wrong.\nReason:',
+    )
     expect(actionPrompts[1]).not.toContain('The previous attempt failed.')
     expect(actionPrompts[1]).not.toContain(
       'Redo the problem from this current position.',
@@ -1417,7 +1419,7 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[1]).toContain(
       '{"move":"<coordinate, pass, or resign>","reason":"<brief explanation>"}',
     )
-    expect(actionPrompts[1]).not.toContain('Your previous action was')
+    expect(actionPrompts[1]).toContain('Your previous action was wrong.')
     expect(actionPrompts[1]).not.toContain('Move list:')
     expect(actionPrompts[0].indexOf('SELF-WRITTEN SKILLS')).toBeLessThan(
       actionPrompts[0].indexOf('OUTPUT JSON SCHEMA'),
@@ -1539,7 +1541,7 @@ describe('benchmark scoring and prompts', () => {
     expect(actionRequests[0].kind).toBe('initial')
     expect(actionRequests[0].transcript).toEqual([])
     expect(actionRequests[1].content).toBe(
-      'Reason: Action did not match expected answer',
+      'Your previous action was wrong.\nReason: Action did not match expected answer',
     )
     expect(actionRequests[1].content).not.toContain('SELF-WRITTEN SKILLS')
     expect(actionRequests[1].content).not.toContain('CURRENT BOARD')
@@ -1689,6 +1691,9 @@ describe('benchmark scoring and prompts', () => {
     )
     expect(actionRequests[2].content).toContain(
       'Reason: Action did not match expected answer',
+    )
+    expect(actionRequests[2].content).toContain(
+      'Your previous action was wrong.',
     )
     expect(actionRequests[2].content).toContain('SELF-WRITTEN SKILLS')
     expect(actionRequests[2].content).toContain('OUTPUT JSON SCHEMA')
