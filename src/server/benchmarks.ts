@@ -1859,20 +1859,12 @@ export class BenchmarkService {
         {
           snapshot,
           cacheKey: `linggo:benchmark:${run.id}:problem:${run.currentProblemId}`,
-          includeTranscript: false,
+          includeTranscript: invalidAttempt > 1,
         },
       )
       addUsage(run, response, 'updating_problem_notebook')
       try {
-        const content = applyLifeDeathNotebookPatch(prior, response.text)
-        const estimatedTokens = Math.ceil(
-          Buffer.byteLength(content, 'utf8') / 4,
-        )
-        if (estimatedTokens > run.config.notebookTokenBudget)
-          throw new Error(
-            `The patched notebook exceeds the ${run.config.notebookTokenBudget.toLocaleString()} estimated-token budget`,
-          )
-        return content
+        return applyLifeDeathNotebookPatch(prior, response.text)
       } catch (error) {
         if (invalidAttempt === 3)
           throw new Error(
@@ -1889,13 +1881,8 @@ export class BenchmarkService {
         })
         this.save(run)
         prompt = [
-          initialPrompt,
-          '',
-          'PREVIOUS INVALID PATCH',
-          response.text.trim() || '(empty)',
-          '',
           `Your previous notebook patch was invalid: ${publicError(error)}.`,
-          LIFE_DEATH_NOTEBOOK_PATCH_OUTPUT_INSTRUCTION,
+          'Correct it and return only one JSON object in the required notebook patch format.',
         ].join('\n')
       }
     }
@@ -2305,11 +2292,9 @@ function completedLlmTranscript(run: InternalRun) {
 export function applyLifeDeathNotebookPatch(prior: string, response: string) {
   let json: unknown
   try {
-    json = JSON.parse(response.trim())
+    json = JSON.parse(notebookPatchJson(response))
   } catch (error) {
-    throw new Error(`Patch is not valid JSON: ${publicError(error)}`, {
-      cause: error,
-    })
+    throw new Error('Patch is not valid JSON', {cause: error})
   }
   const parsed = lifeDeathNotebookPatchSchema.safeParse(json)
   if (!parsed.success)
@@ -2325,6 +2310,12 @@ export function applyLifeDeathNotebookPatch(prior: string, response: string) {
     else lines[index] = `${number}. ${replacement}`
   }
   return lines.join('\n').trim()
+}
+
+function notebookPatchJson(response: string) {
+  const trimmed = response.trim()
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  return fenced?.[1] ?? trimmed
 }
 
 function isUniqueConstraintError(error: unknown) {
@@ -2461,6 +2452,7 @@ function lifeDeathFailureFeedbackPrompt(reason?: string) {
 
 function continuingLifeDeathProblemPrompt(snapshot: GameSnapshot) {
   return [
+    'Your previous action was correct.',
     `You now play as ${snapshot.toMove === 'B' ? 'Black (X)' : 'White (O)'}.`,
     'Continue solving the life-and-death problem with exactly one legal action.',
     ...lifeDeathPositionPrompt(snapshot),

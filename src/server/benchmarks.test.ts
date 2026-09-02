@@ -78,6 +78,12 @@ describe('benchmark scoring and prompts', () => {
     expect(
       applyLifeDeathNotebookPatch(
         prior,
+        '```json\n{"2":"Keep two independent eyes."}\n```',
+      ),
+    ).toBe('# Life notes\n\n1. Read liberties.\n2. Keep two independent eyes.')
+    expect(
+      applyLifeDeathNotebookPatch(
+        prior,
         '{"1":"Read forcing replies.","2":"Preserve eye shape."}',
       ),
     ).toBe('# Life notes\n\n1. Read forcing replies.\n2. Preserve eye shape.')
@@ -1428,6 +1434,7 @@ describe('benchmark scoring and prompts', () => {
       actionPrompts.slice(2).every((prompt) => prompt.includes('ASSISTANT:')),
     ).toBe(true)
     expect(actionPrompts[2]).toContain('You now play as White (O).')
+    expect(actionPrompts[2]).toContain('Your previous action was correct.')
     expect(prompts.at(-1)).toContain(
       'Do not write the direct answer to an individual life-and-death problem in this notebook.',
     )
@@ -1523,6 +1530,7 @@ describe('benchmark scoring and prompts', () => {
       ...v2Config('builtin-fake-profile'),
       problemSetId: set.id,
       problemSetChecksum: set.checksum,
+      notebookTokenBudget: 8,
     })
 
     await redoReady.promise
@@ -1569,15 +1577,19 @@ describe('benchmark scoring and prompts', () => {
     expect(patchRequest?.content).toMatch(/^PRIOR NOTEBOOK\n# Life techniques/)
     expect(patchRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
     expect(patchRequest?.content).not.toContain('MODEL ANSWER')
-    expect(patchRepairRequest?.transcript).toEqual([])
-    expect(patchRepairRequest?.content).toContain('PRIOR NOTEBOOK')
-    expect(patchRepairRequest?.content).toContain('FAILED ATTEMPTS')
-    expect(patchRepairRequest?.content).toContain('PREVIOUS INVALID PATCH')
-    expect(patchRepairRequest?.content).toContain('# Invalid patch')
-    expect(patchRepairRequest?.content).toMatch(
-      /^PRIOR NOTEBOOK\n# Life techniques/,
+    expect(patchRepairRequest?.kind).toBe('continuation')
+    expect(patchRepairRequest?.transcript).toEqual([
+      {role: 'user', content: patchRequest?.content},
+      {role: 'assistant', content: '# Invalid patch'},
+    ])
+    expect(patchRepairRequest?.content).toContain(
+      'Your previous notebook patch was invalid:',
     )
-    expect(patchRepairRequest?.content.match(/PRIOR NOTEBOOK/g)).toHaveLength(1)
+    expect(patchRepairRequest?.content).not.toContain('PRIOR NOTEBOOK')
+    expect(patchRepairRequest?.content).not.toContain('FAILED ATTEMPTS')
+    expect(patchRepairRequest?.content).not.toContain('PREVIOUS INVALID PATCH')
+    expect(patchRepairRequest?.content).not.toContain('# Invalid patch')
+    expect(patchRepairRequest?.content).not.toContain('# Life techniques')
     expect(redoRequest?.transcript).toEqual([])
     expect(redoRequest?.kind).toBe('initial')
     expect(redoRequest?.content).toMatch(
@@ -1664,6 +1676,9 @@ describe('benchmark scoring and prompts', () => {
     expect(actionRequests[0]).toMatchObject({kind: 'initial', transcript: []})
     expect(actionRequests[0].content).toContain('SELF-WRITTEN SKILLS')
     expect(actionRequests[1].kind).toBe('continuation')
+    expect(actionRequests[1].content).toContain(
+      'Your previous action was correct.',
+    )
     expect(actionRequests[1].content).toContain('You now play as White (O).')
     expect(actionRequests[1].content).toContain('CURRENT BOARD')
     expect(actionRequests[1].content).not.toContain('SELF-WRITTEN SKILLS')
