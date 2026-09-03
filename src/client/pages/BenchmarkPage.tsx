@@ -21,6 +21,7 @@ import type {
   PlayerAction,
 } from '../../shared/types'
 import {api} from '../api'
+import {groupBenchmarkProblemAttempts} from '../benchmarkProblemAttempts'
 import {BenchmarkLlmMessageInspector} from '../BenchmarkLlmMessageInspector'
 import {Board} from '../Board'
 import {
@@ -356,17 +357,25 @@ export function BenchmarkPage() {
       {run.config.problemSetId && problemAttempts.data && (
         <section className="benchmark-attempts">
           <h2>{t('problemAttempts')}</h2>
-          {problemAttempts.data.map((attempt) => (
-            <div key={attempt.sequence}>
-              {attempt.sequence}. {attempt.problemId} {t('llmAttemptedAction')}:{' '}
-              {attempt.actualAction
-                ? benchmarkActionLabel(attempt.actualAction, t)
-                : t('none')}{' '}
-              {attempt.correct
-                ? 'correct'
-                : `failed${attempt.failureReason ? `: ${attempt.failureReason}` : ''}`}
-            </div>
-          ))}
+          {groupBenchmarkProblemAttempts(problemAttempts.data).map(
+            (attempt, index) => (
+              <div key={attempt[0].sequence}>
+                {index + 1}.{' '}
+                {attempt.map((action, actionIndex) => (
+                  <span key={action.sequence}>
+                    {action.problemId} {t('llmAttemptedAction')}:{' '}
+                    {action.actualAction
+                      ? benchmarkActionLabel(action.actualAction, t)
+                      : t('none')}{' '}
+                    {action.correct
+                      ? 'correct'
+                      : `failed${action.failureReason ? `: ${action.failureReason}` : ''}`}
+                    {actionIndex < attempt.length - 1 ? '; ' : ''}
+                  </span>
+                ))}
+              </div>
+            ),
+          )}
         </section>
       )}
 
