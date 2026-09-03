@@ -1371,10 +1371,11 @@ export class BenchmarkService {
             }
             break
           }
-          const startsNewTry =
+          const sendsInitialProblem =
             workflow.phase === 'initial_problem' ||
             workflow.phase === 'redo_problem'
-          const prompt = startsNewTry
+          const startsNewContext = workflow.phase === 'initial_problem'
+          const prompt = sendsInitialProblem
             ? initialLifeDeathProblemPrompt(
                 await this.runNotebook(run.id),
                 problem.snapshot,
@@ -1386,7 +1387,7 @@ export class BenchmarkService {
               ? lifeDeathFailureFeedbackPrompt(progress.lastFailureReason)
               : continuingLifeDeathProblemPrompt(currentSnapshot)
           const digest = createHash('sha256').update(prompt).digest('hex')
-          if (startsNewTry) this.clearProblemContext(run)
+          if (startsNewContext) this.clearProblemContext(run)
           let actual: PlayerAction | undefined
           let responseDigest: string | undefined
           let failureReason: string | undefined
@@ -1400,7 +1401,7 @@ export class BenchmarkService {
               prompt,
               `linggo:benchmark:${run.id}:problem:${problem.id}`,
               signal,
-              startsNewTry ? [] : undefined,
+              startsNewContext ? [] : undefined,
             )
             addUsage(run, response, 'solving_problem')
             actual = response.action
@@ -1444,7 +1445,7 @@ export class BenchmarkService {
             expectedAction,
             legal,
             correct,
-            firstResponse: startsNewTry,
+            firstResponse: sendsInitialProblem,
             failureReason,
             notebookVersionBefore: run.notebookVersion,
             promptDigest: digest,
@@ -2411,7 +2412,7 @@ function initialLifeDeathProblemPrompt(
     '',
     ...(redoReason
       ? [
-          'The previous try failed after making some correct progress.',
+          'The previous whole-problem attempt failed after making some correct progress.',
           'Your previous action was wrong.',
           `Reason: ${redoReason}`,
           'Redo the initial problem from the beginning.',

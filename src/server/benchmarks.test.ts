@@ -1626,7 +1626,7 @@ describe('benchmark scoring and prompts', () => {
     await service.close()
   })
 
-  it('restarts from the initial problem after a failed partial solution', async () => {
+  it('resends the initial problem in the existing context after a failed partial solution', async () => {
     store = new Store(':memory:')
     directory = await mkdtemp(join(tmpdir(), 'linggo-life-branch-reset-'))
     const problem = loadProblemSet('gogameguru-easy').problems[0]
@@ -1701,9 +1701,28 @@ describe('benchmark scoring and prompts', () => {
     expect(actionRequests[1].content).toContain('CURRENT BOARD')
     expect(actionRequests[1].content).not.toContain('SELF-WRITTEN SKILLS')
     expect(actionRequests[1].content).not.toContain('OUTPUT JSON SCHEMA')
-    expect(actionRequests[2]).toMatchObject({kind: 'initial', transcript: []})
+    expect(actionRequests[2].kind).toBe('continuation')
+    expect(actionRequests[2].transcript).toEqual([
+      {role: 'user', content: actionRequests[0].content},
+      {
+        role: 'assistant',
+        content: expect.stringContaining(
+          problem.solution[0].action === 'play'
+            ? problem.solution[0].coordinate
+            : problem.solution[0].action,
+        ),
+      },
+      {role: 'user', content: actionRequests[1].content},
+      {
+        role: 'assistant',
+        content: expect.stringContaining(wrongSecondAction.action),
+      },
+    ])
     expect(actionRequests[2].content).toContain(
       'Redo the initial problem from the beginning.',
+    )
+    expect(actionRequests[2].content).toContain(
+      'The previous whole-problem attempt failed',
     )
     expect(actionRequests[2].content).toContain(
       'Reason: Action did not match expected answer',
