@@ -1220,16 +1220,21 @@ describe('benchmark scoring and prompts', () => {
       expect(moveRules).toContain(rule)
     }
     expect(prompts[0]).toContain('# Original source')
-    expect(prompts[0].split('\n', 1)[0]).toBe(
-      'The recommended notebook content budget is 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
-    )
+    expect(prompts[0].split('\n', 1)[0]).toBe('NOTEBOOK INITIALIZATION')
     expect(prompts[0]).toContain(
       'The hard maximum for this entire initialization response is 12,000 output tokens.',
     )
-    expect(
-      prompts[0].indexOf('recommended notebook content budget'),
-    ).toBeLessThan(
-      prompts[0].indexOf('Write a complete Markdown Go technique notebook'),
+    expect(prompts[0].indexOf('TASK')).toBeLessThan(
+      prompts[0].indexOf('WRITING REQUIREMENTS'),
+    )
+    expect(prompts[0].indexOf('WRITING REQUIREMENTS')).toBeLessThan(
+      prompts[0].indexOf('SOURCE MATERIAL'),
+    )
+    expect(prompts[0].indexOf('SOURCE MATERIAL')).toBeLessThan(
+      prompts[0].indexOf('SOURCE NOTEBOOK'),
+    )
+    expect(prompts[0].indexOf('SOURCE NOTEBOOK')).toBeLessThan(
+      prompts[0].indexOf('OUTPUT REQUIREMENTS'),
     )
     expect(prompts[0]).not.toContain('Use exactly this Markdown structure')
     expect(prompts[0]).not.toContain('## Opening')
@@ -1368,11 +1373,24 @@ describe('benchmark scoring and prompts', () => {
     expect(prompts[0]).toContain(
       'A life-and-death problem is a local tactical position',
     )
-    expect(prompts[0].split('\n', 1)[0]).toBe(
-      'The recommended notebook content budget is 8,000 estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).',
-    )
+    expect(prompts[0].split('\n', 1)[0]).toBe('NOTEBOOK INITIALIZATION')
     expect(prompts[0]).toContain(
       'The hard maximum for this entire initialization response is 12,000 output tokens.',
+    )
+    expect(prompts[0].indexOf('TASK')).toBeLessThan(
+      prompts[0].indexOf('HOW THE NOTEBOOK WILL BE USED'),
+    )
+    expect(prompts[0].indexOf('HOW THE NOTEBOOK WILL BE USED')).toBeLessThan(
+      prompts[0].indexOf('REQUIRED KNOWLEDGE'),
+    )
+    expect(prompts[0].indexOf('REQUIRED KNOWLEDGE')).toBeLessThan(
+      prompts[0].indexOf('WRITING REQUIREMENTS'),
+    )
+    expect(prompts[0].indexOf('WRITING REQUIREMENTS')).toBeLessThan(
+      prompts[0].indexOf('CONTENT BOUNDARIES'),
+    )
+    expect(prompts[0].indexOf('CONTENT BOUNDARIES')).toBeLessThan(
+      prompts[0].indexOf('OUTPUT REQUIREMENTS'),
     )
     expect(prompts[0]).toContain(
       'They will not repeat the Go or life-and-death rules',
@@ -1390,10 +1408,10 @@ describe('benchmark scoring and prompts', () => {
       'whether a proposed sequence assumes a cooperative reply',
     )
     expect(prompts[0]).toContain(
-      'each numbered point must stand on its own as a reusable lesson',
+      'each point must stand on its own as a reusable lesson',
     )
     expect(prompts[0]).toContain(
-      'Do not write the direct answer to an individual life-and-death problem',
+      'Record only generalizable techniques and reasoning patterns',
     )
     expect(prompts[0]).not.toContain('AUTHORITATIVE GO RULES')
     expect(prompts[0]).not.toContain('komi')
@@ -1443,10 +1461,7 @@ describe('benchmark scoring and prompts', () => {
     expect(actionPrompts[2]).toContain('You now play as White (O).')
     expect(actionPrompts[2]).toContain('Your previous action was correct.')
     expect(prompts.at(-1)).toContain(
-      'Do not write the direct answer to an individual life-and-death problem in this notebook.',
-    )
-    expect(prompts.at(-1)).toContain(
-      "do not include the problem's answer coordinate or a step-by-step solution sequence.",
+      "Do not include an individual problem's position, answer coordinate, or step-by-step solution sequence.",
     )
     service.pause(created.id)
     responseGate.resolve()

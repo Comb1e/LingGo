@@ -124,17 +124,21 @@ type LegacyBenchmarkConfig = {
 class KataGoUnavailableError extends Error {}
 
 const LIFE_DEATH_NOTEBOOK_INSTRUCTION =
-  "Do not write the direct answer to an individual life-and-death problem in this notebook. Record only generalizable techniques and reasoning patterns; do not include the problem's answer coordinate or a step-by-step solution sequence."
+  "Record only generalizable techniques and reasoning patterns. Do not include an individual problem's position, answer coordinate, or step-by-step solution sequence."
 
 const LIFE_DEATH_BOARD_SYMBOL_LEGEND =
   'Board symbols: X = Black stone, O = White stone, . = empty intersection.'
 
 const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
-  'Create a comprehensive, self-contained Markdown technique notebook for solving Go life-and-death problems.',
+  'TASK',
+  'Create or refine a comprehensive, self-contained Markdown technique notebook for solving Go life-and-death problems.',
+  '',
+  'HOW THE NOTEBOOK WILL BE USED',
   'Later problem prompts will provide only the board, the side to move, capture totals, and the notebook. They will not repeat the Go or life-and-death rules. Record all reusable knowledge needed to choose and verify each action without relying on outside context.',
   'A life-and-death problem is a local tactical position about whether an unsettled group can survive or be captured under best play.',
   '',
-  'Cover at least the following subjects:',
+  'REQUIRED KNOWLEDGE',
+  'Cover at least these subjects:',
   '- Core mechanics: orthogonal adjacency, chains, liberties, capture order, suicide, ko or whole-board repetition, and how captures can create new liberties or eye space.',
   '- Objectives and settled outcomes: attack versus defense, unconditional life through two independent real eyes, capture, escape or connection to a living group, seki, ko life, and unsettled positions.',
   '- Eye-space analysis: real and false eyes, shared liberties, cutting points, internal defects, vital points, eye-stealing moves, and common nakade principles and shapes.',
@@ -144,12 +148,16 @@ const LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION = [
   '- Verification and failure checks: legality, self-atari, hidden liberties, false-eye defects, ko recaptures, opponent counter-atari, whether two eyes are truly independent, and whether a proposed sequence assumes a cooperative reply.',
   '- Practical move selection: prefer forcing and dual-purpose moves, distinguish sente from gote, preserve flexibility, and use accurate local reading rather than vague shape memory.',
   '',
-  'Make every note operational: state what cues to inspect, what candidate move or sequence to consider, how the opponent can resist, and how to confirm the resulting status. Distinguish unconditional results from ko, seki, or unresolved outcomes instead of treating them as equivalent.',
-  'Organize the reusable knowledge as individually numbered points such as 1. ... and 2. ... so later lessons can replace or add a point by number. Headings may group the numbered points, but each numbered point must stand on its own as a reusable lesson.',
-  LIFE_DEATH_NOTEBOOK_INSTRUCTION,
-  'Do not record individual problem coordinates, positions, or solution sequences.',
-  'Do not claim that one heuristic, shape, or first move is universally correct; include exceptions or verification conditions where they matter.',
-  'Choose the headings and writing style yourself, eliminate redundant advice, and use the available notebook budget for concrete, technically precise guidance.',
+  'WRITING REQUIREMENTS',
+  '- Organize reusable knowledge as individually numbered points such as 1. ... and 2. ... so later lessons can replace, add, or delete a point by number.',
+  '- Headings may group the numbered points, but each point must stand on its own as a reusable lesson.',
+  '- Make every point operational: state what cues to inspect, what candidate move or sequence to consider, how the opponent can resist, and how to verify the result.',
+  '- Distinguish unconditional life or capture from ko, seki, and unresolved outcomes.',
+  '- State important exceptions and verification conditions. Never present a heuristic, shape, or first move as universally correct.',
+  '- Eliminate redundant advice. Use the available budget for concrete, technically precise guidance.',
+  '',
+  'CONTENT BOUNDARIES',
+  `- ${LIFE_DEATH_NOTEBOOK_INSTRUCTION}`,
 ].join('\n')
 
 const lifeDeathNotebookPatchSchema = z
@@ -1192,57 +1200,66 @@ export class BenchmarkService {
     const readOnlyContext = this.readOnlyNotebookContext(run)
     const seed = seedSnapshot?.content.trim()
       ? [
+          'SOURCE NOTEBOOK',
           run.writableNotebookRole === 'ordinary'
             ? 'WRITABLE ORDINARY-GAME NOTEBOOK TO REFINE'
             : 'WRITABLE LIFE-AND-DEATH NOTEBOOK TO REFINE',
           seedSnapshot.content,
           '',
-          'Preserve correct, useful knowledge while improving clarity and actionability.',
-          '',
+          'Preserve its correct, useful knowledge while improving clarity and actionability. Return the complete refined writable notebook, not a patch.',
+        ]
+      : []
+    const references = readOnlyContext
+      ? [
+          'READ-ONLY REFERENCE NOTEBOOKS',
+          'Use these notebooks only as reference material. Do not edit them or include them in the returned notebook.',
+          readOnlyContext,
         ]
       : []
     const initializationTokenLimit =
       run.config.notebookInitializationTokenLimit ??
       DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT
     const notebookBudgetInstruction = [
-      `The recommended notebook content budget is ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
-      `The hard maximum for this entire initialization response is ${initializationTokenLimit.toLocaleString()} output tokens.`,
+      `- The recommended notebook content budget is ${run.config.notebookTokenBudget.toLocaleString()} estimated tokens, where estimated tokens are ceil(UTF-8 bytes / 4).`,
+      `- The hard maximum for this entire initialization response is ${initializationTokenLimit.toLocaleString()} output tokens.`,
     ].join('\n')
     const prompt = isLifeDeath(run)
       ? [
-          ...seed,
-          notebookBudgetInstruction,
-          LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION,
-          ...(readOnlyContext
-            ? [
-                '',
-                'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
-                '',
-                'READ-ONLY REFERENCE NOTEBOOKS',
-                readOnlyContext,
-              ]
-            : []),
+          'NOTEBOOK INITIALIZATION',
           '',
+          LIFE_DEATH_NOTEBOOK_INITIALIZATION_INSTRUCTION,
+          ...(seed.length ? ['', ...seed] : []),
+          ...(references.length ? ['', ...references] : []),
+          '',
+          'OUTPUT REQUIREMENTS',
+          notebookBudgetInstruction,
           'Return only the complete Markdown notebook.',
         ].join('\n')
       : [
-          notebookBudgetInstruction,
+          'NOTEBOOK INITIALIZATION',
+          '',
+          'TASK',
           'Write a complete Markdown Go technique notebook from the authoritative rules below.',
-          'Choose the organization, headings, level of detail, and writing style yourself.',
-          'Do not invent lessons from games, positions, or analysis that were not supplied.',
-          ...(readOnlyContext
+          ...(seed.length
             ? [
-                'Use the following notebook only as read-only reference material. Do not return a replacement for it.',
-                '',
-                'READ-ONLY REFERENCE NOTEBOOKS',
-                readOnlyContext,
+                'Refine the supplied writable notebook while preserving its correct, useful knowledge.',
               ]
             : []),
           '',
+          'WRITING REQUIREMENTS',
+          '- Choose the organization, headings, level of detail, and writing style yourself.',
+          '- Make the guidance concrete, technically precise, and useful for future play.',
+          '- Do not invent lessons from games, positions, or analysis that were not supplied.',
+          '',
+          'SOURCE MATERIAL',
           'AUTHORITATIVE GO RULES',
           ...formatCanonicalGoRules({size: 19, komi: 7.5}),
           ...(seed.length ? [''] : []),
           ...seed,
+          ...(references.length ? ['', ...references] : []),
+          '',
+          'OUTPUT REQUIREMENTS',
+          notebookBudgetInstruction,
           'Return only the complete Markdown notebook.',
         ].join('\n')
     const content = await this.requestValidNotebook(
