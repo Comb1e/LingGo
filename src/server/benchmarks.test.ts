@@ -1730,7 +1730,8 @@ describe('benchmark scoring and prompts', () => {
     expect(actionRequests[2].content).toContain(
       'Your previous action was wrong.',
     )
-    expect(actionRequests[2].content).toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[2].content).not.toContain('SELF-WRITTEN SKILLS')
+    expect(actionRequests[2].content).not.toContain('# Life techniques')
     expect(actionRequests[2].content).toContain('OUTPUT JSON SCHEMA')
     expect(actionRequests[2].snapshot.board).toEqual(problem.snapshot.board)
     expect(service.problemAttempts(created.id)).toMatchObject([

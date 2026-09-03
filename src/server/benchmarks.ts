@@ -2407,9 +2407,7 @@ function initialLifeDeathProblemPrompt(
   redoReason?: string,
 ) {
   return [
-    'SELF-WRITTEN SKILLS',
-    notebook,
-    '',
+    ...(redoReason ? [] : ['SELF-WRITTEN SKILLS', notebook, '']),
     ...(redoReason
       ? [
           'The previous whole-problem attempt failed after making some correct progress.',

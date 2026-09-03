@@ -112,7 +112,7 @@ describe('benchmark sessions', () => {
     expect(easySession.stages[2].runId).toBeUndefined()
   })
 
-  it('restarts from the stage-start snapshot and preserves earlier stages', () => {
+  it('restarts from the stage-start snapshot and preserves earlier stages', async () => {
     const fixture = setup()
     let session = fixture.sessions.create(fixture.config)
     complete(fixture, session.stages[0].runId!, '# Life initialized')
@@ -122,7 +122,7 @@ describe('benchmark sessions', () => {
     const originalMediumRun = session.stages[2].runId!
     complete(fixture, originalMediumRun, '# Contaminated medium result')
 
-    session = fixture.sessions.restartStage(session.id)
+    session = await fixture.sessions.restartStage(session.id)
     expect(session.stages[1].status).toBe('completed')
     expect(session.stages[2].attempt).toBe(2)
     expect(session.stages[2].runId).not.toBe(originalMediumRun)
@@ -131,6 +131,45 @@ describe('benchmark sessions', () => {
     ).toBe('# Easy result')
     expect(fixture.sessions.notebook(session.id, 'life_death')).toBe(
       '# Easy result',
+    )
+  })
+
+  it('restarts an active stage with its original notebook version', async () => {
+    const fixture = setup()
+    let session = fixture.sessions.create(fixture.config)
+    complete(fixture, session.stages[0].runId!, '# Life initialized')
+    session = fixture.sessions.continue(session.id)
+    const easy = session.stages[1]
+    const originalRunId = easy.runId!
+    fixture.sessions.pause(session.id)
+    const currentNotebook = fixture.store.getBenchmarkSessionNotebookSnapshot(
+      session.id,
+      'life_death',
+    )!
+    fixture.store.saveBenchmarkSessionNotebookSnapshot({
+      sessionId: session.id,
+      role: 'life_death',
+      notebookId: currentNotebook.notebookId!,
+      notebookName: currentNotebook.notebookName,
+      content: '# In-progress easy changes',
+      version: 7,
+      estimatedTokens: 7,
+      stageKey: 'easy',
+      updatedAt: new Date().toISOString(),
+    })
+
+    session = await fixture.sessions.restartStage(session.id)
+
+    expect(fixture.benchmarks.get(originalRunId)?.status).toBe('cancelled')
+    expect(session.status).toBe('running')
+    expect(session.currentStage).toBe('easy')
+    expect(session.stages[1]).toMatchObject({status: 'running', attempt: 2})
+    expect(session.stages[1].runId).not.toBe(originalRunId)
+    expect(
+      fixture.store.getBenchmarkNotebookSeed(session.stages[1].runId!)?.content,
+    ).toBe('# Life initialized')
+    expect(fixture.sessions.notebook(session.id, 'life_death')).toBe(
+      '# Life initialized',
     )
   })
 

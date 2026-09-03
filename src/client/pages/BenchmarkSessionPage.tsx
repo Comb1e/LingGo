@@ -247,7 +247,7 @@ export function BenchmarkSessionPage() {
         </section>
       )}
       {currentStage &&
-        ['completed', 'failed'].includes(currentStage.status) && (
+        ['running', 'completed', 'failed'].includes(currentStage.status) && (
           <div className="session-restart-action">
             <Button
               disabled={action.isPending}

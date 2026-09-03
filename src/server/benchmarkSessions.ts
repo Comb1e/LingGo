@@ -180,14 +180,25 @@ export class BenchmarkSessionService {
     return this.get(id)!
   }
 
-  restartStage(id: string) {
+  async restartStage(id: string) {
     const session = this.require(id)
     const stage = this.currentStage(session)
-    if (!['completed', 'failed'].includes(stage.status))
-      throw new Error('Only the current completed or failed stage can restart')
+    if (!['running', 'completed', 'failed'].includes(stage.status))
+      throw new Error('The current stage cannot restart')
     const content = this.store.getBenchmarkStageStartContent(stage.id)
     if (content === undefined)
       throw new Error('The stage-start notebook snapshot is missing')
+    const previousRun = stage.runId
+      ? this.benchmarks.get(stage.runId)
+      : undefined
+    let cancelledRun: BenchmarkRun | undefined
+    if (
+      previousRun &&
+      ['queued', 'running', 'paused'].includes(previousRun.status)
+    ) {
+      cancelledRun = this.benchmarks.cancelSessionChild(previousRun.id)
+      await this.benchmarks.waitForRunTermination(previousRun.id)
+    }
     const role = stage.writableNotebookRole
     const snapshot = this.snapshotNotebook(session, role)
     const source = {...snapshot, content}
@@ -230,6 +241,7 @@ export class BenchmarkSessionService {
       })
     })
     this.benchmarks.activatePreparedSessionChild(run)
+    if (cancelledRun) this.benchmarks.notifySessionChild(cancelledRun)
     this.emit(id)
     return this.get(id)!
   }
