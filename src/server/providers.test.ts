@@ -716,14 +716,23 @@ describe('provider normalization', () => {
     expect(result.providerKind).toBe('deepseek')
     expect(result.inputTokens).toBe(12)
     expect(result.outputTokens).toBe(8)
+
+    const textResult = await adapter.requestText!(
+      'Hi',
+      new AbortController().signal,
+    )
+    expect(textResult.text).toBe('{"move":"A9","reason":"Take the corner."}')
+    expect(textResult.reasoning).toBe('Compare the open corners.')
     expect(requestedUrl).toBe('https://api.deepseek.com/chat/completions')
-    expect(JSON.parse(requestBody)).toMatchObject({
+    const body = JSON.parse(requestBody)
+    expect(body).toMatchObject({
       model: 'deepseek-v4-pro',
       thinking: {type: 'enabled'},
       reasoning_effort: 'high',
       stream: true,
       stream_options: {include_usage: true},
     })
+    expect(body.messages).toEqual([{role: 'user', content: 'Hi'}])
   })
 
   it('disables DeepSeek reasoning in the provider request body', async () => {

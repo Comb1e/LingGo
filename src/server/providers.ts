@@ -12,6 +12,7 @@ import {
 } from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
+import {PROFILE_TEST_PROMPT} from '../shared/constants'
 import {
   normalizeReasoning,
   supportsDeepSeekReasoningControl,
@@ -126,6 +127,7 @@ export interface LlmTurnResponse {
 
 export interface LlmTextResponse {
   text: string
+  reasoning?: string
   latencyMs: number
   inputTokens: number
   cachedInputTokens?: number
@@ -391,11 +393,14 @@ export class FakePlayerAdapter implements PlayerAdapter {
   async requestText(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return {
-      text: prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')
-        ? '{"1":"Check liberties before choosing a vital point."}'
-        : prompt.includes('Markdown life-and-death Go technique notebook')
-          ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
-          : '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
+      text:
+        prompt === PROFILE_TEST_PROMPT
+          ? 'Hello!'
+          : prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')
+            ? '{"1":"Check liberties before choosing a vital point."}'
+            : prompt.includes('Markdown life-and-death Go technique notebook')
+              ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
+              : '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
       latencyMs: 0,
       inputTokens: 0,
       outputTokens: 0,
@@ -452,9 +457,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     return {
       ...parsed,
       responseContent: result.text,
-      reasoning: result.reasoningText
-        ? normalizeReasoning(result.reasoningText) || undefined
-        : undefined,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
       cachedInputTokens: cachedInputTokens(result.usage),
@@ -501,9 +504,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           )
     return {
       text: result.text,
-      reasoning: result.reasoningText
-        ? normalizeReasoning(result.reasoningText) || undefined
-        : undefined,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       providerContinuationId: result.providerContinuationId,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
@@ -543,6 +544,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           )
     return {
       text: result.text,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
       cachedInputTokens: cachedInputTokens(result.usage),
@@ -705,6 +707,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       })
     }
   }
+}
+
+function normalizeResponseReasoning(reasoningText?: string) {
+  return reasoningText
+    ? normalizeReasoning(reasoningText) || undefined
+    : undefined
 }
 
 interface DeepSeekStreamState {

@@ -9,6 +9,7 @@ import {
   MAX_DISPLAY_NAME_LENGTH,
   MAX_KATAGO_VISITS,
   MIN_KATAGO_VISITS,
+  PROFILE_TEST_PROMPT,
 } from '../shared/constants'
 import {
   benchmarkConfigSchema,
@@ -465,10 +466,10 @@ export function createApp(
     )
     const result = await requestLlm(
       adapter,
-      {type: 'text', content: 'Reply with exactly: OK'},
+      {type: 'text', content: PROFILE_TEST_PROMPT},
       AbortSignal.timeout(30_000),
     )
-    return {ok: true, ...result}
+    return {ok: true, ...result, reasoning: result.reasoning ?? null}
   })
   app.get('/api/profiles/:id/notebooks', async (request, reply) => {
     const {id} = request.params as {id: string}

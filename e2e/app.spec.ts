@@ -763,6 +763,10 @@ test('adds, tests, and saves custom profile request options', async ({
   await expect(
     page.getByText(/deterministic-v1 replied in \d+ ms/),
   ).toBeVisible()
+  await expect(page.getByText('Hello!', {exact: true})).toBeVisible()
+  await expect(
+    page.getByText('No reasoning returned.', {exact: true}),
+  ).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('request-options.png'),
     fullPage: true,

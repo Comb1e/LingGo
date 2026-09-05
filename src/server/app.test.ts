@@ -699,6 +699,8 @@ describe('game API', () => {
     expect(tested.json()).toMatchObject({
       ok: true,
       model: 'deterministic-v1',
+      text: 'Hello!',
+      reasoning: null,
     })
 
     const invalid = await app.inject({

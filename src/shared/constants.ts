@@ -8,3 +8,4 @@ export const DEFAULT_GAME_MOVE_CAP = 722
 export const MIN_KATAGO_VISITS = 25
 export const MAX_KATAGO_VISITS = 100_000
 export const MAX_DISPLAY_NAME_LENGTH = 120
+export const PROFILE_TEST_PROMPT = 'Hi'

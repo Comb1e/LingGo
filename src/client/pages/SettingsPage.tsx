@@ -19,6 +19,13 @@ import {api} from '../api'
 import {Button, ErrorBanner, Loading, PageHeader} from '../components'
 import {NotebookManager} from '../NotebookManager'
 
+interface ProfileTestResult {
+  text: string
+  reasoning: string | null
+  latencyMs: number
+  model: string
+}
+
 export function SettingsPage() {
   const {t} = useTranslation()
   const queryClient = useQueryClient()
@@ -50,7 +57,8 @@ export function SettingsPage() {
   const [stylePrompt, setStylePrompt] = useState('')
   const [editingProfileId, setEditingProfileId] = useState('')
   const [profileTestBusy, setProfileTestBusy] = useState(false)
-  const [profileTestResult, setProfileTestResult] = useState('')
+  const [profileTestResult, setProfileTestResult] =
+    useState<ProfileTestResult | null>(null)
   const [kataDraft, setKataDraft] = useState({
     executablePath: '',
     modelPath: '',
@@ -92,7 +100,7 @@ export function SettingsPage() {
     setReasoningControl('automatic')
     setRequestOptions([])
     setStylePrompt('')
-    setProfileTestResult('')
+    setProfileTestResult(null)
   }
 
   const saveConnection = async (event: FormEvent) => {
@@ -176,12 +184,12 @@ export function SettingsPage() {
         optionIndex === index ? {...option, [field]: value} : option,
       ),
     )
-    setProfileTestResult('')
+    setProfileTestResult(null)
   }
   const testProfile = async () => {
     setError(undefined)
     setSaved('')
-    setProfileTestResult('')
+    setProfileTestResult(null)
     setProfileTestBusy(true)
     try {
       const result = await api.testProfile({
@@ -194,13 +202,7 @@ export function SettingsPage() {
         requestOptions: requestOptions.length ? requestOptions : undefined,
         stylePrompt: stylePrompt || undefined,
       })
-      setProfileTestResult(
-        t('profileTestSucceeded', {
-          model: result.model,
-          latency: result.latencyMs,
-          text: result.text.trim().slice(0, 160),
-        }),
-      )
+      setProfileTestResult(result)
     } catch (caught) {
       setError(caught)
     } finally {
@@ -469,7 +471,7 @@ export function SettingsPage() {
                     setReasoningControl(
                       event.target.value as 'automatic' | 'extra_body',
                     )
-                    setProfileTestResult('')
+                    setProfileTestResult(null)
                   }}
                 >
                   <option value="automatic">
@@ -492,7 +494,7 @@ export function SettingsPage() {
                     checked={reasoningEnabled}
                     onChange={(event) => {
                       setReasoningEnabled(event.target.checked)
-                      setProfileTestResult('')
+                      setProfileTestResult(null)
                     }}
                   />
                   <span className="switch" />
@@ -548,7 +550,7 @@ export function SettingsPage() {
                               (_option, optionIndex) => optionIndex !== index,
                             ),
                           )
-                          setProfileTestResult('')
+                          setProfileTestResult(null)
                         }}
                       >
                         <Trash2 />
@@ -611,10 +613,33 @@ export function SettingsPage() {
                     {t('cancel')}
                   </Button>
                 )}
-                {profileTestResult && (
-                  <span className="test-result">{profileTestResult}</span>
-                )}
               </div>
+              {profileTestResult && (
+                <div className="profile-test-result" role="status">
+                  <p className="test-result">
+                    {t('profileTestSucceeded', {
+                      model: profileTestResult.model,
+                      latency: profileTestResult.latencyMs,
+                    })}
+                  </p>
+                  <dl>
+                    <div>
+                      <dt>{t('profileTestResponse')}</dt>
+                      <dd>
+                        {profileTestResult.text.trim() ||
+                          t('profileTestNoResponse')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t('profileTestReasoning')}</dt>
+                      <dd>
+                        {profileTestResult.reasoning?.trim() ||
+                          t('profileTestNoReasoning')}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
             </form>
           </section>
           <section className="settings-section katago-settings">
