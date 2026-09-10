@@ -95,6 +95,22 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect(topChoice).toHaveClass(/shudan-sign_-1/)
   await expect(topChoice.locator('.shudan-marker')).toHaveText('63%')
   await expect(topChoice).toHaveAttribute('title', /#1 D4: 63\.4% win rate/)
+  await expect(topChoice.locator('.shudan-stone-image')).toHaveCSS(
+    'background-color',
+    'rgb(214, 59, 53)',
+  )
+  await expect(
+    board.locator('[data-x="15"][data-y="3"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(242, 201, 76)')
+  await expect(
+    board.locator('[data-x="3"][data-y="3"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(242, 201, 76)')
+  await expect(
+    board.locator('[data-x="15"][data-y="15"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(50, 118, 195)')
+  await expect(
+    board.locator('[data-x="9"][data-y="13"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(50, 118, 195)')
   await expect(board.locator('.shudan-marker_label')).toHaveCount(5)
   await page.screenshot({
     path: testInfo.outputPath('katago-review.png'),
