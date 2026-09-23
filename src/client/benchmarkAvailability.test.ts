@@ -1,7 +1,47 @@
 import {describe, expect, it} from 'vitest'
-import {hasLiveBenchmarkForProfile} from './benchmarkAvailability'
+import {
+  benchmarkEligibleProfiles,
+  hasLiveBenchmarkForProfile,
+} from './benchmarkAvailability'
 
 describe('benchmark creation availability', () => {
+  it('excludes profiles whose providers cannot run benchmarks', () => {
+    const profiles = [
+      {
+        id: 'jev-profile',
+        name: 'Jev',
+        connectionId: 'typesafe',
+        modelId: 'jev-latest',
+        temperature: 0.7,
+      },
+      {
+        id: 'openai-profile',
+        name: 'OpenAI',
+        connectionId: 'openai',
+        modelId: 'gpt-test',
+        temperature: 0.7,
+      },
+    ]
+    const connections = [
+      {
+        id: 'typesafe',
+        name: 'TypeSafe AI',
+        kind: 'typesafe' as const,
+        supportsStructuredOutput: false,
+      },
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        kind: 'openai' as const,
+        supportsStructuredOutput: false,
+      },
+    ]
+
+    expect(benchmarkEligibleProfiles(profiles, connections)).toEqual([
+      profiles[1],
+    ])
+  })
+
   it('only treats a live run for the selected profile as unavailable', () => {
     const runs = [
       {status: 'running' as const, config: {profileId: 'profile-a'}},

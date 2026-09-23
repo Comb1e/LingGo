@@ -1,4 +1,4 @@
-import {afterEach, beforeEach, describe, expect, it} from 'vitest'
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -17,7 +17,10 @@ beforeEach(() => {
   app = created.app
   games = created.games
 })
-afterEach(() => app.close())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  return app.close()
+})
 
 describe('game API', () => {
   it('serves sanitized life-and-death problems and scores one human answer', async () => {
@@ -718,6 +721,63 @@ describe('game API', () => {
     expect(invalid.json().error).toContain('Invalid JSON value')
   })
 
+  it('tests a TypeSafe profile with a legal 9x9 Choice request', async () => {
+    let requestedUrl = ''
+    let requestedBody: any
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input)
+        requestedBody = JSON.parse(String(init?.body))
+        return new Response(
+          JSON.stringify({
+            model: 'jev-1.13.0',
+            answers: {
+              move: {
+                type: 'choice',
+                choice: 'D4',
+                confidence: 0.75,
+                probabilities: {D4: 0.75, PASS: 0.25},
+              },
+            },
+            usage: {input_tokens: 10, output_tokens: 2},
+          }),
+          {status: 200, headers: {'content-type': 'application/json'}},
+        )
+      }),
+    )
+    const connection = await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'TypeSafe AI',
+        kind: 'typesafe',
+        baseUrl: 'https://jev.example.test',
+        apiKey: 'test-key',
+      },
+    })
+    const tested = await app.inject({
+      method: 'POST',
+      url: '/api/profiles/test',
+      payload: {
+        name: 'Jev',
+        connectionId: connection.json().id,
+        modelId: 'jev-latest',
+      },
+    })
+
+    expect(tested.statusCode).toBe(200)
+    expect(tested.json()).toMatchObject({
+      ok: true,
+      model: 'jev-1.13.0',
+      text: '{"move":"D4","reason":"Jev selected D4 with 75% confidence."}',
+      reasoning: null,
+    })
+    expect(requestedUrl).toBe('https://jev.example.test/v1/systemone')
+    expect(requestedBody.model).toBe('jev-latest')
+    expect(Object.keys(requestedBody.questions.move.criteria)).toHaveLength(83)
+  })
+
   it('deletes profiles and cascades connection deletion safely', async () => {
     const connectionResponse = await app.inject({
       method: 'POST',
@@ -934,6 +994,57 @@ describe('game API', () => {
       error:
         'This player profile already has a queued, running, or paused benchmark',
     })
+  })
+
+  it('rejects TypeSafe profiles from benchmarks and benchmark sessions', async () => {
+    store.saveConnection({
+      id: 'typesafe-benchmark',
+      name: 'TypeSafe AI',
+      kind: 'typesafe',
+      supportsStructuredOutput: false,
+    })
+    store.saveProfile({
+      id: 'jev-benchmark-profile',
+      name: 'Jev',
+      connectionId: 'typesafe-benchmark',
+      modelId: 'jev-latest',
+      temperature: 0.7,
+    })
+    const notebook = store.createNotebook(
+      'jev-benchmark-profile',
+      'Jev notebook',
+    )
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/api/benchmarks',
+      payload: {
+        profileId: 'jev-benchmark-profile',
+        finalColor: 'B',
+        trainingGameCount: 1,
+      },
+    })
+    const session = await app.inject({
+      method: 'POST',
+      url: '/api/benchmark-sessions',
+      payload: {
+        process: 'life_death',
+        profileId: 'jev-benchmark-profile',
+        lifeDeathNotebookId: notebook.id,
+        finalColor: 'B',
+        trainingGameCount: 1,
+        trainingGamesWithWinRates: 1,
+        trainingGamesWithoutWinRates: 0,
+        trainingFeedback: 'structured',
+        notebookTokenBudget: 10_000,
+        trainingVisits: 25,
+        evaluationVisits: 25,
+      },
+    })
+
+    expect(legacy.statusCode).toBe(400)
+    expect(legacy.json().error).toContain('ordinary games but not benchmarks')
+    expect(session.statusCode).toBe(400)
+    expect(session.json().error).toContain('ordinary games but not benchmarks')
   })
 
   it('creates a life-and-death session and rejects an early continue', async () => {

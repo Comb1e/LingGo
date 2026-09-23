@@ -15,6 +15,7 @@ import type {
   Color,
 } from '../../shared/types'
 import {api} from '../api'
+import {benchmarkEligibleProfiles} from '../benchmarkAvailability'
 import {NotebookManager} from '../NotebookManager'
 import {
   Button,
@@ -37,6 +38,10 @@ export function BenchmarksPage() {
     queryFn: api.benchmarks,
   })
   const profiles = useQuery({queryKey: ['profiles'], queryFn: api.profiles})
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: api.connections,
+  })
   const [process, setProcess] = useState<BenchmarkSessionProcess>('life_death')
   const [profileId, setProfileId] = useState('builtin-fake-profile')
   const [lifeNotebookId, setLifeNotebookId] = useState('')
@@ -59,10 +64,17 @@ export function BenchmarksPage() {
   const [withoutWinRates, setWithoutWinRates] = useState(5)
   const [lifeDeathProblemAttemptLimit, setLifeDeathProblemAttemptLimit] =
     useState(DEFAULT_LIFE_DEATH_PROBLEM_ATTEMPT_LIMIT)
+  const eligibleProfiles = benchmarkEligibleProfiles(
+    profiles.data,
+    connections.data,
+  )
+  const selectedProfileId = eligibleProfiles.some(({id}) => id === profileId)
+    ? profileId
+    : (eligibleProfiles[0]?.id ?? '')
   const profileNotebooks = useQuery({
-    queryKey: ['notebooks', profileId],
-    queryFn: () => api.notebooks(profileId),
-    enabled: Boolean(profileId),
+    queryKey: ['notebooks', selectedProfileId],
+    queryFn: () => api.notebooks(selectedProfileId),
+    enabled: Boolean(selectedProfileId),
   })
   const notebookIds = profileNotebooks.data?.map(({id}) => id) ?? []
   const selectedLifeNotebookId = notebookIds.includes(lifeNotebookId)
@@ -77,19 +89,19 @@ export function BenchmarksPage() {
   const profileIsLive =
     sessions.data?.some(
       (session) =>
-        session.profileId === profileId &&
+        session.profileId === selectedProfileId &&
         !['completed', 'cancelled'].includes(session.status),
     ) ||
     legacyRuns.data?.some(
       (run) =>
-        run.config.profileId === profileId &&
+        run.config.profileId === selectedProfileId &&
         ['queued', 'running', 'paused'].includes(run.status),
     )
   const create = useMutation({
     mutationFn: () =>
       api.createBenchmarkSession({
         process,
-        profileId,
+        profileId: selectedProfileId,
         lifeDeathNotebookId: selectedLifeNotebookId,
         ...(process === 'ordinary'
           ? {ordinaryNotebookId: selectedOrdinaryNotebookId}
@@ -131,7 +143,12 @@ export function BenchmarksPage() {
     return () => events.close()
   }, [queryClient])
 
-  if (sessions.isLoading || profiles.isLoading || legacyRuns.isLoading)
+  if (
+    sessions.isLoading ||
+    profiles.isLoading ||
+    connections.isLoading ||
+    legacyRuns.isLoading
+  )
     return (
       <div className="page">
         <Loading />
@@ -147,6 +164,7 @@ export function BenchmarksPage() {
           remove.error ??
           sessions.error ??
           profiles.error ??
+          connections.error ??
           legacyRuns.error
         }
       />
@@ -178,14 +196,14 @@ export function BenchmarksPage() {
           <label className="field">
             <span>{t('profile')}</span>
             <select
-              value={profileId}
+              value={selectedProfileId}
               onChange={(event) => {
                 setProfileId(event.target.value)
                 setLifeNotebookId('')
                 setOrdinaryNotebookId('')
               }}
             >
-              {profiles.data?.map((profile) => (
+              {eligibleProfiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name} · {profile.modelId}
                 </option>
@@ -211,7 +229,7 @@ export function BenchmarksPage() {
             </div>
           </div>
           <NotebookManager
-            profileId={profileId}
+            profileId={selectedProfileId}
             selectedId={selectedLifeNotebookId}
             onSelect={setLifeNotebookId}
             label={
@@ -228,7 +246,7 @@ export function BenchmarksPage() {
           />
           {process === 'ordinary' && (
             <NotebookManager
-              profileId={profileId}
+              profileId={selectedProfileId}
               selectedId={selectedOrdinaryNotebookId}
               onSelect={setOrdinaryNotebookId}
               label={t('ordinaryGameNotebook')}

@@ -12,7 +12,12 @@ import {
 } from 'lucide-react'
 import {useState, type FormEvent} from 'react'
 import {useTranslation} from 'react-i18next'
-import {DEFAULT_KATAGO_VISITS} from '../../shared/constants'
+import {
+  DEFAULT_KATAGO_VISITS,
+  DEFAULT_TYPESAFE_BASE_URL,
+  DEFAULT_TYPESAFE_MODEL_ID,
+} from '../../shared/constants'
+import {capabilitiesForProvider} from '../../shared/providerCapabilities'
 import {supportsDeepSeekReasoningControl} from '../../shared/reasoning'
 import type {RequestOption} from '../../shared/types'
 import {api} from '../api'
@@ -73,6 +78,9 @@ export function SettingsPage() {
   const selectedConnection = connections.data?.find(
     (connection) => connection.id === connectionId,
   )
+  const selectedCapabilities = capabilitiesForProvider(
+    selectedConnection?.kind ?? 'fake',
+  )
 
   const kataValues =
     kataEdited || !kataGo.data
@@ -119,6 +127,8 @@ export function SettingsPage() {
         : await api.saveConnection(input)
       await queryClient.invalidateQueries({queryKey: ['connections']})
       setConnectionId(result.id)
+      if (result.kind === 'typesafe' && !modelId.trim())
+        setModelId(DEFAULT_TYPESAFE_MODEL_ID)
       setSaved(t(editingConnectionId ? 'updated' : 'saved'))
       resetConnectionForm()
     } catch (caught) {
@@ -133,10 +143,17 @@ export function SettingsPage() {
         name: profileName,
         connectionId,
         modelId,
-        temperature,
-        reasoningEnabled,
-        reasoningControl,
-        requestOptions: requestOptions.length ? requestOptions : undefined,
+        temperature: selectedCapabilities.temperature ? temperature : 0.7,
+        reasoningEnabled: selectedCapabilities.reasoningControls
+          ? reasoningEnabled
+          : false,
+        reasoningControl: selectedCapabilities.reasoningControls
+          ? reasoningControl
+          : 'automatic',
+        requestOptions:
+          selectedCapabilities.requestOptions && requestOptions.length
+            ? requestOptions
+            : undefined,
         stylePrompt: stylePrompt || undefined,
       }
       if (editingProfileId) await api.updateProfile(editingProfileId, input)
@@ -348,8 +365,10 @@ export function SettingsPage() {
                         ? 'Google Gemini'
                         : event.target.value === 'deepseek'
                           ? 'DeepSeek'
-                          : event.target.value[0].toUpperCase() +
-                            event.target.value.slice(1),
+                          : event.target.value === 'typesafe'
+                            ? 'TypeSafe AI'
+                            : event.target.value[0].toUpperCase() +
+                              event.target.value.slice(1),
                     )
                   }}
                 >
@@ -357,6 +376,7 @@ export function SettingsPage() {
                   <option value="anthropic">Anthropic</option>
                   <option value="google">Google Gemini</option>
                   <option value="deepseek">DeepSeek</option>
+                  <option value="typesafe">TypeSafe AI</option>
                   <option value="compatible">OpenAI-compatible</option>
                 </select>
               </label>
@@ -407,7 +427,10 @@ export function SettingsPage() {
                     <small>{item.modelId}</small>
                   </span>
                   <div className="existing-actions">
-                    <span>{item.temperature}</span>
+                    {capabilitiesForProvider(
+                      connections.data?.find(({id}) => id === item.connectionId)
+                        ?.kind ?? 'fake',
+                    ).temperature && <span>{item.temperature}</span>}
                     <Button
                       type="button"
                       className="icon-button compact-icon"
@@ -445,7 +468,16 @@ export function SettingsPage() {
                 <span>{t('provider')}</span>
                 <select
                   value={connectionId}
-                  onChange={(event) => setConnectionId(event.target.value)}
+                  onChange={(event) => {
+                    const nextId = event.target.value
+                    setConnectionId(nextId)
+                    if (
+                      connections.data?.find(({id}) => id === nextId)?.kind ===
+                        'typesafe' &&
+                      !modelId.trim()
+                    )
+                      setModelId(DEFAULT_TYPESAFE_MODEL_ID)
+                  }}
                 >
                   {connections.data?.map((item) => (
                     <option key={item.id} value={item.id}>
@@ -458,134 +490,145 @@ export function SettingsPage() {
                 <span>{t('modelId')}</span>
                 <input
                   required
-                  placeholder="gpt-5-mini"
+                  placeholder={
+                    selectedConnection?.kind === 'typesafe'
+                      ? DEFAULT_TYPESAFE_MODEL_ID
+                      : 'gpt-5-mini'
+                  }
                   value={modelId}
                   onChange={(event) => setModelId(event.target.value)}
                 />
               </label>
-              <label className="field">
-                <span>{t('reasoningControl')}</span>
-                <select
-                  value={reasoningControl}
-                  onChange={(event) => {
-                    setReasoningControl(
-                      event.target.value as 'automatic' | 'extra_body',
-                    )
-                    setProfileTestResult(null)
-                  }}
-                >
-                  <option value="automatic">
-                    {t('reasoningControlAutomatic')}
-                  </option>
-                  <option value="extra_body">
-                    {t('reasoningControlExtraBody')}
-                  </option>
-                </select>
-                <small className="field-note">
-                  {t('reasoningControlNotice')}
-                </small>
-              </label>
-              {(reasoningControl === 'extra_body' ||
-                (selectedConnection?.kind === 'deepseek' &&
-                  supportsDeepSeekReasoningControl(modelId))) && (
-                <label className="switch-field">
-                  <input
-                    type="checkbox"
-                    checked={reasoningEnabled}
+              {selectedCapabilities.reasoningControls && (
+                <label className="field">
+                  <span>{t('reasoningControl')}</span>
+                  <select
+                    value={reasoningControl}
                     onChange={(event) => {
-                      setReasoningEnabled(event.target.checked)
+                      setReasoningControl(
+                        event.target.value as 'automatic' | 'extra_body',
+                      )
                       setProfileTestResult(null)
                     }}
-                  />
-                  <span className="switch" />
-                  <span>{t('modelReasoning')}</span>
+                  >
+                    <option value="automatic">
+                      {t('reasoningControlAutomatic')}
+                    </option>
+                    <option value="extra_body">
+                      {t('reasoningControlExtraBody')}
+                    </option>
+                  </select>
+                  <small className="field-note">
+                    {t('reasoningControlNotice')}
+                  </small>
                 </label>
               )}
-              <div className="field request-options-field">
-                <span>{t('requestOptions')}</span>
-                <small className="field-note">
-                  {t('requestOptionsNotice')}
-                </small>
-                <div className="request-option-list">
-                  {requestOptions.map((option, index) => (
-                    <div className="request-option-row" key={index}>
-                      <label>
-                        <span>{t('requestOptionName')}</span>
-                        <input
-                          required
-                          placeholder="reasoning"
-                          value={option.name}
-                          onChange={(event) =>
-                            updateRequestOption(
-                              index,
-                              'name',
-                              event.target.value,
+              {selectedCapabilities.reasoningControls &&
+                (reasoningControl === 'extra_body' ||
+                  (selectedConnection?.kind === 'deepseek' &&
+                    supportsDeepSeekReasoningControl(modelId))) && (
+                  <label className="switch-field">
+                    <input
+                      type="checkbox"
+                      checked={reasoningEnabled}
+                      onChange={(event) => {
+                        setReasoningEnabled(event.target.checked)
+                        setProfileTestResult(null)
+                      }}
+                    />
+                    <span className="switch" />
+                    <span>{t('modelReasoning')}</span>
+                  </label>
+                )}
+              {selectedCapabilities.requestOptions && (
+                <div className="field request-options-field">
+                  <span>{t('requestOptions')}</span>
+                  <small className="field-note">
+                    {t('requestOptionsNotice')}
+                  </small>
+                  <div className="request-option-list">
+                    {requestOptions.map((option, index) => (
+                      <div className="request-option-row" key={index}>
+                        <label>
+                          <span>{t('requestOptionName')}</span>
+                          <input
+                            required
+                            placeholder="reasoning"
+                            value={option.name}
+                            onChange={(event) =>
+                              updateRequestOption(
+                                index,
+                                'name',
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>{t('requestOptionContent')}</span>
+                          <input
+                            required
+                            placeholder={'{"effort":"high"}'}
+                            value={option.content}
+                            onChange={(event) =>
+                              updateRequestOption(
+                                index,
+                                'content',
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          className="icon-button danger-quiet compact-icon"
+                          title={t('removeRequestOption')}
+                          aria-label={`${t('removeRequestOption')} ${index + 1}`}
+                          onClick={() => {
+                            setRequestOptions((current) =>
+                              current.filter(
+                                (_option, optionIndex) => optionIndex !== index,
+                              ),
                             )
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>{t('requestOptionContent')}</span>
-                        <input
-                          required
-                          placeholder={'{"effort":"high"}'}
-                          value={option.content}
-                          onChange={(event) =>
-                            updateRequestOption(
-                              index,
-                              'content',
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </label>
-                      <Button
-                        type="button"
-                        className="icon-button danger-quiet compact-icon"
-                        title={t('removeRequestOption')}
-                        aria-label={`${t('removeRequestOption')} ${index + 1}`}
-                        onClick={() => {
-                          setRequestOptions((current) =>
-                            current.filter(
-                              (_option, optionIndex) => optionIndex !== index,
-                            ),
-                          )
-                          setProfileTestResult(null)
-                        }}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  ))}
+                            setProfileTestResult(null)
+                          }}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() =>
+                      setRequestOptions((current) => [
+                        ...current,
+                        {name: '', content: ''},
+                      ])
+                    }
+                  >
+                    <Plus />
+                    {t('addRequestOption')}
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  onClick={() =>
-                    setRequestOptions((current) => [
-                      ...current,
-                      {name: '', content: ''},
-                    ])
-                  }
-                >
-                  <Plus />
-                  {t('addRequestOption')}
-                </Button>
-              </div>
-              <label className="field">
-                <span>
-                  {t('temperature')} · {temperature.toFixed(1)}
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={temperature}
-                  onChange={(event) =>
-                    setTemperature(Number(event.target.value))
-                  }
-                />
-              </label>
+              )}
+              {selectedCapabilities.temperature && (
+                <label className="field">
+                  <span>
+                    {t('temperature')} · {temperature.toFixed(1)}
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={temperature}
+                    onChange={(event) =>
+                      setTemperature(Number(event.target.value))
+                    }
+                  />
+                </label>
+              )}
               <label className="field">
                 <span>{t('stylePrompt')}</span>
                 <textarea
@@ -792,6 +835,7 @@ function endpointPlaceholder(provider: string) {
   if (provider === 'google')
     return 'https://generativelanguage.googleapis.com/v1beta'
   if (provider === 'deepseek') return 'https://api.deepseek.com'
+  if (provider === 'typesafe') return DEFAULT_TYPESAFE_BASE_URL
   if (provider === 'compatible') return 'https://example.com/v1'
   return 'https://api.openai.com/v1'
 }

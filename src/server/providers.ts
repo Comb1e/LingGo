@@ -26,10 +26,16 @@ import {
   type PlayerProfile,
   type ProviderConnection,
 } from '../shared/types'
-import {playStone, replay} from './go'
+import {legalActionCandidates} from './go'
+import {JevPlayerAdapter} from './jev'
 import type {VisibleLlmMessage} from './llmGameContext'
 import {makeMovePromptSections} from './movePrompt'
-import {readEnvironmentSecret, runtimeConfig} from './config'
+import {MalformedModelOutputError} from './providerErrors'
+import {
+  readEnvironmentSecret,
+  readEnvironmentValue,
+  runtimeConfig,
+} from './config'
 
 const modelMoveSchema = z
   .object({
@@ -239,15 +245,7 @@ function textFallbackPrompt(
   ].join('\n')
 }
 
-export class MalformedModelOutputError extends Error {
-  constructor(
-    message: string,
-    readonly responseContent = '',
-  ) {
-    super(message)
-    this.name = 'MalformedModelOutputError'
-  }
-}
+export {MalformedModelOutputError} from './providerErrors'
 
 export class SecretVault {
   private keys = new Map<string, string>()
@@ -273,6 +271,7 @@ export class SecretVault {
       google: 'GOOGLE_GENERATIVE_AI_API_KEY',
       deepseek: 'DEEPSEEK_API_KEY',
       compatible: 'OPENAI_COMPATIBLE_API_KEY',
+      typesafe: 'TYPESAFE_API_KEY',
       fake: '',
     }[connection.kind]
     return envName ? readEnvironmentSecret(envName) : undefined
@@ -369,25 +368,18 @@ export class FakePlayerAdapter implements PlayerAdapter {
   }
 
   private fakeAction(snapshot: GameSnapshot): PlayerAction {
-    const {hashes} = replay(snapshot.size, snapshot.moves)
-    for (let y = 0; y < snapshot.size; y++) {
-      for (let x = 0; x < snapshot.size; x++) {
-        try {
-          playStone(snapshot.board as any, snapshot.toMove, [x, y], hashes)
-          return {
-            action: 'play',
-            coordinate: pointName(x, y, snapshot.size),
-            comment: 'A calm move that keeps options open.',
-          }
-        } catch {
-          // Try the next intersection.
-        }
+    const candidate = legalActionCandidates(snapshot)[0]
+    if (candidate.action.action === 'play')
+      return {
+        ...candidate.action,
+        comment: 'A calm move that keeps options open.',
       }
-    }
-    return {
-      action: 'pass',
-      comment: 'There are no legal intersections left.',
-    }
+    if (candidate.action.action === 'pass')
+      return {
+        ...candidate.action,
+        comment: 'There are no legal intersections left.',
+      }
+    return {...candidate.action, comment: 'There are no legal actions left.'}
   }
 
   async requestText(prompt: string, signal: AbortSignal) {
@@ -1018,6 +1010,15 @@ export function createPlayerAdapter(
   if (connection.baseUrl) validateProviderBaseUrl(connection.baseUrl)
   const key = vault.get(connection)
   if (!key) throw new Error(`No API key configured for ${connection.name}`)
+  if (connection.kind === 'typesafe')
+    return new JevPlayerAdapter(
+      connection,
+      profile,
+      key,
+      DEFAULT_PROVIDER_TIMEOUT_MS,
+      undefined,
+      connection.baseUrl ?? readEnvironmentValue('TYPESAFE_BASE_URL'),
+    )
   return new LlmPlayerAdapter(connection, profile, key)
 }
 
@@ -1156,11 +1157,6 @@ export function makePrompt(
       ? ['', '6. KATAGO WIN-RATE HISTORY', snapshot.kataGoAnalysis]
       : []),
   ].join('\n')
-}
-
-function pointName(x: number, y: number, size: number): string {
-  const columns = 'ABCDEFGHJKLMNOPQRST'
-  return `${columns[x]}${size - y}`
 }
 
 export function validateActionCoordinate(

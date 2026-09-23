@@ -53,6 +53,7 @@ export class BenchmarkSessionService {
 
   create(config: BenchmarkSessionConfig) {
     this.assertProfileAvailable(config.profileId)
+    this.benchmarks.assertProfileSupportsBenchmarks(config.profileId)
     const lifeNotebook = config.lifeDeathNotebookId
       ? this.requireNotebook(config.profileId, config.lifeDeathNotebookId)
       : undefined

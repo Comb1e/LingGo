@@ -992,6 +992,58 @@ test('chooses directly from multiple saved LLM players', async ({
   await request.delete(`/api/connections/${connectionId}`)
 })
 
+test('configures Jev for ordinary games but excludes it from benchmarks', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const connectionName = `TypeSafe ${suffix}`
+  const profileName = `Jev player ${suffix}`
+
+  await page.goto('/settings')
+  await page.getByLabel('Provider').first().selectOption('typesafe')
+  await page.getByLabel('Connection name').fill(connectionName)
+  await page.getByLabel('Browser API key').fill('test-typesafe-key')
+  await page.getByRole('button', {name: 'Save connection'}).click()
+  await expect(page.getByText(connectionName).first()).toBeVisible()
+
+  await expect(page.getByLabel('Model ID')).toHaveValue('jev-latest')
+  await expect(page.getByLabel('Reasoning request format')).toHaveCount(0)
+  await expect(page.getByText('Request options (optional)')).toHaveCount(0)
+  await expect(page.getByText(/^Temperature/)).toHaveCount(0)
+  await page.getByLabel('Profile name').fill(profileName)
+  await page.getByLabel('Style prompt').fill('Prefer influence.')
+  await page.getByRole('button', {name: 'Save profile'}).click()
+  await expect(page.getByText(profileName).first()).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('typesafe-settings.png'),
+    fullPage: true,
+  })
+
+  await page.goto('/new')
+  const savedJev = page.locator('.seat-editor.white').getByRole('radio', {
+    name: /jev-latest/,
+  })
+  await expect(savedJev).toContainText(profileName)
+
+  await page.goto('/benchmarks')
+  await expect(page.getByLabel('Player profile')).not.toContainText(profileName)
+
+  const profiles = (await (
+    await request.get('/api/profiles')
+  ).json()) as Array<{
+    id: string
+    name: string
+  }>
+  const connections = (await (
+    await request.get('/api/connections')
+  ).json()) as Array<{id: string; name: string}>
+  const profile = profiles.find(({name}) => name === profileName)
+  const connection = connections.find(({name}) => name === connectionName)
+  if (profile) await request.delete(`/api/profiles/${profile.id}`)
+  if (connection) await request.delete(`/api/connections/${connection.id}`)
+})
+
 test('edits and deletes a game, player profile, and provider connection', async ({
   page,
   request,

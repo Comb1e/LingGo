@@ -16,7 +16,10 @@ import {
   supportsProviderContinuation,
 } from './providers'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
 
 describe('provider normalization', () => {
   it('preserves conversation context through the text fallback', async () => {
@@ -247,6 +250,20 @@ describe('provider normalization', () => {
     const vault = new SecretVault()
     vault.set('x', 'super-secret')
     expect(JSON.stringify(vault)).not.toContain('super-secret')
+  })
+
+  it('loads TypeSafe credentials from the environment', () => {
+    vi.stubEnv('TYPESAFE_API_KEY', 'typesafe-test-key')
+    const vault = new SecretVault()
+
+    expect(
+      vault.get({
+        id: 'typesafe',
+        name: 'TypeSafe AI',
+        kind: 'typesafe',
+        supportsStructuredOutput: false,
+      }),
+    ).toBe('typesafe-test-key')
   })
 
   it('builds a stateless complete position prompt', () => {

@@ -8,7 +8,20 @@ import {
   benchmarkConfigSchema,
   benchmarkSessionConfigSchema,
   benchmarkStageKeys,
+  researchManifestSchema,
 } from './types'
+
+describe('provider capability boundaries', () => {
+  it('rejects TypeSafe Jev research manifests', () => {
+    expect(
+      researchManifestSchema.safeParse({
+        experimentId: 'jev-research',
+        model: {provider: 'typesafe', modelId: 'jev-latest'},
+        condition: 'no_adaptation',
+      }).success,
+    ).toBe(false)
+  })
+})
 
 const base = {
   profileId: 'profile',

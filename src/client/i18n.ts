@@ -83,7 +83,7 @@ const resources = {
       provider: 'Provider',
       endpoint: 'Base URL (optional)',
       endpointNotice:
-        'Override the provider endpoint for a proxy or your own API. Required for OpenAI-compatible connections.',
+        'Override the provider endpoint for a proxy or your own API. Required for OpenAI-compatible connections; TypeSafe defaults to api.typesafe.ai.',
       apiKey: 'Browser API key',
       saveConnection: 'Save connection',
       updateConnection: 'Update connection',
@@ -416,7 +416,8 @@ const resources = {
       providerName: '连接名称',
       provider: '服务商',
       endpoint: '基础 URL（可选）',
-      endpointNotice: '可填写代理或自有 API 地址。OpenAI 兼容连接必须填写。',
+      endpointNotice:
+        '可填写代理或自有 API 地址。OpenAI 兼容连接必须填写；TypeSafe 默认使用 api.typesafe.ai。',
       apiKey: '浏览器 API 密钥',
       saveConnection: '保存连接',
       updateConnection: '更新连接',

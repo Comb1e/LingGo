@@ -34,6 +34,9 @@ importers:
       '@tanstack/react-query':
         specifier: 5.102.2
         version: 5.102.2(react@19.2.8)
+      '@typesafe-ai/sdk':
+        specifier: 0.6.0
+        version: 0.6.0
       ai:
         specifier: 7.0.77
         version: 7.0.77(zod@4.4.3)
@@ -1008,6 +1011,13 @@ packages:
       {
         integrity: sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==,
       }
+
+  '@typesafe-ai/sdk@0.6.0':
+    resolution:
+      {
+        integrity: sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==,
+      }
+    engines: {node: '>=20'}
 
   '@typescript-eslint/eslint-plugin@8.67.0':
     resolution:
@@ -3421,6 +3431,8 @@ snapshots:
   '@types/react@19.2.18':
     dependencies:
       csstype: 3.2.3
+
+  '@typesafe-ai/sdk@0.6.0': {}
 
   '@typescript-eslint/eslint-plugin@8.67.0(@typescript-eslint/parser@8.67.0(eslint@10.9.0(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3))(eslint@10.9.0(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3)':
     dependencies:

@@ -24,6 +24,7 @@ import type {
   GameSnapshot,
 } from '../shared/types'
 import {coordinateToPoint} from '../shared/coordinates'
+import {capabilitiesForProvider} from '../shared/providerCapabilities'
 import {
   DEFAULT_NOTEBOOK_INITIALIZATION_TOKEN_LIMIT,
   DEFAULT_NOTEBOOK_TOKEN_BUDGET,
@@ -193,6 +194,13 @@ export class BenchmarkConflictError extends Error {
   }
 }
 
+function assertBenchmarkProvider(connection: ProviderConnection) {
+  if (!capabilitiesForProvider(connection.kind).benchmarks)
+    throw new Error(
+      `${connection.name} supports ordinary games but not benchmarks`,
+    )
+}
+
 export class BenchmarkService {
   readonly events = new EventEmitter()
   private scheduled = new Set<string>()
@@ -222,6 +230,14 @@ export class BenchmarkService {
 
   get(id: string) {
     return this.store.getBenchmark(id)
+  }
+
+  assertProfileSupportsBenchmarks(profileId: string) {
+    const profile = this.store.getProfile(profileId)
+    if (!profile) throw new Error('Player profile not found')
+    const connection = this.store.getConnection(profile.connectionId)
+    if (!connection) throw new Error('Provider connection not found')
+    assertBenchmarkProvider(connection)
   }
 
   listProblemSets() {
@@ -284,6 +300,7 @@ export class BenchmarkService {
       if (!profile) throw new Error('Player profile not found')
       const connection = this.store.getConnection(profile.connectionId)
       if (!connection) throw new Error('Provider connection not found')
+      assertBenchmarkProvider(connection)
       const sourceNotebook = await this.sourceNotebook(config)
       const run = this.makeRun(config, sourceNotebook)
       try {
@@ -319,8 +336,9 @@ export class BenchmarkService {
       throw new Error('Problem set checksum does not match the shipped corpus')
     const profile = this.store.getProfile(config.profileId)
     if (!profile) throw new Error('Player profile not found')
-    if (!this.store.getConnection(profile.connectionId))
-      throw new Error('Provider connection not found')
+    const connection = this.store.getConnection(profile.connectionId)
+    if (!connection) throw new Error('Provider connection not found')
+    assertBenchmarkProvider(connection)
     return this.makeRun(config, sourceNotebook, metadata)
   }
 
