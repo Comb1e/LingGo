@@ -1,4 +1,4 @@
-import {afterEach, describe, expect, it} from 'vitest'
+import {afterEach, describe, expect, it, vi} from 'vitest'
 import {NoOutputGeneratedError} from 'ai'
 import {Store} from './database'
 import {
@@ -19,6 +19,77 @@ function setup() {
 }
 
 describe('game orchestration', () => {
+  it('plays an action-only provider against a human and another model', async () => {
+    store = new Store(':memory:')
+    store.saveConnection({
+      id: 'typesafe-game',
+      name: 'TypeSafe AI',
+      kind: 'typesafe',
+      supportsStructuredOutput: false,
+    })
+    store.saveConnection({
+      id: 'other-game',
+      name: 'Other model',
+      kind: 'openai',
+      supportsStructuredOutput: false,
+    })
+    store.saveProfile({
+      id: 'jev-game',
+      name: 'Jev',
+      connectionId: 'typesafe-game',
+      modelId: 'jev-latest',
+      temperature: 0.7,
+    })
+    store.saveProfile({
+      id: 'other-profile',
+      name: 'Other',
+      connectionId: 'other-game',
+      modelId: 'other-model',
+      temperature: 0.7,
+    })
+    const requestedKinds: string[] = []
+    service = new GameService(store, (connection) => ({
+      async requestAction() {
+        requestedKinds.push(connection.kind)
+        const coordinate = connection.kind === 'typesafe' ? 'A9' : 'B9'
+        return {
+          action: {action: 'play', coordinate, comment: 'Test move.'},
+          latencyMs: 0,
+          inputTokens: 1,
+          outputTokens: 1,
+          model: connection.kind === 'typesafe' ? 'jev-1.13.0' : 'other-model',
+          providerKind: connection.kind,
+          retries: 0,
+        }
+      },
+    }))
+
+    const humanGame = service.create({
+      size: 9,
+      black: {type: 'llm', name: 'Jev', profileId: 'jev-game'},
+      white: {type: 'human', name: 'Human'},
+    })
+    await waitFor(() => service.get(humanGame.id)?.moves.length === 1)
+    expect(service.get(humanGame.id)?.moves[0]).toMatchObject({
+      coordinate: 'A9',
+      providerKind: 'typesafe',
+      model: 'jev-1.13.0',
+    })
+
+    const modelGame = service.create({
+      size: 9,
+      black: {type: 'llm', name: 'Jev', profileId: 'jev-game'},
+      white: {type: 'llm', name: 'Other', profileId: 'other-profile'},
+      moveCap: 2,
+    })
+    await waitFor(() => service.get(modelGame.id)?.status === 'paused')
+    expect(
+      service.get(modelGame.id)?.moves.map(({coordinate}) => coordinate),
+    ).toEqual(['A9', 'B9'])
+    expect(service.get(modelGame.id)?.error).toBe('Move cap of 2 reached')
+    expect(requestedKinds).toEqual(['typesafe', 'typesafe', 'openai'])
+  })
+
   it('creates 19x19 by default and rejects stale commands', async () => {
     setup()
     const game = service.create({
@@ -656,6 +727,89 @@ describe('game orchestration', () => {
       previousResponseId: undefined,
       transcriptLength: 2,
       cacheKey: `linggo:${game.id}:B`,
+    })
+  })
+
+  it('rebases action-only context without requesting a generated summary', async () => {
+    store = new Store(':memory:')
+    const adapter = {
+      async requestAction() {
+        return modelAction('pass')
+      },
+    } satisfies PlayerAdapter
+    service = new GameService(store, () => adapter)
+    const connection = {
+      id: 'typesafe-context',
+      name: 'TypeSafe AI',
+      kind: 'typesafe' as const,
+      supportsStructuredOutput: false,
+    }
+    const profile = {
+      id: 'jev-context',
+      name: 'Jev',
+      connectionId: connection.id,
+      modelId: 'jev-latest',
+      temperature: 0.7,
+    }
+    store.saveConnection(connection)
+    store.saveProfile(profile)
+    let game = service.create({
+      size: 9,
+      black: {type: 'human', name: 'Black'},
+      white: {type: 'human', name: 'White'},
+    })
+    const coordinates = [
+      'A9',
+      'B9',
+      'C9',
+      'D9',
+      'E9',
+      'F9',
+      'G9',
+      'H9',
+      'J9',
+      'A8',
+      'B8',
+      'C8',
+      'D8',
+      'E8',
+      'F8',
+      'G8',
+      'H8',
+      'J8',
+      'A7',
+      'B7',
+    ]
+    for (const coordinate of coordinates)
+      game = await service.command(game.id, {
+        expectedVersion: game.version,
+        type: 'play',
+        coordinate,
+      })
+    const persisted = store.getGame(game.id)!
+    persisted.black = {type: 'llm', name: 'Jev', profileId: profile.id}
+    persisted.status = 'paused'
+    persisted.autoplay = false
+    store.saveGame(persisted)
+    service.seedLlmContext({
+      gameId: game.id,
+      color: 'B',
+      profile,
+      connection,
+      transcript: [{role: 'assistant', content: 'Prior action'}],
+    })
+    const summary = vi.spyOn(service, 'summarizeLlmContext')
+
+    await service.command(game.id, {
+      expectedVersion: persisted.version,
+      type: 'step',
+    })
+    await waitFor(() => service.get(game.id)?.moves.length === 21)
+
+    expect(summary).not.toHaveBeenCalled()
+    expect(store.getLlmGameContext(game.id, 'B')).toMatchObject({
+      lastIntentionTurn: 10,
+      gameIntention: undefined,
     })
   })
 

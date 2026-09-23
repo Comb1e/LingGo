@@ -624,6 +624,35 @@ svg {
   color: var(--green);
   font-size: 13px;
 }
+.profile-test-result {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.profile-test-result > p {
+  margin: 0 0 12px;
+}
+.profile-test-result dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.profile-test-result dl > div {
+  display: grid;
+  gap: 4px;
+}
+.profile-test-result dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.profile-test-result dd {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 .profile-notebook-panel {
   margin-top: 22px;
   border-top: 1px solid var(--line);
@@ -846,7 +875,39 @@ svg {
 .board-host.has-katago-recommendations
   .shudan-vertex.shudan-marker_label
   .shudan-stone-image {
-  opacity: 0.78;
+  background-image: none;
+  border-radius: 50%;
+  opacity: 0.92;
+}
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label[title^='#1 ']
+  .shudan-stone-image {
+  background-color: #d63b35;
+}
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label:is([title^='#2 '], [title^='#3 '])
+  .shudan-stone-image {
+  background-color: #f2c94c;
+}
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label:not([title^='#1 ']):not(
+    [title^='#2 ']
+  ):not([title^='#3 '])
+  .shudan-stone-image {
+  background-color: #3276c3;
+}
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label:is(
+    [title^='#1 '],
+    :not([title^='#1 ']):not([title^='#2 ']):not([title^='#3 '])
+  )
+  .shudan-marker {
+  color: #fff;
+}
+.board-host.has-katago-recommendations
+  .shudan-vertex.shudan-marker_label:is([title^='#2 '], [title^='#3 '])
+  .shudan-marker {
+  color: #27230f;
 }
 .player-strip {
   width: min(100%, calc(100vh - 225px));

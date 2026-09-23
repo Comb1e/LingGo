@@ -4,6 +4,47 @@ Completed project changes are recorded here in reverse chronological order.
 Architecture describes the current system; this file preserves change history
 and the sources that actually informed each solution.
 
+## 2026-09-23 - Add TypeSafe Jev Ordinary Play
+
+### Changes
+
+- Added a TypeSafe AI connection and a dedicated Jev Choice adapter for
+  human-vs-Jev and model-vs-Jev ordinary games.
+- Centralized provider capabilities so Settings hides unsupported generative
+  controls and benchmark and research boundaries reject Jev explicitly.
+- Added authoritative legal-action enumeration with capture and liberty
+  metadata. Positions over 255 actions use balanced group Choices and a final
+  Choice while preserving every legal candidate.
+- Added capability-aware profile testing, TypeSafe environment credentials and
+  endpoint overrides, confidence-only comments, and non-generative context
+  rebasing.
+
+### Research and Prior Art
+
+- TypeSafe AI's [Quickstart](https://docs.typesafe.ai/introduction/quickstart),
+  [System One concepts](https://docs.typesafe.ai/concepts/system-one), and
+  [Choice primitive](https://docs.typesafe.ai/primitives/choice) defined the
+  decision-oriented request shape and 255-option boundary.
+- The TypeSafe [model catalog](https://docs.typesafe.ai/models) and [Jev 1.13
+  jaggedness notes](https://docs.typesafe.ai/model-jaggedness/jev-1.13) informed
+  the `jev-latest` default, concise state, code-owned legality and arithmetic,
+  and the exclusion of generated explanations.
+- The MIT-licensed [TypeSafe JavaScript SDK
+  v0.6.0](https://github.com/typesafe-ai/typesafe-sdk-js/tree/v0.6.0) supplied
+  cancellation, typed Choice responses, resolved model IDs, usage, and error
+  metadata.
+
+### Verification
+
+- Added legal-action controls for occupied, suicide, positional ko, pass-limit,
+  full-board, capture, and board-size cases.
+- Added Jev tests for 254/255/256 options, complete grouping, 19x19 final-round
+  selection, usage and confidence, invalid labels, cancellation, timeouts,
+  rate limits, server errors, credentials, and custom endpoints.
+- Added service, API, client, and desktop/mobile browser coverage for ordinary
+  games, action-only rebasing, profile testing, and benchmark/research
+  exclusion.
+
 ## 2026-09-23 - Align Repository Policy
 
 ### Changes

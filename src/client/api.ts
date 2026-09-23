@@ -217,6 +217,7 @@ export const api = {
     request<{
       ok: true
       text: string
+      reasoning: string | null
       latencyMs: number
       model: string
     }>('/api/profiles/test', {

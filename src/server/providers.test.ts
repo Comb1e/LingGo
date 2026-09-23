@@ -16,7 +16,10 @@ import {
   supportsProviderContinuation,
 } from './providers'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
 
 describe('provider normalization', () => {
   it('preserves conversation context through the text fallback', async () => {
@@ -247,6 +250,20 @@ describe('provider normalization', () => {
     const vault = new SecretVault()
     vault.set('x', 'super-secret')
     expect(JSON.stringify(vault)).not.toContain('super-secret')
+  })
+
+  it('loads TypeSafe credentials from the environment', () => {
+    vi.stubEnv('TYPESAFE_API_KEY', 'typesafe-test-key')
+    const vault = new SecretVault()
+
+    expect(
+      vault.get({
+        id: 'typesafe',
+        name: 'TypeSafe AI',
+        kind: 'typesafe',
+        supportsStructuredOutput: false,
+      }),
+    ).toBe('typesafe-test-key')
   })
 
   it('builds a stateless complete position prompt', () => {
@@ -716,14 +733,23 @@ describe('provider normalization', () => {
     expect(result.providerKind).toBe('deepseek')
     expect(result.inputTokens).toBe(12)
     expect(result.outputTokens).toBe(8)
+
+    const textResult = await adapter.requestText!(
+      'Hi',
+      new AbortController().signal,
+    )
+    expect(textResult.text).toBe('{"move":"A9","reason":"Take the corner."}')
+    expect(textResult.reasoning).toBe('Compare the open corners.')
     expect(requestedUrl).toBe('https://api.deepseek.com/chat/completions')
-    expect(JSON.parse(requestBody)).toMatchObject({
+    const body = JSON.parse(requestBody)
+    expect(body).toMatchObject({
       model: 'deepseek-v4-pro',
       thinking: {type: 'enabled'},
       reasoning_effort: 'high',
       stream: true,
       stream_options: {include_usage: true},
     })
+    expect(body.messages).toEqual([{role: 'user', content: 'Hi'}])
   })
 
   it('disables DeepSeek reasoning in the provider request body', async () => {

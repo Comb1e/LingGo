@@ -95,6 +95,22 @@ test('creates a default 19x19 human game and plays a move', async ({
   await expect(topChoice).toHaveClass(/shudan-sign_-1/)
   await expect(topChoice.locator('.shudan-marker')).toHaveText('63%')
   await expect(topChoice).toHaveAttribute('title', /#1 D4: 63\.4% win rate/)
+  await expect(topChoice.locator('.shudan-stone-image')).toHaveCSS(
+    'background-color',
+    'rgb(214, 59, 53)',
+  )
+  await expect(
+    board.locator('[data-x="15"][data-y="3"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(242, 201, 76)')
+  await expect(
+    board.locator('[data-x="3"][data-y="3"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(242, 201, 76)')
+  await expect(
+    board.locator('[data-x="15"][data-y="15"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(50, 118, 195)')
+  await expect(
+    board.locator('[data-x="9"][data-y="13"] .shudan-stone-image'),
+  ).toHaveCSS('background-color', 'rgb(50, 118, 195)')
   await expect(board.locator('.shudan-marker_label')).toHaveCount(5)
   await page.screenshot({
     path: testInfo.outputPath('katago-review.png'),
@@ -763,6 +779,10 @@ test('adds, tests, and saves custom profile request options', async ({
   await expect(
     page.getByText(/deterministic-v1 replied in \d+ ms/),
   ).toBeVisible()
+  await expect(page.getByText('Hello!', {exact: true})).toBeVisible()
+  await expect(
+    page.getByText('No reasoning returned.', {exact: true}),
+  ).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('request-options.png'),
     fullPage: true,
@@ -970,6 +990,58 @@ test('chooses directly from multiple saved LLM players', async ({
 
   await request.delete(`/api/profiles/${profileId}`)
   await request.delete(`/api/connections/${connectionId}`)
+})
+
+test('configures Jev for ordinary games but excludes it from benchmarks', async ({
+  page,
+  request,
+}, testInfo) => {
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+  const connectionName = `TypeSafe ${suffix}`
+  const profileName = `Jev player ${suffix}`
+
+  await page.goto('/settings')
+  await page.getByLabel('Provider').first().selectOption('typesafe')
+  await page.getByLabel('Connection name').fill(connectionName)
+  await page.getByLabel('Browser API key').fill('test-typesafe-key')
+  await page.getByRole('button', {name: 'Save connection'}).click()
+  await expect(page.getByText(connectionName).first()).toBeVisible()
+
+  await expect(page.getByLabel('Model ID')).toHaveValue('jev-latest')
+  await expect(page.getByLabel('Reasoning request format')).toHaveCount(0)
+  await expect(page.getByText('Request options (optional)')).toHaveCount(0)
+  await expect(page.getByText(/^Temperature/)).toHaveCount(0)
+  await page.getByLabel('Profile name').fill(profileName)
+  await page.getByLabel('Style prompt').fill('Prefer influence.')
+  await page.getByRole('button', {name: 'Save profile'}).click()
+  await expect(page.getByText(profileName).first()).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('typesafe-settings.png'),
+    fullPage: true,
+  })
+
+  await page.goto('/new')
+  const savedJev = page.locator('.seat-editor.white').getByRole('radio', {
+    name: /jev-latest/,
+  })
+  await expect(savedJev).toContainText(profileName)
+
+  await page.goto('/benchmarks')
+  await expect(page.getByLabel('Player profile')).not.toContainText(profileName)
+
+  const profiles = (await (
+    await request.get('/api/profiles')
+  ).json()) as Array<{
+    id: string
+    name: string
+  }>
+  const connections = (await (
+    await request.get('/api/connections')
+  ).json()) as Array<{id: string; name: string}>
+  const profile = profiles.find(({name}) => name === profileName)
+  const connection = connections.find(({name}) => name === connectionName)
+  if (profile) await request.delete(`/api/profiles/${profile.id}`)
+  if (connection) await request.delete(`/api/connections/${connection.id}`)
 })
 
 test('edits and deletes a game, player profile, and provider connection', async ({

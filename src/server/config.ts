@@ -117,7 +117,14 @@ export function readEnvironmentSecret(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  return env[name]
+  return readEnvironmentValue(name, env)
+}
+
+export function readEnvironmentValue(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return env[name]?.trim() || undefined
 }
 
 export const KATAGO_LEGACY_DEFAULTS = {

@@ -6,6 +6,7 @@ import {
   boardHash,
   emptyBoard,
   IllegalMoveError,
+  legalActionCandidates,
   makeSnapshot,
   playStone,
   replay,
@@ -102,6 +103,68 @@ describe('rules', () => {
       {number: 7, color: 'B', action: 'pass', captured: 0},
     ]
     expect(() => replay(9, moves)).toThrow('Black may pass at most twice')
+  })
+
+  it('enumerates legal plays, pass, and resign from authoritative replay', () => {
+    const snapshot = makeSnapshot(9, 7.5, [
+      {number: 1, color: 'B', action: 'play', point: [0, 0], captured: 0},
+    ])
+    const candidates = legalActionCandidates(snapshot)
+
+    expect(candidates).toHaveLength(82)
+    expect(candidates.some(({action}) => action.action === 'pass')).toBe(true)
+    expect(candidates.some(({action}) => action.action === 'resign')).toBe(true)
+    expect(
+      candidates.some(
+        ({action}) => action.action === 'play' && action.coordinate === 'A9',
+      ),
+    ).toBe(false)
+  })
+
+  it('omits suicide and a third pass from legal action candidates', () => {
+    const moves: Move[] = [
+      {number: 1, color: 'B', action: 'pass', captured: 0},
+      {number: 2, color: 'W', action: 'play', point: [1, 0], captured: 0},
+      {number: 3, color: 'B', action: 'pass', captured: 0},
+      {number: 4, color: 'W', action: 'play', point: [0, 1], captured: 0},
+    ]
+    const candidates = legalActionCandidates(makeSnapshot(9, 7.5, moves))
+
+    expect(candidates.some(({action}) => action.action === 'pass')).toBe(false)
+    expect(
+      candidates.some(
+        ({action}) => action.action === 'play' && action.coordinate === 'A9',
+      ),
+    ).toBe(false)
+    expect(candidates.at(-1)?.action.action).toBe('resign')
+  })
+
+  it('omits an immediate positional-ko recapture', () => {
+    const moves: Move[] = [
+      {number: 1, color: 'B', action: 'play', point: [0, 1], captured: 0},
+      {number: 2, color: 'W', action: 'play', point: [0, 0], captured: 0},
+      {number: 3, color: 'B', action: 'play', point: [2, 1], captured: 0},
+      {number: 4, color: 'W', action: 'play', point: [2, 0], captured: 0},
+      {number: 5, color: 'B', action: 'play', point: [1, 2], captured: 0},
+      {number: 6, color: 'W', action: 'play', point: [1, 1], captured: 0},
+      {number: 7, color: 'B', action: 'play', point: [1, 0], captured: 1},
+    ]
+    const candidates = legalActionCandidates(makeSnapshot(9, 7.5, moves))
+
+    expect(
+      candidates.some(
+        ({action}) => action.action === 'play' && action.coordinate === 'B8',
+      ),
+    ).toBe(false)
+  })
+
+  it('falls back to pass and resign on a full board', () => {
+    const snapshot = makeSnapshot(9, 7.5, [])
+    snapshot.board = Array.from({length: 9}, () => Array(9).fill(1))
+
+    expect(
+      legalActionCandidates(snapshot).map(({action}) => action.action),
+    ).toEqual(['pass', 'resign'])
   })
 
   it('toggles whole dead chains', () => {

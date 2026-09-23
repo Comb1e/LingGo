@@ -12,6 +12,7 @@ import {
 } from 'ai'
 import {z} from 'zod'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
+import {PROFILE_TEST_PROMPT} from '../shared/constants'
 import {
   normalizeReasoning,
   supportsDeepSeekReasoningControl,
@@ -25,10 +26,16 @@ import {
   type PlayerProfile,
   type ProviderConnection,
 } from '../shared/types'
-import {playStone, replay} from './go'
+import {legalActionCandidates} from './go'
+import {JevPlayerAdapter} from './jev'
 import type {VisibleLlmMessage} from './llmGameContext'
 import {makeMovePromptSections} from './movePrompt'
-import {readEnvironmentSecret, runtimeConfig} from './config'
+import {MalformedModelOutputError} from './providerErrors'
+import {
+  readEnvironmentSecret,
+  readEnvironmentValue,
+  runtimeConfig,
+} from './config'
 
 const modelMoveSchema = z
   .object({
@@ -126,6 +133,7 @@ export interface LlmTurnResponse {
 
 export interface LlmTextResponse {
   text: string
+  reasoning?: string
   latencyMs: number
   inputTokens: number
   cachedInputTokens?: number
@@ -237,15 +245,7 @@ function textFallbackPrompt(
   ].join('\n')
 }
 
-export class MalformedModelOutputError extends Error {
-  constructor(
-    message: string,
-    readonly responseContent = '',
-  ) {
-    super(message)
-    this.name = 'MalformedModelOutputError'
-  }
-}
+export {MalformedModelOutputError} from './providerErrors'
 
 export class SecretVault {
   private keys = new Map<string, string>()
@@ -271,6 +271,7 @@ export class SecretVault {
       google: 'GOOGLE_GENERATIVE_AI_API_KEY',
       deepseek: 'DEEPSEEK_API_KEY',
       compatible: 'OPENAI_COMPATIBLE_API_KEY',
+      typesafe: 'TYPESAFE_API_KEY',
       fake: '',
     }[connection.kind]
     return envName ? readEnvironmentSecret(envName) : undefined
@@ -367,35 +368,31 @@ export class FakePlayerAdapter implements PlayerAdapter {
   }
 
   private fakeAction(snapshot: GameSnapshot): PlayerAction {
-    const {hashes} = replay(snapshot.size, snapshot.moves)
-    for (let y = 0; y < snapshot.size; y++) {
-      for (let x = 0; x < snapshot.size; x++) {
-        try {
-          playStone(snapshot.board as any, snapshot.toMove, [x, y], hashes)
-          return {
-            action: 'play',
-            coordinate: pointName(x, y, snapshot.size),
-            comment: 'A calm move that keeps options open.',
-          }
-        } catch {
-          // Try the next intersection.
-        }
+    const candidate = legalActionCandidates(snapshot)[0]
+    if (candidate.action.action === 'play')
+      return {
+        ...candidate.action,
+        comment: 'A calm move that keeps options open.',
       }
-    }
-    return {
-      action: 'pass',
-      comment: 'There are no legal intersections left.',
-    }
+    if (candidate.action.action === 'pass')
+      return {
+        ...candidate.action,
+        comment: 'There are no legal intersections left.',
+      }
+    return {...candidate.action, comment: 'There are no legal actions left.'}
   }
 
   async requestText(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted()
     return {
-      text: prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')
-        ? '{"1":"Check liberties before choosing a vital point."}'
-        : prompt.includes('Markdown life-and-death Go technique notebook')
-          ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
-          : '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
+      text:
+        prompt === PROFILE_TEST_PROMPT
+          ? 'Hello!'
+          : prompt.includes('NOTEBOOK PATCH OUTPUT FORMAT')
+            ? '{"1":"Check liberties before choosing a vital point."}'
+            : prompt.includes('Markdown life-and-death Go technique notebook')
+              ? '# Go techniques\n\n1. Check liberties before every move.\n2. Prefer legal, connected shapes.'
+              : '# Go techniques\n\n- Check liberties before every move.\n- Prefer legal, connected shapes.',
       latencyMs: 0,
       inputTokens: 0,
       outputTokens: 0,
@@ -452,9 +449,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
     return {
       ...parsed,
       responseContent: result.text,
-      reasoning: result.reasoningText
-        ? normalizeReasoning(result.reasoningText) || undefined
-        : undefined,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
       cachedInputTokens: cachedInputTokens(result.usage),
@@ -501,9 +496,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           )
     return {
       text: result.text,
-      reasoning: result.reasoningText
-        ? normalizeReasoning(result.reasoningText) || undefined
-        : undefined,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       providerContinuationId: result.providerContinuationId,
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
@@ -543,6 +536,7 @@ export class LlmPlayerAdapter implements PlayerAdapter {
           )
     return {
       text: result.text,
+      reasoning: normalizeResponseReasoning(result.reasoningText),
       latencyMs: Date.now() - started,
       inputTokens: result.usage.inputTokens ?? 0,
       cachedInputTokens: cachedInputTokens(result.usage),
@@ -705,6 +699,12 @@ export class LlmPlayerAdapter implements PlayerAdapter {
       })
     }
   }
+}
+
+function normalizeResponseReasoning(reasoningText?: string) {
+  return reasoningText
+    ? normalizeReasoning(reasoningText) || undefined
+    : undefined
 }
 
 interface DeepSeekStreamState {
@@ -1010,6 +1010,15 @@ export function createPlayerAdapter(
   if (connection.baseUrl) validateProviderBaseUrl(connection.baseUrl)
   const key = vault.get(connection)
   if (!key) throw new Error(`No API key configured for ${connection.name}`)
+  if (connection.kind === 'typesafe')
+    return new JevPlayerAdapter(
+      connection,
+      profile,
+      key,
+      DEFAULT_PROVIDER_TIMEOUT_MS,
+      undefined,
+      connection.baseUrl ?? readEnvironmentValue('TYPESAFE_BASE_URL'),
+    )
   return new LlmPlayerAdapter(connection, profile, key)
 }
 
@@ -1148,11 +1157,6 @@ export function makePrompt(
       ? ['', '6. KATAGO WIN-RATE HISTORY', snapshot.kataGoAnalysis]
       : []),
   ].join('\n')
-}
-
-function pointName(x: number, y: number, size: number): string {
-  const columns = 'ABCDEFGHJKLMNOPQRST'
-  return `${columns[x]}${size - y}`
 }
 
 export function validateActionCoordinate(

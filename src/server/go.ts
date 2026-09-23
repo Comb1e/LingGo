@@ -8,6 +8,7 @@ import type {
   Color,
   GameSnapshot,
   Move,
+  PlayerAction,
   Point,
   Score,
 } from '../shared/types'
@@ -196,6 +197,52 @@ export function makeSnapshot(
     rules:
       'Chinese area scoring; positional whole-board repetition; suicide prohibited; komi applies to White.',
   }
+}
+
+export interface LegalActionCandidate {
+  action: PlayerAction
+  captured: number
+  liberties?: number
+}
+
+export function legalActionCandidates(
+  snapshot: GameSnapshot,
+): LegalActionCandidate[] {
+  const state = replay(snapshot.size, snapshot.moves)
+  const candidates: LegalActionCandidate[] = []
+  for (let y = 0; y < snapshot.size; y++) {
+    for (let x = 0; x < snapshot.size; x++) {
+      try {
+        const result = playStone(
+          snapshot.board as Board,
+          snapshot.toMove,
+          [x, y],
+          state.hashes,
+        )
+        candidates.push({
+          action: {
+            action: 'play',
+            coordinate: pointToCoordinate([x, y], snapshot.size),
+            comment: '',
+          },
+          captured: result.captured,
+          liberties: chainAt(result.board, [x, y]).liberties.length,
+        })
+      } catch (error) {
+        if (!(error instanceof IllegalMoveError)) throw error
+      }
+    }
+  }
+  if (state.passCounts[snapshot.toMove] < 2)
+    candidates.push({
+      action: {action: 'pass', comment: ''},
+      captured: 0,
+    })
+  candidates.push({
+    action: {action: 'resign', comment: ''},
+    captured: 0,
+  })
+  return candidates
 }
 
 export function asciiBoard(snapshot: GameSnapshot): string {

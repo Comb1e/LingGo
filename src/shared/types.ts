@@ -37,6 +37,7 @@ export const providerKindSchema = z.enum([
   'google',
   'deepseek',
   'compatible',
+  'typesafe',
   'fake',
 ])
 export type ProviderKind = z.infer<typeof providerKindSchema>
@@ -856,7 +857,7 @@ export const researchManifestSchema = z.object({
     .regex(/^[A-Za-z0-9._-]+$/)
     .optional(),
   model: z.object({
-    provider: providerKindSchema,
+    provider: providerKindSchema.exclude(['typesafe']),
     modelId: z.string().min(1),
     fingerprint: z.string().min(1).optional(),
     profileId: z.string().min(1).optional(),

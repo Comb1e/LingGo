@@ -5,10 +5,12 @@ import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {z, ZodError} from 'zod'
 import {requestOptionsBody} from '../shared/requestOptions'
+import {capabilitiesForProvider} from '../shared/providerCapabilities'
 import {
   MAX_DISPLAY_NAME_LENGTH,
   MAX_KATAGO_VISITS,
   MIN_KATAGO_VISITS,
+  PROFILE_TEST_PROMPT,
 } from '../shared/constants'
 import {
   benchmarkConfigSchema,
@@ -33,8 +35,14 @@ import {BenchmarkConflictError, BenchmarkService} from './benchmarks'
 import {BenchmarkSessionService} from './benchmarkSessions'
 import {NotebookStore} from './notebooks'
 import {exportSgf, importSgf} from './sgf'
-import {createPlayerAdapter, requestLlm} from './providers'
+import {
+  createPlayerAdapter,
+  type LlmTextResponse,
+  type LlmTurnResponse,
+  requestLlm,
+} from './providers'
 import {loadRuntimeConfig} from './config'
+import {makeSnapshot} from './go'
 import {
   listProblemSets,
   loadProblemSet,
@@ -463,12 +471,33 @@ export function createApp(
       {...input, id: 'profile-test'},
       games.vault,
     )
-    const result = await requestLlm(
-      adapter,
-      {type: 'text', content: 'Reply with exactly: OK'},
-      AbortSignal.timeout(30_000),
-    )
-    return {ok: true, ...result}
+    const signal = AbortSignal.timeout(30_000)
+    let result: LlmTextResponse | LlmTurnResponse
+    if (capabilitiesForProvider(connection.kind).textGeneration) {
+      result = await requestLlm(
+        adapter,
+        {type: 'text', content: PROFILE_TEST_PROMPT},
+        signal,
+      )
+    } else {
+      const snapshot = makeSnapshot(9, 7.5, [])
+      result = await requestLlm(
+        adapter,
+        {
+          type: 'turn',
+          request: {
+            kind: 'initial',
+            content: 'Select one legal move for this profile test.',
+            transcript: [],
+            cacheKey: 'linggo:profile-test',
+            snapshot,
+            output: 'action',
+          },
+        },
+        signal,
+      )
+    }
+    return {ok: true, ...result, reasoning: result.reasoning ?? null}
   })
   app.get('/api/profiles/:id/notebooks', async (request, reply) => {
     const {id} = request.params as {id: string}

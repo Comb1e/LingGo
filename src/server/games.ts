@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto'
 import {NoOutputGeneratedError} from 'ai'
 import {coordinateToPoint, pointToCoordinate} from '../shared/coordinates'
 import {DEFAULT_GAME_MOVE_CAP, DEFAULT_KOMI} from '../shared/constants'
+import {capabilitiesForProvider} from '../shared/providerCapabilities'
 import type {
   Color,
   Game,
@@ -1004,14 +1005,16 @@ export class GameService {
               latestWinRate,
             })
             let gameIntention: string | undefined
-            try {
-              gameIntention = await this.summarizeLlmContext(
-                adapter,
-                boundaryPrepared,
-                controller.signal,
-              )
-            } catch (summaryError) {
-              if (controller.signal.aborted) throw summaryError
+            if (capabilitiesForProvider(connection.kind).textGeneration) {
+              try {
+                gameIntention = await this.summarizeLlmContext(
+                  adapter,
+                  boundaryPrepared,
+                  controller.signal,
+                )
+              } catch (summaryError) {
+                if (controller.signal.aborted) throw summaryError
+              }
             }
             this.rebaseLlmContext(id, game.toMove, gameIntention, llmTurnCount)
             continue

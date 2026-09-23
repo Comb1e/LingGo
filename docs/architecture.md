@@ -43,7 +43,7 @@ deterministic substitute used by tests.
 | Fastify API               | Validates request bodies, maps HTTP errors, exposes downloads and SSE streams, and composes the domain services. It does not decide Go legality.                          |
 | Game service              | Applies versioned user commands, schedules model turns, coordinates LLM conversation context, and persists accepted moves.                                                |
 | Go rules                  | Replays the full move history and is authoritative for board state, turn, captures, suicide, repetition, scoring, and snapshots.                                          |
-| Provider facade           | Normalizes all model providers into action or text requests, parsing, usage accounting, retry classification, and in-memory secret lookup.                                |
+| Provider facade           | Routes generative providers and TypeSafe Jev through capability-aware action or text interfaces, with normalized usage, retry classification, and in-memory secrets.      |
 | Analysis service          | Queues KataGo work, stores turn-aligned results separately from games, and publishes progress without changing game versions.                                             |
 | Benchmark service         | Runs notebook initialization, problem gates, training games, review, notebook updates, and isolated final evaluation through explicit lifecycle states.                   |
 | Benchmark session service | Sequences child benchmark stages, snapshots notebooks at stage boundaries, and makes continuation or restart an explicit operator action.                                 |
@@ -93,7 +93,7 @@ JSONL traces, notebook versions, summaries, and reports beneath
 ```mermaid
 stateDiagram-v2
   [*] --> active
-  active --> paused: pause or single-step boundary
+  active --> paused: pause, single-step boundary, or move cap
   paused --> active: resume, retry, undo, or profile change
   active --> error: exhausted provider or model-output attempts
   error --> active: retry, undo, or operator recovery
@@ -101,7 +101,7 @@ stateDiagram-v2
   paused --> scoring: restored scoring state
   scoring --> active: resume play
   scoring --> finished: required approvals complete
-  active --> finished: resignation or move cap
+  active --> finished: resignation
   error --> finished: operator resignation
 ```
 
@@ -109,9 +109,13 @@ The server validates the command and expected game version, then replays the
 stored move list before considering a move. Human actions are checked
 immediately. Model actions are generated from the current snapshot through the
 provider facade; optional KataGo history is included only when sharing is
-enabled. Malformed or illegal output is repaired at most three times against
-the unchanged position. An accepted move, its capture information, and its LLM
-context are persisted atomically, then emitted to connected clients.
+enabled. Generative providers return parsed JSON and can receive repair turns.
+Jev instead receives the complete code-validated legal action set through a
+typed Choice request. Positions above its 255-option limit use balanced group
+Choices followed by one winner Choice, without comparing probabilities across
+groups. Action-only contexts rebase at the normal ten-turn boundary without a
+generated intention summary. An accepted move, its capture information, and
+its LLM context are persisted atomically, then emitted to connected clients.
 
 A stale version is rejected without mutation. Transient provider failures use
 bounded retries; exhaustion moves the game to `error` and stops autoplay.
@@ -170,6 +174,9 @@ the run remains inspectable rather than disappearing mid-experiment.
   cross-client defaults live in shared constants.
 - All model access crosses one provider facade so retries, parsing, secrets,
   continuation behavior, and usage accounting remain consistent.
+- Provider capabilities explicitly separate ordinary action selection from
+  text generation. Jev can play ordinary games but cannot enter benchmark or
+  research workflows that require reflections and notebook generation.
 - Game analysis is stored separately and does not increment optimistic game
   versions. This prevents background work from invalidating user commands.
 - SSE is a notification channel, not the source of truth; clients re-read
