@@ -1,1 +1,2 @@
+pnpm branch:check
 pnpm verify:fast

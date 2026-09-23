@@ -8,6 +8,8 @@ const event = JSON.parse(readFileSync(eventPath, 'utf8')) as {
 const body = event.pull_request?.body ?? ''
 const requiredSections = [
   '## Behavior',
+  '## Research and Prior Art',
+  '## Architecture and Iteration',
   '## Engineering Policy',
   '## Compatibility',
   '## Verification',

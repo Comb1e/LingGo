@@ -1,10 +1,22 @@
-import {readFileSync} from 'node:fs'
+import {existsSync, readFileSync} from 'node:fs'
 import {relative, resolve} from 'node:path'
 import ts from 'typescript'
 
 export interface EngineeringPolicy {
   version: number
   source: string
+  gitRules: {
+    commitSubjectPattern: string
+    commitSubjectMaxLength: number
+    branchPattern: string
+    protectedBranches: string[]
+    rulesetFile: string
+  }
+  documentationRules: Array<{
+    file: string
+    headings: string[]
+    markers: string[]
+  }>
   stateMutationRules: Array<{file: string; properties: string[]}>
   stateMachineRoot: string
   environmentAccess: {
@@ -180,8 +192,73 @@ export function checkRepository(
     })
   }
 
+  violations.push(...checkDocumentation(root, policy))
+  violations.push(...checkGitRuleset(root, policy))
   violations.push(...validateExclusions(policy))
   return violations.filter((violation) => !isExcluded(violation, policy))
+}
+
+export function checkDocumentation(
+  root: string,
+  policy: EngineeringPolicy,
+): PolicyViolation[] {
+  return policy.documentationRules.flatMap((rule) => {
+    const absolute = resolve(root, rule.file)
+    if (!existsSync(absolute))
+      return [
+        {
+          rule: 'documentation',
+          file: rule.file,
+          line: 1,
+          message: 'required project documentation is missing',
+        },
+      ]
+    const text = readFileSync(absolute, 'utf8')
+    const lines = new Set(text.split(/\r?\n/).map((line) => line.trim()))
+    const missing = [
+      ...rule.headings.filter((heading) => !lines.has(heading)),
+      ...rule.markers.filter((marker) => !text.includes(marker)),
+    ]
+    return missing.map((requirement) => ({
+      rule: 'documentation',
+      file: rule.file,
+      line: 1,
+      message: `required documentation content is missing: ${requirement}`,
+    }))
+  })
+}
+
+export function checkGitRuleset(
+  root: string,
+  policy: EngineeringPolicy,
+): PolicyViolation[] {
+  const file = policy.gitRules.rulesetFile
+  const absolute = resolve(root, file)
+  if (!existsSync(absolute))
+    return [
+      {
+        rule: 'git-policy',
+        file,
+        line: 1,
+        message: 'the protected-branch ruleset is missing',
+      },
+    ]
+  const ruleset = JSON.parse(readFileSync(absolute, 'utf8')) as {
+    rules?: Array<{type?: string; parameters?: {pattern?: string}}>
+  }
+  const pattern = ruleset.rules?.find(
+    (rule) => rule.type === 'commit_message_pattern',
+  )?.parameters?.pattern
+  if (pattern === policy.gitRules.commitSubjectPattern) return []
+  return [
+    {
+      rule: 'git-policy',
+      file,
+      line: 1,
+      message:
+        'the protected-branch commit pattern must match configured policy',
+    },
+  ]
 }
 
 function isProcessEnvAccess(node: ts.Node) {

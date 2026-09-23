@@ -15,6 +15,8 @@ is `config/engineering-policy.json`, and `pnpm policy:check` enforces it.
   production clone of at least eight lines and sixty tokens.
 - Policy exclusions are only for false positives and require an owner, issue,
   rationale, and expiry within 90 days.
+- Architecture and iteration records are required repository artifacts. The
+  policy checker verifies their configured headings and diagram markers.
 
 ## Configuration Ownership
 
@@ -46,11 +48,20 @@ configuration objects or logs.
 ## Git And GitHub
 
 Install dependencies once to activate Husky. Pre-commit runs staged formatting,
-lint, and policy checks; pre-push runs `pnpm verify:fast`. CI remains
-authoritative because local hooks can be bypassed.
+lint, branch-name validation, and policy checks; pre-push repeats branch-name
+validation and runs `pnpm verify:fast`. Commit subjects follow Conventional
+Commits and topic branches follow `<type>/<short-description>`. The shared
+patterns and subject length are configured in
+`config/engineering-policy.json`; the policy check also keeps the GitHub
+commit-message rule aligned with that configuration. CI remains authoritative
+because local hooks can be bypassed.
 
 The desired `main` ruleset is `.github/rulesets/main.json`. Audit it with
 `pnpm github:ruleset:audit`. Apply it with `pnpm github:ruleset:apply` using a
 fine-grained `GH_TOKEN` with repository Administration write permission. The
 ruleset has no bypass actors and requires pull requests, independent approval,
 CODEOWNERS, current required checks, linear history, and resolved discussions.
+
+Pull requests record relevant papers and projects, confirm architecture and
+iteration updates, and state how changed mathematical logic was independently
+checked against boundaries and counterexamples.

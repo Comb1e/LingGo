@@ -1,13 +1,16 @@
 # Core Engineering Policy
 
-These rules mirror `/root/.codex/AGENTS.md` and are mandatory for agents and
+These rules mirror the active user's `~/.codex/AGENTS.md` and are mandatory for agents and
 human contributors:
 
-1. Use Git for code management and commitment.
-2. Model complex logical transitions with explicit state machines.
-3. Manage constants that are used heavily through configuration files.
-4. Expose functionality used in multiple places through a generic interface
+1. Search relevant papers and projects before establishing a solution, and
+   record only the sources actually used.
+2. Use Git for code management and commitment.
+3. Model complex logical transitions with explicit state machines.
+4. Manage constants that are used heavily through configuration files.
+5. Expose functionality used in multiple places through a generic interface
    instead of reimplementing it.
+6. Keep personal identifiers from user-level instructions out of project files.
 
 The enforceable definitions and thresholds live in
 `config/engineering-policy.json`. `pnpm policy:check` is the authoritative
@@ -53,8 +56,32 @@ Store KataGo analysis separately from game JSON without incrementing game versio
 
 Add co-located Vitest coverage for changed behavior. Use fake providers and `LINGGO_FAKE_KATAGO=1`; CI must not require credentials, KataGo, or a GPU. Cover workflows with desktop and mobile Playwright tests. Before a PR, run typecheck, lint, tests, build, and relevant E2E flows.
 
+When changing mathematical logic, verify it with an independent control,
+boundary cases, and counterexamples. When fixing a defect, retain successful
+cases while covering the known failure and its boundaries.
+
+## Architecture & Iteration Documentation
+
+Maintain `docs/architecture.md` as a current, implementation-verified guide to
+the system's purpose, component responsibilities, data flow and storage, core
+workflows, decisions, constraints, and failure paths. Prefer Mermaid diagrams
+and use state diagrams for complex transitions. Keep source listings, past
+designs, and future plans out of that document.
+
+Record completed changes in `docs/iteration.md`, including the papers and
+projects that actually informed the solution. Update `README.md` after a
+functional change and keep all documentation concise.
+
 ## Commit & Pull Request Guidelines
 
-Use Git for all changes. Follow repository history with short, imperative, lowercase subjects, such as `fix benchmark move retries`. Keep commits coherent.
+Use Git for all changes. Commit subjects follow Conventional Commits as
+`<type>(<scope>): <subject>`; common types are `feat`, `fix`, `docs`,
+`refactor`, `test`, and `chore`. Keep commits coherent.
+
+Pull `main` before starting, then work on a topic branch named
+`<type>/<short-description>`, such as `feature/user-login` or
+`fix/order-total`. Never push directly to `main`. Rebase before merging,
+resolve conflicts before the pull request, prefer squash merge, merge the pull
+request, and delete the branch when complete.
 
 Pull requests should explain behavior, verification, migrations/configuration impact, and linked issues. Include UI screenshots and note real-KataGo smoke tests. Never commit API keys, databases, generated notebooks, reports, or logs.

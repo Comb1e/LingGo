@@ -40,10 +40,10 @@
     {
       "type": "commit_message_pattern",
       "parameters": {
-        "name": "lowercase imperative subject",
+        "name": "conventional commit subject",
         "negate": false,
         "operator": "regex",
-        "pattern": "^[a-z](?:[a-z0-9 :/.-]{1,70}[a-z0-9])$"
+        "pattern": "^[a-z][a-z0-9-]*(?:\\([a-z0-9][a-z0-9._/-]*\\))?!?: [a-z0-9](?:[a-z0-9 ',./:_()-]*[a-z0-9')])?$"
       }
     }
   ]
