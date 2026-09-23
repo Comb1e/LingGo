@@ -1,2 +1,3 @@
+pnpm branch:check
 pnpm lint-staged
 pnpm policy:check

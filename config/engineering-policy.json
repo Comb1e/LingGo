@@ -1,6 +1,33 @@
 {
-  "version": 1,
-  "source": "/root/.codex/AGENTS.md",
+  "version": 2,
+  "source": "~/.codex/AGENTS.md",
+  "gitRules": {
+    "commitSubjectPattern": "^[a-z][a-z0-9-]*(?:\\([a-z0-9][a-z0-9._/-]*\\))?!?: [a-z0-9](?:[a-z0-9 ',./:_()-]*[a-z0-9')])?$",
+    "commitSubjectMaxLength": 72,
+    "branchPattern": "^(?:feature|fix|docs|refactor|test|chore)/[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "protectedBranches": ["main"],
+    "rulesetFile": ".github/rulesets/main.json"
+  },
+  "documentationRules": [
+    {
+      "file": "docs/architecture.md",
+      "headings": [
+        "# Architecture",
+        "## Purpose",
+        "## System Context",
+        "## Component Responsibilities",
+        "## Data Flow and Storage",
+        "## Core Workflows",
+        "## Design Decisions and Constraints"
+      ],
+      "markers": ["```mermaid", "flowchart", "stateDiagram-v2"]
+    },
+    {
+      "file": "docs/iteration.md",
+      "headings": ["# Iteration History"],
+      "markers": ["### Research and Prior Art", "### Verification"]
+    }
+  ],
   "stateMutationRules": [
     {
       "file": "src/server/games.ts",

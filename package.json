@@ -14,6 +14,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "branch:check": "node --import tsx scripts/check-branch-name.ts",
     "policy:check": "node --import tsx scripts/check-engineering-policy.ts",
     "duplicates": "jscpd src/client src/server src/shared --config config/jscpd.json --format typescript,tsx --exit-code 1",
     "github:ruleset:audit": "node --import tsx scripts/github-ruleset.ts",

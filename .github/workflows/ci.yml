@@ -17,6 +17,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - if: github.event_name == 'pull_request'
+        run: pnpm branch:check -- "$GITHUB_HEAD_REF"
       - run: pnpm policy:check
       - run: pnpm duplicates
       - if: github.event_name == 'pull_request'
